@@ -1,6 +1,7 @@
 db/*
 incremental_db/*
 output_files/*
+*.qws
 .DS_Store
 **/pll_sim/*
 **/*.bak

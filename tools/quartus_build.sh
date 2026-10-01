@@ -53,7 +53,7 @@ cd "$PROJECT_ROOT"
 
 # Build the full command to be executed on tycho
 # The script passes all arguments to quartus_sh
-cmd="cd Projects/z80fp/RomWBW_MultiComp_MiSTer && docker run --rm -v .:/build ghcr.io/raetro/quartus:17.0 quartus_sh $*"
+cmd="cd Projects/z80fp/MrZ80 && docker run --rm -v .:/build ghcr.io/raetro/quartus:17.0 quartus_sh $*"
 
 echo "Invoking Quartus on tycho via Docker..."
 echo "Command: $cmd"
