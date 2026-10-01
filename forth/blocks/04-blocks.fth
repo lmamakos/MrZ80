@@ -1,6 +1,5 @@
 ( 04-blocks final blocks screen )
-DECIMAL
-VARIABLE SCR 64 CONSTANT B/L
+DECIMAL VARIABLE SCR 64 CONSTANT B/L
 : LINE ( n -- addr) B/L *  SCR @ BLOCK  + ;
 : LOAD ( n -- ) SCR ! 16 0 DO I LINES !
      I LINE B/L EVALUATE LOOP ;
@@ -13,4 +12,5 @@ VARIABLE SCR 64 CONSTANT B/L
     HERE SWAP - ." done. " . ." bytes" CR ;
 : screen ." Screen editor.. "  HERE 9 20 THRU
     HERE SWAP - ." done. " . ." bytes" CR ;
-( must be at very end of a block.  )            0 0 OPEN-BLOCKS
+: see ." SEE word.." HERE 21 24 THRU HERE SWAP - ." done "
+  . ." bytes" CR ;             0 0 OPEN-BLOCKS

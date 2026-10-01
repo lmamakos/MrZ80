@@ -1062,7 +1062,8 @@ BLKBUFSIZE EQU 1024
         DW XSQUOTE
         DB 45,00Dh,0Ah,'Z80 CamelForth v1.02 2026-07-10a for CP/M'
         DB 0dh,0ah
-        DW TYPE,ABORT       ; ABORT never returns
+        DW TYPE
+	DW ABORT       ; ABORT never returns
 	DW XSQUOTE
 	DB 26,  13,10,10,'COLD: ABORT returned!',13,10
 	DW TYPE,DOHALT

@@ -1,4 +1,4 @@
-( case statement )
+( 08 CASE, PICK, ROLL compat words)
 : CASE  ( -- 0 ) 0 ; IMMEDIATE
 : OF    POSTPONE OVER  POSTPONE =  POSTPONE IF  ; IMMEDIATE
 : ?OF   ( flag -- ) POSTPONE
@@ -6,10 +6,9 @@
 : ENDOF ( -- ) POSTPONE ELSE ; IMMEDIATE
 : ENDCASE POSTPONE DROP  
       BEGIN ?DUP  WHILE  POSTPONE THEN  REPEAT ; IMMEDIATE
-
-
-
-
-
-
-
+: PICK  ( x0 x1 ... xu u -- x0 x1 ... xu x0 )
+   DUP 0= IF DROP DUP EXIT THEN
+   SWAP >R 1- RECURSE R> SWAP ;
+: ROLL  ( x0 x1 ... xu u -- x1 ... xu x0 )
+   DUP 0= IF DROP EXIT THEN
+   SWAP >R  1- RECURSE  R> SWAP ;

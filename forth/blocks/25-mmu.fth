@@ -1,4 +1,4 @@
-( 25 MMU related utils                                         )
+( 25 MMU related utils ) BASE @  ( save base on entry )
 HEX 0B0 CONSTANT mmu-base    1E00 CONSTANT ram-disk-page 
 : .## BASE @ SWAP HEX 0 <#  # #  #> TYPE BASE ! ;
 : mmu. CR mmu-base 10 + mmu-base DO
@@ -13,4 +13,4 @@ HEX 0B0 CONSTANT mmu-base    1E00 CONSTANT ram-disk-page
   DUP mmu-base 08 + PC!  8 RSHIFT mmu-base 09 + PC! ;
 : ramdisk.io 0000 0780 ( low high ) mmu.io ;
 : dumprd ramdisk.io 1000 0 DO I 3F AND 0= IF CR THEN
-  0BC PC@ EMIT LOOP CR ;
+  0BC PC@ EMIT LOOP CR ;  BASE !  ( restore base )
