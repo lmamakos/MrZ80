@@ -6,12 +6,16 @@ MULTICOMPDEST=5:
 MULTICOMPDISK=../z80pack/cpmsim/disks/drivei.dsk
 MULTICOMPFORMAT=z80pack-hd
 
-all:	camel80.bin camel80cpm.com
+all:	camel80.bin camelf.bin camel80cpm.com
 
-camel80.bin: camel80.azm camel80d.azm camel80h.azm cameltst.azm io-multi.azm
+# Assembly: all variants share the camel80.azm kernel but differ in -D
+# defines (which also selects the io-*.azm it INCLUDEs via IFDEF CPM).
+camel80.rel:	camel80.azm camel80d.azm camel80h.azm cameltst.azm io-multi.azm
 	um80 camel80.azm -D BOOTABLE=1 -g -o camel80.rel -l camel80.prn
-	ul80 -p 0 --sym  -x -o camel80.hex camel80.rel && rm camel80.rel
-	objcopy -I ihex -O binary camel80.hex camel80.bin && rm camel80.hex
+
+# this version enabled for custom NEXT instruction in FPGA T80 CPU
+camelf.rel:	camel80.azm camel80d.azm camel80h.azm cameltst.azm io-multi.azm
+	um80 camel80.azm -D BOOTABLE=1 -D CUSTNEXT=1 -g -o camelf.rel -l camelf.prn
 
 # CP/M variant: same camel80.azm kernel, assembled with -D CPM so it
 # INCLUDEs io-cpm.azm (BDOS file I/O) instead of io-multi.azm (embedded
@@ -19,21 +23,30 @@ camel80.bin: camel80.azm camel80d.azm camel80h.azm cameltst.azm io-multi.azm
 # baked in by the source (CP/M's TPA entry point) -- i.e. it can be copied
 # directly onto a CP/M disk image as CAMEL80.COM with no on-CP/M assembly
 # step required.
-camel80cpm.com: camel80.azm camel80d.azm camel80h.azm io-cpm.azm
+camel80cpm.rel:	camel80.azm camel80d.azm camel80h.azm cameltst.azm io-cpm.azm
 	um80 camel80.azm -D CPM=1 -g -o camel80cpm.rel -l camel80cpm.prn
-	ul80 -p 0 --sym  -x -o camel80cpm.hex camel80cpm.rel && rm camel80cpm.rel
-	objcopy -I ihex -O binary camel80cpm.hex camel80cpm.com && rm camel80cpm.hex
+
+# Link + flatten to flat binary, shared by all variants.
+%.bin: %.rel
+	ul80 -p 0 --sym -x -o $*.hex $<
+	objcopy -I ihex -O binary $*.hex $@ && rm $*.hex
+
+%.com: %.rel
+	ul80 -p 0 --sym -x -o $*.hex $<
+	objcopy -I ihex -O binary $*.hex $@ && rm $*.hex
+
 
 clean:
-	rm -f  *.prn *.lst *.rel *.sym camel80.bin camel80cpm.com
+	rm -f  *.prn *.lst *.rel *.sym camel80.bin camelf.bin camel80cpm.com
 	rm -f  *~
 
 all:
 	cd blocks; make
 
-install:	camel80.bin
+install:	camel80.bin camelf.bin
 	scp camel80.bin       mister:/media/fat/games/MultiComp/camel80.bin
-	scp blocks/forth.blk  mister:/media/fat/games/MultiComp/forth.blk
+	scp camelf.bin        mister:/media/fat/games/MultiComp/camelf.bin
+	scp blocks/forth.blk  mister:/media/fat/games/MultiComp/forth.dsk
 
 cpm: blocks/forth.blk
 	@echo make sure to remove all the *.AZM and *.SUB files from the CP/M disk image
