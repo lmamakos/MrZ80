@@ -202,7 +202,21 @@ label:
 
 ; The NEXT macro (7 bytes) assembles the 'next'
 ; code in-line in every Z80 CamelForth CODE word.
-; (MultiComp Z-80 CPU has this as a custom instruction: ED 27)
+; (MultiComp Z-80 CPU has this as a custom instruction: ED 92)
+
+    IFDEF CUSTNEXT
+next    MACRO
+	DB  0EDh,092h  ; custom next
+        ENDM
+
+; NEXTHL is used when the IP is already in HL.
+nexthl	MACRO
+	ex de,hl   ; custom next nexthl
+	next       ; custom next nexthl
+	ENDM
+
+    ELSE    ; CUSTNEXT
+
 next    MACRO
         ex de,hl   ;next
         ld e,(hl)  ;next
@@ -222,6 +236,7 @@ nexthl  MACRO
         ex de,hl  ;nexthl
         jp (hl)   ;nexthl
         ENDM
+    ENDIF    ; CUSTNEXT
 
 ; ===============================================
 ; ===============================================
@@ -266,7 +281,11 @@ reset::
 
         jp COLD      ; enter top-level Forth word
 
-hello:  db "Hello world from CamelFORTH",13,10,0
+hello:  db "Hello world from CamelFORTH"
+  IFDEF CUSTNEXT
+  	db ", with custom NEXT instruction"
+  ENDIF
+	db 13,10,0
 
   IFDEF CPM
 ; CP/M Memory map:
@@ -341,9 +360,14 @@ enter:  dec ix         ; push old IP on ret stack
         ld (ix+0),d
         dec ix
         ld (ix+0),e
+  IFDEF CUSTNEXT
+  	pop de		; param field addrs -> IP
+	next		; stock NEXT is plenty fast
+  ELSE
         pop hl         ; param field adrs -> IP
         nexthl         ; use the faster 'nexthl'
-
+  ENDIF
+  
 ;C VARIABLE   --      define a Forth variable
 ;   CREATE 1 CELLS ALLOT ;
 ; Action of RAM variable is identical to CREATE,
@@ -1145,7 +1169,6 @@ enddict EQU $       ; user's code starts here
       ELSE
         INCLUDE io-multi.azm ; include Z80 Multicomputer ROM words
 ; enddict EQU $ENDADDR    ; continue userdict at start of RAM bank
-  	      		  ;
 enddict  EQU $		  ; on the multicomputer, FORTH is loaded into RAM, so
 	     		  ; dictionary can continue here.
       ENDIF

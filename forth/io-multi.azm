@@ -76,7 +76,7 @@ key1:   IN A,(C)
 	LD B,0
 	LD C,42
 ;	NEXT
-	DB 0EDH,27H	; custom instruction
+	DB 0EDh, 092h	; custom instruction
 	
 ; NOTE: 2! and 2@ are already defined (as TWOSTORE/TWOFETCH) in
 ; camel80h.azm.  The duplicate definitions that used to live here were
