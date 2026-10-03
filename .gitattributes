@@ -1,0 +1,2 @@
+# Z-80 assembler sources use LF line endings only.
+*.azm text eol=lf
