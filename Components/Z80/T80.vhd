@@ -122,6 +122,7 @@ architecture rtl of T80 is
 	constant aIOA	: std_logic_vector(2 downto 0) := "100";
 	constant aSP	: std_logic_vector(2 downto 0) := "101";
 	constant aZI	: std_logic_vector(2 downto 0) := "110";
+	constant aIX	: std_logic_vector(2 downto 0) := "011";	-- custom: A <- IX (no displacement)
 
 	-- Registers
 	signal ACC, F			: std_logic_vector(7 downto 0);
@@ -200,6 +201,7 @@ architecture rtl of T80 is
 	signal Inc_PC			: std_logic;
 	signal Inc_WZ			: std_logic;
 	signal IncDec_16		: std_logic_vector(3 downto 0);
+	signal IncDec_IX		: std_logic;	-- custom: 16-bit inc/dec of "HL" goes to IX
 	signal Prefix			: std_logic_vector(1 downto 0);
 	signal Read_To_Acc		: std_logic;
 	signal Read_To_Reg		: std_logic;
@@ -274,6 +276,7 @@ begin
 			Inc_PC => Inc_PC,
 			Inc_WZ => Inc_WZ,
 			IncDec_16 => IncDec_16,
+			IncDec_IX => IncDec_IX,
 			Read_To_Acc => Read_To_Acc,
 			Read_To_Reg => Read_To_Reg,
 			Set_BusB_To => Set_BusB_To,
@@ -514,6 +517,9 @@ begin
 							end if;
 						when aDE =>
 							A <= RegBusC;
+						when aIX =>
+							-- custom PUSHIX/POPIX: RegAddrC is forced to IX below
+							A <= RegBusC;
 						when aZI =>
 							if Inc_WZ = '1' then
 								A <= std_logic_vector(unsigned(TmpAddr) + 1);
@@ -736,6 +742,11 @@ begin
 				if ((JumpXY = '1' or LDSPHL = '1') and XY_State /= "00") or (MCycle = "110") then
 					RegAddrC <= XY_State(1) & "11";
 				end if;
+				-- custom PUSHIX/POPIX: address straight from IX (register 3).
+				-- IX/IY are not part of the EXX bank, so Alternate is not used.
+				if Set_Addr_To = aIX then
+					RegAddrC <= "011";
+				end if;
 
 				if I_DJNZ = '1' and Save_ALU_r = '1' and Mode < 2 then
 					IncDecZ <= F_Out(Flag_Z);
@@ -754,6 +765,9 @@ begin
 	end process;
 
 	RegAddrA <=
+			-- custom PUSHIX/POPIX: 16 bit increment/decrement of IX (register 3)
+			"011" when (TState = 2 or
+				(TState = 3 and MCycle = "001" and IncDec_16(2) = '1')) and IncDec_IX = '1' else
 			-- 16 bit increment/decrement
 			Alternate & IncDec_16(1 downto 0) when (TState = 2 or
 				(TState = 3 and MCycle = "001" and IncDec_16(2) = '1')) and XY_State = "00" else

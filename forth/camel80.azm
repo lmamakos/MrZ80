@@ -238,6 +238,85 @@ nexthl  MACRO
         ENDM
     ENDIF    ; CUSTNEXT
 
+; Return stack push/pop of a register pair.  The
+; return stack grows down and IX points at the
+; low byte of the top item.
+; (MultiComp Z-80 CPU has these as custom
+; instructions: PUSHIX rr = ED C5/D5/E5 and
+; POPIX rr = ED C1/D1/E1 for BC/DE/HL, 14 T each
+; versus 58 T for the stock 4-instruction form.)
+
+; CUSTCPU is defined when the build uses any custom
+; instruction; it enables the startup CPU check.
+    IFDEF CUSTNEXT
+CUSTCPU EQU 1
+    ENDIF
+    IFDEF CUSTRSP
+      IFNDEF CUSTCPU
+CUSTCPU EQU 1
+      ENDIF
+    ENDIF
+
+    IFDEF CUSTRSP
+rpushbc MACRO
+	DB  0EDh,0C5h  ; custom PUSHIX BC
+	ENDM
+rpushde MACRO
+	DB  0EDh,0D5h  ; custom PUSHIX DE
+	ENDM
+rpushhl MACRO
+	DB  0EDh,0E5h  ; custom PUSHIX HL
+	ENDM
+rpopbc  MACRO
+	DB  0EDh,0C1h  ; custom POPIX BC
+	ENDM
+rpopde  MACRO
+	DB  0EDh,0D1h  ; custom POPIX DE
+	ENDM
+rpophl  MACRO
+	DB  0EDh,0E1h  ; custom POPIX HL
+	ENDM
+
+    ELSE    ; CUSTRSP
+
+rpushbc MACRO
+        dec ix         ;rpushbc
+        ld (ix+0),b    ;rpushbc
+        dec ix         ;rpushbc
+        ld (ix+0),c    ;rpushbc
+        ENDM
+rpushde MACRO
+        dec ix         ;rpushde
+        ld (ix+0),d    ;rpushde
+        dec ix         ;rpushde
+        ld (ix+0),e    ;rpushde
+        ENDM
+rpushhl MACRO
+        dec ix         ;rpushhl
+        ld (ix+0),h    ;rpushhl
+        dec ix         ;rpushhl
+        ld (ix+0),l    ;rpushhl
+        ENDM
+rpopbc  MACRO
+        ld c,(ix+0)    ;rpopbc
+        inc ix         ;rpopbc
+        ld b,(ix+0)    ;rpopbc
+        inc ix         ;rpopbc
+        ENDM
+rpopde  MACRO
+        ld e,(ix+0)    ;rpopde
+        inc ix         ;rpopde
+        ld d,(ix+0)    ;rpopde
+        inc ix         ;rpopde
+        ENDM
+rpophl  MACRO
+        ld l,(ix+0)    ;rpophl
+        inc ix         ;rpophl
+        ld h,(ix+0)    ;rpophl
+        inc ix         ;rpophl
+        ENDM
+    ENDIF    ; CUSTRSP
+
 ; ===============================================
 ; ===============================================
 
@@ -261,6 +340,36 @@ reset::
         dec h
         push hl
         pop iy       ;      = bottom of user area
+
+  IFDEF CUSTCPU
+; Verify that this CPU really implements the custom
+; instructions this kernel was assembled to use.  On
+; a stock Z-80 (or an older MultiComp core) these ED
+; opcodes are undefined and execute as 2-byte NOPs,
+; which both tests below detect.  Clobbers A,BC,DE,HL.
+    IFDEF CUSTNEXT
+        ld de,cpuck1 ; custom NEXT: PC <- (DE), DE += 2
+        next
+        ld hl,cpumsg1 ; fell through: ED 92 was a NOP
+        jp cpubad
+cpuck1: dw cpuck2
+cpuck2:
+    ENDIF
+    IFDEF CUSTRSP
+        ld bc,0
+        ld de,1234h
+        rpushde      ; custom PUSHIX DE  (IX-relative push)
+        rpopbc       ; custom POPIX BC   -> BC = 1234h
+        ld hl,cpumsg2
+        ld a,b
+        cp 12h
+        jp nz,cpubad ; BC unchanged: ED D5/ED C1 were NOPs
+        ld a,c
+        cp 34h
+        jp nz,cpubad
+    ENDIF
+  ENDIF ; CUSTCPU
+
         ld de,1      ; do reset if COLD returns
       IFDEF CPM
         ; io-cpm.azm has no raw-hardware 'puts'/'introdump'; those are
@@ -281,9 +390,39 @@ reset::
 
         jp COLD      ; enter top-level Forth word
 
+  IFDEF CUSTCPU
+; Custom instruction check failed: print the message
+; at HL (0-terminated), then exit to CP/M or halt.
+cpubad:
+    IFDEF CPM
+        ld a,(hl)
+        or a
+        jp z,0       ; CP/M warm boot
+        push hl
+        ld e,a
+        ld c,2       ; BDOS console output
+        call 5
+        pop hl
+        inc hl
+        jr cpubad
+    ELSE
+        call puts
+        di
+cpuhlt: halt
+        jr cpuhlt    ; stay halted even after an NMI
+    ENDIF
+cpumsg1: db 13,10,"This CPU does not implement the custom NEXT"
+        db " instruction (ED 92) this FORTH was built for.",13,10,0
+cpumsg2: db 13,10,"This CPU does not implement the custom PUSHIX/POPIX"
+        db " instructions (ED C5../ED C1..) this FORTH was built for.",13,10,0
+  ENDIF ; CUSTCPU
+
 hello:  db "Hello world from CamelFORTH"
   IFDEF CUSTNEXT
   	db ", with custom NEXT instruction"
+  ENDIF
+  IFDEF CUSTRSP
+  	db ", with custom PUSHIX/POPIX instructions"
   ENDIF
 	db 13,10,0
 
@@ -322,10 +461,7 @@ hello:  db "Hello world from CamelFORTH"
 
 ;C EXIT     --      exit a colon definition
     head EXIT,4,'EXIT',docode
-        ld e,(ix+0)    ; pop old IP from ret stk
-        inc ix
-        ld d,(ix+0)
-        inc ix
+        rpopde         ; pop old IP from ret stk
         next
 
 ;Z lit      -- x    fetch inline literal to stack
@@ -356,10 +492,7 @@ hello:  db "Hello world from CamelFORTH"
 ; N.B.: DOCOLON must be defined before any
 ; appearance of 'docolon' in a 'word' macro!
 docolon::              ; (alternate name)
-enter:  dec ix         ; push old IP on ret stack
-        ld (ix+0),d
-        dec ix
-        ld (ix+0),e
+enter:  rpushde        ; push old IP on ret stack
   IFDEF CUSTNEXT
   	pop de		; param field addrs -> IP
 	next		; stock NEXT is plenty fast
@@ -427,10 +560,7 @@ douser::  ; -- a-addr
 ; parameter field on top of stack.
 ; (internal code fragment, not a Forth word)
 dodoes:: ; -- a-addr
-        dec ix         ; push old IP on ret stk
-        ld (ix+0),d
-        dec ix
-        ld (ix+0),e
+        rpushde        ; push old IP on ret stk
         pop de         ; adrs of new thread -> IP
         pop hl         ; adrs of parameter field
         push bc        ; push old TOS onto stack
@@ -494,20 +624,14 @@ poptos: pop bc
 
 ;C >R    x --   R: -- x   push to return stack
     head TOR,2,'>R',docode
-        dec ix          ; push TOS onto rtn stk
-        ld (ix+0),b
-        dec ix
-        ld (ix+0),c
+        rpushbc         ; push TOS onto rtn stk
         pop bc          ; pop new TOS
         next
 
 ;C R>    -- x    R: x --   pop from return stack
     head RFROM,2,'R>',docode
         push bc         ; push old TOS
-        ld c,(ix+0)     ; pop top rtn stk item
-        inc ix          ;       to TOS
-        ld b,(ix+0)
-        inc ix
+        rpopbc          ; pop top rtn stk item to TOS
         next
 
 ;C R@    -- x     R: x -- x   fetch from rtn stk
@@ -859,15 +983,11 @@ dobranch: ld a,(de)     ; get inline value => IP
         ld hl,8000h
         or a
         sbc hl,de    ; 8000-limit in HL
-        dec ix       ; push this fudge factor
-        ld (ix+0),h  ;    onto return stack
-        dec ix       ;    for later use by 'I'
-        ld (ix+0),l
+        rpushhl      ; push this fudge factor onto return
+                     ;    stack for later use by 'I'
         add hl,bc    ; add fudge to start value
-        dec ix       ; push adjusted start value
-        ld (ix+0),h  ;    onto return stack
-        dec ix       ;    as the loop index.
-        ld (ix+0),l
+        rpushhl      ; push adjusted start value onto
+                     ;    return stack as the loop index.
         pop de       ; restore the saved IP
         pop bc       ; pop new TOS
         next

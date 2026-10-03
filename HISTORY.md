@@ -80,22 +80,26 @@ to shrink the FORTH dictionary and speed up inner-interpreter dispatch.
 The instruction shall use the Z-80 register conventions of CamelFORTH:
 
 - `BC` = TOS (top parameter-stack item)
-- `HL` = W (working register)
+- `HL` = W (volatile working register)
 - `DE` = IP (interpreter pointer)
 - `SP` = PSP, `IX` = RSP, `IY` = UP
 
 It shall be encoded in the `0xED` ("Misc. Instructions") prefix space at
-opcode **`ED 27`**, a previously-unused (NOP/undocumented) slot. Its
-operation shall be equivalent to the macro:
+opcode **`ED 92`** (`0x92` / `10010010`), a previously-undefined slot in
+the ED page.  Its operation:
 
 ```
-ex de,hl / ld e,(hl) / inc hl / ld d,(hl) / inc hl / ex de,hl / jp (hl)
+PC <- (DE)          ; load the 16-bit cell at (IP) into the PC
+DE <- DE + 2        ; advance the interpreter pointer
 ```
 
-i.e. read the 16-bit cell `W` from memory at `(IP)`, advance `IP` by 2,
-load `W` into `HL`, and jump (`PC := W`). `HL = W` is required because the
-direct-threaded runtime words (`DOLIST`/`ENTER`, `DOVAR`, `DOCON`,
-`DODOES`, `EXECUTE`) derive the parameter-field address from `W` in `HL`.
+i.e. read the 16-bit cell `W` from memory at `(IP)`, advance `IP` by 2, and
+jump (`PC := W`).  Flags are untouched and `HL` is left alone: in this
+implementation `HL` is a volatile working register, so `NEXT` has no
+obligation to leave anything useful in it (unlike the stock macro, which
+shuttles the cell through `HL` because `JP (HL)` is the Z80's only
+indirect jump).  See the progress entry "Z-80 custom FORTH `NEXT`
+instruction (`ED 92`) — implemented, working" for the final implementation.
 
 ### Implement SDRAM
 
@@ -901,61 +905,6 @@ exclusion of port `+12` from the MMU read-back mux (so data flows through
 the block-RAM/SDRAM path rather than the MMU register file), and the
 27-bit pointer reaching the upper SDRAM device.
 
-### Z-80 custom FORTH `NEXT` instruction (`ED 27`) — HDL implemented, GHDL-verified, hardware test pending
-
-The CamelFORTH `NEXT` primitive has been implemented as a new Z-80
-instruction in the T80 core, entirely within
-`Components/Z80/T80_MCode.vhd` (the microcode decode table). No other
-core files (`T80.vhd`, `T80_Reg.vhd`, `T80_Pack.vhd`, `T80_ALU.vhd`,
-`T80s.vhd`) and no `.qsf` entries needed changes — the instruction is
-composed solely from existing control signals, so the core's port
-interface is unchanged.
-
-**Encoding:** `ED 27` (ED-prefix, opcode `0x27` / `00100111`), previously
-a NOP/undocumented slot. Removed `00100111` from the ED NOP list and added
-a dedicated decode arm.
-
-**Operation** (DE = IP, HL = W), equivalent to the 7-byte CamelFORTH
-`next` macro `ex de,hl / ld e,(hl) / inc hl / ld d,(hl) / inc hl /
-ex de,hl / jp (hl)`:
-
-- **MCycle 2**: address ← DE (IP); read low byte → `L` (and into
-  `TmpAddr(7:0)` via `LDZ`); `DE := DE + 1`.
-- **MCycle 3**: address ← DE (IP+1); read high byte → `H`; `DE := DE + 2`;
-  `PC := DI_Reg & TmpAddr(7:0)` via the `Jump` path.
-
-Net effect: `HL := W = mem[IP]`, `IP := IP + 2`, `PC := W`. The `Jump`
-datapath sources `PC` from the freshly-read bytes (`DI_Reg & TmpAddr`),
-exactly as `RET`/`JP nn` do, avoiding any register-file read hazard, while
-the cell is also committed to the `H`/`L` register pair using the proven
-`LD HL,(nn)` writeback pattern (so `HL = W`).
-
-**Why `HL = W`:** direct-threaded CamelFORTH runtime words (`DOLIST`/
-`ENTER`, `DOVAR`, `DOCON`, `DODOES`, `EXECUTE`) compute the parameter-field
-address from `W` held in `HL`. A jump-only instruction would break them.
-
-**Size/speed benefit:** replaces the 7-byte inline macro at the end of
-every CODE word with a 2-byte `ED 27` (≈5 bytes saved per primitive, and
-CamelFORTH has 150+ CODE words → ≈750+ bytes saved), collapsing 7
-instructions into one.
-
-**Verification status:** `ghdl -a --std=08 -fsynopsys` accepts the
-modified sources with no errors (only a pre-existing, unrelated `is_cc_true`
-hide-warning remains). Not yet exercised on hardware. **Open item for
-hardware bring-up:** the `H`-byte write commits in TState 1 of the
-following M1 fetch (standard `LD HL,(nn)` timing); confirm via FORTH
-execution that `HL = W` is observable before the next CODE word reads it.
-
-**CamelFORTH side (not done here, HDL-only):** the CamelFORTH `next` macro
-must be redefined to emit the single opcode (`DB 0EDh,27h`) instead of the
-7-instruction sequence. CamelFORTH source is not yet present in this repo
-(the RomWBW/FORTH port is future work).
-
-#### Testing Status
-
-A cursory test of this instruction reveals that it fails.  Additional,
-more detailed tests will be required to further diagnose the new
-"NEXT" instruction.
 
 ### Loadable Boot ROM (`.BIN`) and RAM-disk (`.DSK`) images from the OSD — HDL implemented, hardware test pending
 
@@ -1276,13 +1225,7 @@ real-world misbehaviour:
    (`sramData`, `sramAddress`, `n_sRam*`), `n_externalRamCS`, the unused
    `internalRam2DataOut` / `n_internalRam2CS`, and the SRAM arm of the
    `cpuDataIn` mux have been removed. See "Legacy SRAM device removed" above.
-8. **FORTH `NEXT` instruction (`ED 27`) hardware bring-up**: the T80
-   microcode is implemented and GHDL-verified, but not yet tested on
-   silicon. Confirm `HL = W`, `IP += 2`, and `PC := W` behave correctly,
-   then redefine the CamelFORTH `next` macro to emit `DB 0EDh,27h` and
-   re-run the FORTH test suite.  Initial testing inside the Camel FORTH
-   interpreter fails.  Further diagnosis and testing required.
-9. **Loadable Boot ROM (`.BIN`) / RAM-disk (`.DSK`) from OSD hardware
+8. **Loadable Boot ROM (`.BIN`) / RAM-disk (`.DSK`) from OSD hardware
    bring-up**: HDL implemented across `MultiComp.sv` and
    `MicrocomputerZ80CPM.vhd` (see the progress entry above). Quartus-compile
    and test on silicon: (a) load a known `.BIN`, confirm it boots from
@@ -2238,3 +2181,361 @@ plausible-sounding variations as this session did.
   `PADDR`-based buffers built on it in later editor screens) still isn't
   `ALLOT`-protected — see "Not fully fixed / follow-up for later" above.
 
+## Session update — custom FORTH `NEXT` instruction finalized (`ED 92`)
+
+### Z-80 custom FORTH `NEXT` instruction (`ED 92`) — implemented, working
+
+The CamelFORTH `NEXT` primitive is now a single custom Z-80 instruction,
+`ED 92`.  An earlier attempt used a different `ED` slot and did not behave
+correctly; it was removed and replaced by this `ED 92` implementation
+(HDL and software together).  Nothing in the current design depends on the
+abandoned encoding.
+
+**Why `NEXT`.**  CamelFORTH is direct-threaded: every word in the dictionary
+ends with a stub that fetches the address of the next word, advances the
+interpreter pointer, and jumps.  That stub is the `NEXT` macro and it runs
+once per word step, so a large fraction of both CPU time and dictionary byte
+count is spent on it.  Register allocation is `BC`=TOS, `HL`=W (volatile
+working register), `DE`=IP, `SP`=PSP, `IX`=RSP, `IY`=UP.
+
+**Standard macro** (stock Z80, still in the source for portability):
+
+```
+; entry: DE = IP, HL = W
+ex de,hl    ; DE = W (stashed), HL = IP — need IP to fetch
+ld e,(hl)   ; E  = (IP)      low byte of next cell
+inc hl      ; HL = IP + 1
+ld d,(hl)   ; D  = (IP + 1)  high byte of next cell
+inc hl      ; HL = IP + 2
+ex de,hl    ; DE = IP + 2 (new IP), HL = next cell
+jp (hl)     ; PC <- HL  (register value, no memory access)
+```
+
+Two points: `JP (HL)` loads the *value already in* HL into PC — it does not
+dereference memory — so the sequence's real job is to get the 16-bit cell
+into HL with the side effect of leaving the advanced IP in DE.  The two
+`EX DE,HL` are pure register shuttling: HL must hold the IP while fetching,
+then hold the cell so `JP (HL)` can jump on it, and DE must end as the new
+IP.
+
+**Custom operation.**  The instruction does the essential kernel of the
+macro and nothing else:
+
+```
+PC <- (DE)        ; 16-bit read of the cell at the IP
+DE <- DE + 2      ; advance the interpreter pointer
+```
+
+Flags are untouched and `HL` is not written.  Because `HL` is a volatile
+working register here, `NEXT` has no obligation to leave the cell in it —
+dropping that requirement is what lets the instruction stay small (a 16-bit
+read plus a jump, not a read, a register load, and a jump).  Net effect: one
+instruction and two bytes instead of seven at the hottest point in the
+system, so the dictionary is smaller and per-step dispatch is cheaper.
+
+### VHDL side (`Components/Z80/T80_MCode.vhd`)
+
+The core is T80; the ISA is defined entirely by a microcode table that, per
+opcode, emits a bundle of control signals (address-unit select,
+register-file writes, ALU op, jump/call strobes) for each machine cycle.
+Adding an instruction means adding one decode arm composed of signals the
+core already has.  The arm sits in the `ED`-prefixed case next to
+`RETI`/`RETN`, which it closely resembles since both load the PC from bytes
+just read from memory:
+
+1. Carve `0x92` out of the OR-list of "undefined ED opcode" arms and give it
+   a dedicated arm.
+2. Machine cycle 1 (the `ED` second-byte fetch): point the address unit at
+   DE (`Set_Addr_To <= aDE`) so the data reads come from the IP.
+3. Machine cycle 2: read the cell's low byte into the W/Z temporary area
+   (`LDZ`) and, at end of cycle, increment DE by one via the shared 16-bit
+   increment/decrement unit.
+4. Machine cycle 3: read the high byte into the same area (`LDW`) and fire
+   the ordinary `Jump` strobe (the one `RET`/`RETI` use) to latch PC from
+   the freshly-read byte pair, with no register-file read hazard; DE is
+   incremented a second time, ending as `DE + 2`.
+
+Three machine cycles, two memory reads, standard jump path.  Only pre-existing
+control signals are driven, so synthesis treats it like any other opcode — a
+few extra rows of decode logic.  No other core file changes and the core's
+port interface is untouched.
+
+### CamelFORTH side
+
+The change is a build-time switch so the *same kernel source* still assembles
+for a stock Z80.  In `forth/camel80.azm` the `next` macro is wrapped in
+`IFDEF CUSTNEXT`:
+
+```
+    IFDEF CUSTNEXT
+next    MACRO
+        DB  0EDh,092h   ; one custom instruction
+    ENDM
+    ...
+    ELSE
+next    MACRO
+        ex de,hl
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ex de,hl
+        jp (hl)
+    ENDM
+    ENDIF
+```
+
+Two more adjustments:
+
+- **`ENTER` (the `DOCOLON` entry point)** is re-plumbed for the custom build.
+  Stock FORTH does `pop hl` + the `nexthl` variant because stock `NEXT` gets
+  its target from HL.  Since the custom instruction reads its target from DE,
+  the CUSTNEXT build does `pop de` + `next` — the parameter-field address is
+  popped straight into the IP register and HL stays free for the word that
+  follows.
+- **The build system** keeps two kernel variants side by side: the Makefile
+  assembles `camel80.bin` without the define (stock macro, plain Z80) and
+  `camelf.bin` with `-D CUSTNEXT=1` (custom instruction, FPGA core).  The boot
+  banner picks up a `", with custom NEXT instruction"` suffix in the custom
+  build so the running kernel is identifiable at a glance.
+
+### Results
+
+Preliminary on-board timing shows FORTH code completing roughly **20%
+faster** than the same code under the stock macro, and the custom build is a
+noticeably more compact image.  `NEXT` runs on every word step, so its cost
+is multiplied by program length; collapsing it buys back both execution time
+and dictionary space at once.
+
+
+## Session update — custom return-stack instructions `PUSHIX`/`POPIX`
+
+### Summary
+
+Two families of custom Z-80 instructions were added to the T80 core to
+accelerate CamelFORTH's return stack, which lives in memory addressed by `IX`
+(RSP) and grows downward, with `IX` pointing at the low byte of the top
+item:
+
+| Instruction | Encoding | Operation | T-states | Bytes |
+|---|---|---|---|---|
+| `PUSHIX BC` / `DE` / `HL` | `ED C5` / `ED D5` / `ED E5` | `(IX-1) <- high`, `(IX-2) <- low`, `IX <- IX-2` | 14 | 2 |
+| `POPIX BC` / `DE` / `HL`  | `ED C1` / `ED D1` / `ED E1` | `low <- (IX)`, `high <- (IX+1)`, `IX <- IX+2` | 14 | 2 |
+
+Each replaces a four-instruction stock sequence of 58 T-states and 10 bytes:
+
+```
+; stock push of DE              ; stock pop of DE
+dec ix          ; 10 T          ld e,(ix+0)     ; 19 T
+ld (ix+0),d     ; 19 T          inc ix          ; 10 T
+dec ix          ; 10 T          ld d,(ix+0)     ; 19 T
+ld (ix+0),e     ; 19 T          inc ix          ; 10 T
+```
+
+Flags and `A` are untouched; no register other than the target pair and `IX`
+is written.  The memory image is exactly what the stock sequences produce,
+so custom and stock code — and the `(IX+d)`-based words `R@`, `I`, `J`,
+`(loop)`, `UNLOOP` — can be freely mixed on the same return stack.
+
+### Design considerations
+
+**Encoding: `ED` space rather than `DD`.**  The initial idea was to place the
+instructions in the `DD`-prefixed (IX) space, e.g. `DD C0`–`DD CA`.  That was
+rejected after studying how T80 handles the `DD` prefix:
+
+1. *The microcode cannot see a `DD` prefix.*  `DD` only sets the internal
+   `XY_State` register; the opcode is then decoded by the **unprefixed**
+   table (`ISet = "00"`).  `T80_MCode` has no input that distinguishes
+   `DD C0` from plain `C0` (`RET NZ`), so a new port would be needed and
+   every `DD xx` slot would have to be carved out of an existing unprefixed
+   instruction's arm.
+2. *`DD` silently remaps `H`/`L` to `IXH`/`IXL`.*  While `XY_State /= "00"`,
+   `T80.vhd` redirects every register-file access to H or L onto IX (this is
+   what makes the undocumented `LD IXH,n` etc. work).  `PUSHIX HL` would
+   therefore push IX instead of HL unless that logic were special-cased.
+3. *`DD` + "address from HL" means `(IX+d)`.*  `Set_Addr_To = aXY` under a
+   `DD` prefix automatically inserts the displacement-fetch machine cycle —
+   the opposite of what a stack operation wants.
+
+The `ED` page has none of these problems: it has its own fully decoded
+microcode table (`ISet = "10"`), `XY_State` is cleared, and the slots chosen
+were previously in the "undefined ED opcode" list.  On a real Z-80 (and on
+earlier versions of this core) those opcodes execute as 2-byte NOPs, which
+is what makes the runtime CPU check (below) possible.  The encodings mirror
+`PUSH qq`/`POP qq` (`C5/D5/E5`, `C1/D1/E1`): opcode bits 5:4 select the
+register pair, so the microcode reuses the same `DPAIR` decode.  The `AF`
+slots (`ED F5`/`ED F1`) are deliberately left undefined (still NOPs).  This
+is the same page as the custom `NEXT` (`ED 92`), so all of the project's
+custom Forth instructions now live in one place.
+
+**Datapath: two small additions to T80.**  The core had no way to (a) put
+`IX` on the address bus *without* a displacement, nor (b) increment or
+decrement `IX` outside of `DD` mode (the 16-bit inc/dec unit selects BC, DE,
+HL or SP; it only reaches IX via the `XY_State` remap).  Both were added
+with minimal, isolated changes:
+
+- **New address source `aIX`** (`Set_Addr_To = "011"`, an encoding that was
+  previously unused).  In `T80.vhd` it forces the register-file read port C
+  (`RegAddrC`) to register 3 (IX), and the address latch takes `RegBusC`
+  just as it does for `aBC`/`aDE`.  Note that it is hard-wired to `"011"`,
+  **not** `Alternate & "11"`: the register file holds BC/DE/HL at 0–2, IX at
+  3, the alternate BC'/DE'/HL' at 4–6 and IY at 7, so using the `EXX` bank
+  bit would select IY whenever the alternate bank is active.  (This exact
+  bug was injected as a mutation test and is caught by the testbench.)
+- **New microcode output `IncDec_IX`.**  When asserted together with
+  `IncDec_16 = "x110"` (the HL code) it redirects the inc/dec unit's
+  register-file port (`RegAddrA`) to IX.  The existing write-enable,
+  `ID16` adder and `Wait_n` gating are reused unchanged.
+
+`T80_MCode.vhd` gained the two decode arms, the `aIX` constant and the
+`IncDec_IX` port (default `'0'`); `T80_Pack.vhd` the matching component
+port.  The `T80`/`T80s` external interface is unchanged.
+
+**Timing: 14 T-states, 4/4/3/3.**  `PUSH qq` needs a 5-T opcode fetch
+because SP is a separate register updated at T4.  IX lives in the register
+file, whose inc/dec happens at T3 of M1, so the first decrement is complete
+before the address is latched at the end of T4 and M1 stays at the default
+4 T.  Sequence for `PUSHIX`: M1 (`ED`, 4 T) → M1 (opcode, 4 T: `IX--`,
+`A <- IX`) → M2 (3 T: write high, `IX--`, `A <- IX`) → M3 (3 T: write low).
+`POPIX` is the mirror image, with register writes happening through the
+normal `Read_To_Reg` path exactly as in `POP qq`.  This matches the custom
+`NEXT`, which is also 14 T.
+
+**Other properties checked.**
+- *Flags:* the ED arms leave `ALU_Op` at its default `0 & IR(5:3)`
+  (`0000`/`0010`/`0100`, never the `1001` that forces a flag update) with
+  `Save_ALU = '0'`, and the `Z16` path is not triggered, so F is untouched.
+- *Interrupts:* T80 never accepts an interrupt between a prefix and its
+  opcode, so each instruction is atomic.
+- *Wait states:* the IX update happens once per machine cycle regardless of
+  how long `WAIT_n` is held (verified with random wait states — relevant
+  because this board inserts waits for SDRAM).
+- *`EXX`:* the pushed/popped pair comes from whichever bank is current; IX is
+  not banked.
+
+### Comparison with the standard CamelFORTH code
+
+T-state figures below were **measured on the T80 core in simulation** for
+every sequence involving the custom instructions, `NEXT`, `CALL`, `POP` and
+`PUSH`; they match the Zilog datasheet exactly.  (Correction to the `ED 92`
+notes above and in the commit message: the stock `NEXT` macro is **38 T**,
+not 40 T; `nexthl` is 34 T.)  The remaining instructions in `(do)` use
+datasheet values.  Each primitive's cost includes its own trailing `NEXT`;
+`ENTER` and `DODOES` include the 17 T `CALL` from the word's code field.
+
+| Primitive | Stock Z-80 | Custom `NEXT` only | `NEXT` + `PUSHIX`/`POPIX` | vs. `NEXT` only |
+|---|---:|---:|---:|---:|
+| `ENTER` (docolon) | 119 T | 99 T | **55 T** | −44 % |
+| `EXIT` | 96 T | 72 T | **28 T** | −61 % |
+| `>R` | 106 T | 82 T | **38 T** | −54 % |
+| `R>` | 107 T | 83 T | **39 T** | −53 % |
+| `DODOES` | 152 T | 128 T | **84 T** | −34 % |
+| `(do)` | 241 T | 217 T | **129 T** | −41 % |
+
+The figure that matters most is the overhead of calling a colon definition:
+the `NEXT` that dispatches to it, `ENTER`, the `NEXT` that dispatches to its
+`EXIT`, and `EXIT` itself (the definition's body is excluded):
+
+| | Stock Z-80 | Custom `NEXT` only | `NEXT` + `PUSHIX`/`POPIX` |
+|---|---:|---:|---:|
+| Colon call + return overhead | 291 T | 199 T | **111 T** |
+| relative to stock | 100 % | 68 % | **38 %** |
+
+So the return-stack instructions remove 88 T from every high-level call on
+top of what the custom `NEXT` already saved: colon-call overhead drops to
+about 56 % of the NEXT-only build and 38 % of the stock build.  Since
+`ENTER`/`EXIT` run once per call of every colon definition, code built from
+many small definitions (idiomatic Forth) benefits most; tight loops of code
+primitives benefit mainly from `NEXT`.
+
+Code size: each converted site shrinks from 10 bytes to 2.  Seven sites were
+converted (`EXIT`, `ENTER`, `DODOES`, `>R`, `R>`, and both pushes in
+`(do)`), saving 56 bytes of kernel.
+
+Not converted, because they *peek* or *modify in place* rather than push or
+pop: `R@` (`ld c,(ix+0)` / `ld b,(ix+1)`, 38 T), `I`, `J`, `(loop)`/`(+loop)`
+(read-modify-write of the index via `(IX+d)`) and `UNLOOP` (four `inc ix`,
+40 T).  These are candidates for further instructions (e.g. a non-popping
+"fetch top of return stack" or `IX += 4`) if profiling shows they matter.
+
+### CamelFORTH changes (`forth/camel80.azm`, `forth/Makefile`)
+
+- **`CUSTRSP` build define.**  New macros `rpushbc`, `rpushde`, `rpushhl`,
+  `rpopbc`, `rpopde`, `rpophl` expand to the custom 2-byte instructions when
+  `CUSTRSP` is defined, and to the original stock four-instruction sequences
+  otherwise.  The stock, CP/M and NEXT-only kernels assemble
+  **byte-identical** to the previous build without the define (verified by
+  binary comparison).  `rpophl` is defined for completeness but currently
+  unused: no kernel code pops the return stack into HL (the `HL` loads in
+  `(loop)`, `I` and `J` read the loop parameters in place with `(IX+d)`).
+- **um80 listing quirk** (found while checking `rpophl`): on a line that has
+  both a label and a multi-line macro call, the `.prn` listing shows the
+  address of the macro's *last* expanded instruction, not the label's.  The
+  label's actual value (in the symbol table) and the generated code are
+  correct.  Use the `.sym` file, not the listing, to find label addresses.
+- **Makefile:** `camelf.bin` is now assembled with
+  `-D CUSTNEXT=1 -D CUSTRSP=1`.  **It requires an FPGA core containing the
+  new instructions.**  `camel80.bin` (stock) is unchanged.
+- **Boot banner** adds `", with custom PUSHIX/POPIX instructions"`.
+- **Startup CPU check.**  When either `CUSTNEXT` or `CUSTRSP` is defined
+  (helper symbol `CUSTCPU`), `reset::` verifies, right after the stacks and
+  IX/IY are set up, that the CPU really implements the instructions the
+  kernel was built for:
+  - `NEXT`: `ld de,cpuck1` / `ED 92` must jump through the table entry;
+    falling through means `ED 92` executed as a NOP.
+  - `PUSHIX`/`POPIX`: with BC=0 and DE=1234h, `PUSHIX DE` / `POPIX BC` must
+    leave BC=1234h.
+
+  On failure a message naming the missing instruction(s) is printed; the
+  CP/M build then exits with `jp 0` (warm boot) and the standalone build
+  disables interrupts and halts (looping on `HALT` so an NMI cannot restart
+  it).  Cost: about 230 bytes, mostly message text; non-custom builds are
+  unaffected.  Verified in simulation (table below); the CP/M exit path
+  assembles but has not been run, because the simulator provides no CP/M
+  environment.
+
+  | Core | Kernel | Result |
+  |---|---|---|
+  | new (this work) | NEXT + PUSHIX/POPIX | passes, boots, `1 2 3 + + .` → `6 ok`, `: SQ DUP * ; 7 SQ .` → `49 ok` |
+  | new | PUSHIX/POPIX only, NEXT only | passes, boots |
+  | previous (`ED 92` only) | NEXT + PUSHIX/POPIX | prints PUSHIX/POPIX message, halts |
+  | previous | NEXT only | passes, boots |
+  | original stock T80 | NEXT only, NEXT + PUSHIX/POPIX | prints NEXT message (first check to fail), halts |
+
+### Verification (GHDL, `sim/`)
+
+- **`sim/run_ixmin.sh`** (`tb_ixmin.vhd`) — minimal, one instruction per
+  case: a tiny hand-assembled program sets registers, executes a single
+  custom instruction and halts; registers are checked via the core's `REG`
+  debug output (read with a VHDL-2008 external name, because `T80s` leaves
+  that port unconnected) and stack bytes in RAM.  10 cases: each of the six
+  instructions, other pairs left untouched, AF preserved by push and pop,
+  and a push/pop round trip.  All pass on the new core; as a control, the
+  same test run against the previous core (where these opcodes are NOPs)
+  fails in exactly the expected way.
+- **`sim/run_ixstack.sh`** (`tb_ixstack.vhd`/`.asm`) — broader regression:
+  59 result bytes covering all pairs, flags, back-to-back use, the `EXX`
+  bank, `POPIX DE` immediately followed by `NEXT` (the `EXIT` path), IX
+  wrap-around at 0000h, stock `(IX+d)`/`INC IX`/`PUSH`/`POP` still working,
+  IY/SP untouched and `ED F5`/`ED F1` still NOPs; M1-to-M1 timing checks
+  (14 T each); and three runs with pseudo-random `WAIT_n` states.  Two
+  injected faults (wrong IX register select under `EXX`; IX inc/dec
+  disabled) were both caught.
+- **`sim/tb_forth.vhd`** — boots a real kernel image with an emulated ACIA
+  console (ports 82h/83h) and feeds it Forth source.  Used for the
+  CPU-check matrix above.  It simulates only about 27 k CPU clocks/s and one
+  interpreted line costs 1–2 M clocks (mostly dictionary search), so
+  `sim/run_forth.sh`, which runs a long script on three kernels, needs a
+  much shorter script before it is practical; it should not yet be treated
+  as a benchmark.
+
+### Status / next steps
+
+- HDL simulated and verified as above.  **Built and run successfully on
+  hardware:** the new FPGA core with the `camelf.bin` kernel (custom `NEXT`
+  + `PUSHIX`/`POPIX`) works on the board.
+- Benchmark on the board: `camel80.bin` vs a NEXT-only build vs `camelf.bin`,
+  ideally on a call-heavy word (e.g. recursive `FIB`) and a primitive-heavy
+  loop, to compare with the per-primitive figures above.
+- Possible follow-ups: non-popping return-stack fetch for `R@`/`I`, and
+  `IX += 4` for `UNLOOP`/`(loop)` termination.

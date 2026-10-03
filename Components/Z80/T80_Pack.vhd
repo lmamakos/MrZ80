@@ -137,6 +137,7 @@ package T80_Pack is
 		Inc_PC			: out std_logic;
 		Inc_WZ			: out std_logic;
 		IncDec_16		: out std_logic_vector(3 downto 0); -- BC,DE,HL,SP   0 is inc
+		IncDec_IX		: out std_logic; -- custom: IncDec_16 "x110" targets IX instead of HL
 		Read_To_Reg		: out std_logic;
 		Read_To_Acc		: out std_logic;
 		Set_BusA_To	: out std_logic_vector(3 downto 0); -- B,C,D,E,H,L,DI/DB,A,SP(L),SP(M),0,F

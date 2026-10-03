@@ -90,6 +90,7 @@ entity T80_MCode is
 		Inc_PC			: out std_logic;
 		Inc_WZ			: out std_logic;
 		IncDec_16		: out std_logic_vector(3 downto 0); -- BC,DE,HL,SP   0 is inc
+		IncDec_IX		: out std_logic; -- custom: IncDec_16 "x110" targets IX instead of HL
 		Read_To_Reg		: out std_logic;
 		Read_To_Acc		: out std_logic;
 		Set_BusA_To	: out std_logic_vector(3 downto 0); -- B,C,D,E,H,L,DI/DB,A,SP(L),SP(M),0,F
@@ -99,7 +100,7 @@ entity T80_MCode is
 		Save_ALU		: out std_logic;
 		PreserveC		: out std_logic;
 		Arith16			: out std_logic;
-		Set_Addr_To		: out std_logic_vector(2 downto 0); -- aNone,aXY,aIOA,aSP,aBC,aDE,aZI
+		Set_Addr_To		: out std_logic_vector(2 downto 0); -- aNone,aXY,aIOA,aSP,aBC,aDE,aZI,aIX
 		IORQ			: out std_logic;
 		Jump			: out std_logic;
 		JumpE			: out std_logic;
@@ -143,6 +144,7 @@ architecture rtl of T80_MCode is
 	constant aIOA	: std_logic_vector(2 downto 0) := "100";
 	constant aSP	: std_logic_vector(2 downto 0) := "101";
 	constant aZI	: std_logic_vector(2 downto 0) := "110";
+	constant aIX	: std_logic_vector(2 downto 0) := "011";	-- custom: A <- IX (no displacement)
 --	constant aNone	: std_logic_vector(2 downto 0) := "000";
 --	constant aXY	: std_logic_vector(2 downto 0) := "001";
 --	constant aIOA	: std_logic_vector(2 downto 0) := "010";
@@ -204,6 +206,7 @@ begin
 		Inc_PC <= '0';
 		Inc_WZ <= '0';
 		IncDec_16 <= "0000";
+		IncDec_IX <= '0';
 		Read_To_Acc <= '0';
 		Read_To_Reg <= '0';
 		Set_BusB_To <= "0000";
@@ -1500,11 +1503,11 @@ begin
 				|                                            "10101100"|"10101101"|"10101110"|"10101111"
 				|                                            "10110100"|"10110101"|"10110110"|"10110111"
 				|                                            "10111100"|"10111101"|"10111110"|"10111111"
-				|"11000000"|"11000001"|"11000010"|"11000011"|"11000100"|"11000101"|"11000110"|"11000111"
+				|"11000000"|           "11000010"|"11000011"|"11000100"|           "11000110"|"11000111"
 				|"11001000"|"11001001"|"11001010"|"11001011"|"11001100"|"11001101"|"11001110"|"11001111"
-				|"11010000"|"11010001"|"11010010"|"11010011"|"11010100"|"11010101"|"11010110"|"11010111"
+				|"11010000"|           "11010010"|"11010011"|"11010100"|           "11010110"|"11010111"
 				|"11011000"|"11011001"|"11011010"|"11011011"|"11011100"|"11011101"|"11011110"|"11011111"
-				|"11100000"|"11100001"|"11100010"|"11100011"|"11100100"|"11100101"|"11100110"|"11100111"
+				|"11100000"|           "11100010"|"11100011"|"11100100"|           "11100110"|"11100111"
 				|"11101000"|"11101001"|"11101010"|"11101011"|"11101100"|"11101101"|"11101110"|"11101111"
 				|"11110000"|"11110001"|"11110010"|"11110011"|"11110100"|"11110101"|"11110110"|"11110111"
 				|"11111000"|"11111001"|"11111010"|"11111011"|"11111100"|"11111101"|"11111110"|"11111111" =>
@@ -1811,6 +1814,77 @@ begin
                                       IncDec_16 <= "0101";        -- end-T2: DE <- DE_old + 2
                                   when others => null;
                                 end case;
+
+			when "11000101"|"11010101"|"11100101" =>	-- ED C5 / ED D5 / ED E5
+				-- PUSHIX rr (custom), rr = BC / DE / HL   [14 T total]
+				--   IX <- IX - 1 ; (IX) <- rr(high)
+				--   IX <- IX - 1 ; (IX) <- rr(low)
+				-- Pushes a register pair onto a stack addressed by IX
+				-- (CamelFORTH's return stack), replacing:
+				--   DEC IX / LD (IX+0),hi / DEC IX / LD (IX+0),lo   (58 T)
+				-- Opcode bits 5:4 select the pair exactly as for PUSH qq
+				-- (C5/D5/E5); the AF slot (ED F5) is not implemented.
+				-- Flags untouched.  The pair comes from the currently
+				-- selected (EXX) register bank; IX is not banked.
+				--
+				-- Datapath: Set_Addr_To = aIX addresses memory directly
+				-- from the IX register (no (IX+d) displacement cycle), and
+				-- IncDec_IX steers the 16-bit inc/dec unit from HL onto IX
+				-- (IncDec_16(1 downto 0) must be "10" when it is used).
+				-- Unlike SP, IX lives in the register file, so its
+				-- decrement in M1 lands at the end of T3 and M1 can stay
+				-- at the default 4 T.
+				MCycles <= "011";
+				case to_integer(unsigned(MCycle)) is
+				when 1 =>
+					IncDec_16 <= "1110";		-- end-T3: IX <- IX - 1
+					IncDec_IX <= '1';
+					Set_Addr_To <= aIX;		-- end-T4: A <- IX - 1
+					Set_BusB_To(2 downto 1) <= DPAIR;	-- B / D / H
+					Set_BusB_To(0) <= '0';
+					Set_BusB_To(3) <= '0';
+				when 2 =>
+					Write <= '1';			-- (IX_old - 1) <- high
+					IncDec_16 <= "1110";		-- end-T2: IX <- IX - 2
+					IncDec_IX <= '1';
+					Set_Addr_To <= aIX;		-- end-T3: A <- IX - 2
+					Set_BusB_To(2 downto 1) <= DPAIR;	-- C / E / L
+					Set_BusB_To(0) <= '1';
+					Set_BusB_To(3) <= '0';
+				when 3 =>
+					Write <= '1';			-- (IX_old - 2) <- low
+				when others => null;
+				end case;
+
+			when "11000001"|"11010001"|"11100001" =>	-- ED C1 / ED D1 / ED E1
+				-- POPIX rr (custom), rr = BC / DE / HL   [14 T total]
+				--   rr(low)  <- (IX) ; IX <- IX + 1
+				--   rr(high) <- (IX) ; IX <- IX + 1
+				-- Pops a register pair from the IX-addressed stack,
+				-- replacing:
+				--   LD lo,(IX+0) / INC IX / LD hi,(IX+0) / INC IX   (58 T)
+				-- Opcode bits 5:4 select the pair exactly as for POP qq
+				-- (C1/D1/E1); the AF slot (ED F1) is not implemented.
+				-- Flags untouched.  See PUSHIX above for the datapath.
+				MCycles <= "011";
+				case to_integer(unsigned(MCycle)) is
+				when 1 =>
+					Set_Addr_To <= aIX;		-- end-T4: A <- IX
+				when 2 =>
+					Read_To_Reg <= '1';		-- low <- (IX_old)
+					Set_BusA_To(2 downto 1) <= DPAIR;	-- C / E / L
+					Set_BusA_To(0) <= '1';
+					IncDec_16 <= "0110";		-- end-T2: IX <- IX + 1
+					IncDec_IX <= '1';
+					Set_Addr_To <= aIX;		-- end-T3: A <- IX_old + 1
+				when 3 =>
+					Read_To_Reg <= '1';		-- high <- (IX_old + 1)
+					Set_BusA_To(2 downto 1) <= DPAIR;	-- B / D / H
+					Set_BusA_To(0) <= '0';
+					IncDec_16 <= "0110";		-- end-T2: IX <- IX_old + 2
+					IncDec_IX <= '1';
+				when others => null;
+				end case;
 
 			when "01000101"|"01001101"|"01010101"|"01011101"|"01100101"|"01101101"|"01110101"|"01111101" =>
 				-- RETI, RETN

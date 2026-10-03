@@ -13,9 +13,11 @@ all:	camel80.bin camelf.bin camel80cpm.com
 camel80.rel:	camel80.azm camel80d.azm camel80h.azm cameltst.azm io-multi.azm
 	um80 camel80.azm -D BOOTABLE=1 -g -o camel80.rel -l camel80.prn
 
-# this version enabled for custom NEXT instruction in FPGA T80 CPU
+# this version enabled for custom instructions in FPGA T80 CPU:
+#   CUSTNEXT = NEXT (ED 92), CUSTRSP = PUSHIX/POPIX return stack ops
+#   (ED C5/D5/E5, ED C1/D1/E1).  Requires a core with both.
 camelf.rel:	camel80.azm camel80d.azm camel80h.azm cameltst.azm io-multi.azm
-	um80 camel80.azm -D BOOTABLE=1 -D CUSTNEXT=1 -g -o camelf.rel -l camelf.prn
+	um80 camel80.azm -D BOOTABLE=1 -D CUSTNEXT=1 -D CUSTRSP=1 -g -o camelf.rel -l camelf.prn
 
 # CP/M variant: same camel80.azm kernel, assembled with -D CPM so it
 # INCLUDEs io-cpm.azm (BDOS file I/O) instead of io-multi.azm (embedded

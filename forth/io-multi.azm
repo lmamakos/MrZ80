@@ -69,15 +69,6 @@ key1:   IN A,(C)
   head bootextend,4,'INIT',docolon
     DW LIT,0,load$extend, LIT,1,load$extend, EXIT
 
-
-;X NTEST   -- 42        return 42
-    head NTEST,5,'NTEST',docode
-	PUSH BC
-	LD B,0
-	LD C,42
-;	NEXT
-	DB 0EDh, 092h	; custom instruction
-	
 ; NOTE: 2! and 2@ are already defined (as TWOSTORE/TWOFETCH) in
 ; camel80h.azm.  The duplicate definitions that used to live here were
 ; both broken (multiply-defined symbol, and ';'-comments miswritten as

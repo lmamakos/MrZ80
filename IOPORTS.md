@@ -105,3 +105,40 @@ shift accordingly.
 | `0xA6`| R/W | Framebuffer bit at the global pointer. Both reads and writes auto-advance the pointer.    |
 | `0xA7`| --  | Reserved (reads 0, writes ignored).                                                       |
 
+
+## Custom CPU instructions
+
+The T80 Z-80 core (`Components/Z80/T80_MCode.vhd`, `T80.vhd`) implements
+the following non-standard instructions, all in previously undefined slots
+of the `ED`-prefixed page.  On a stock Z-80 (and on earlier versions of this
+core) these opcodes execute as 2-byte NOPs.  None of them affect the flags.
+
+| Mnemonic    | Encoding | Operation                                              | T-states | Replaces (stock Z-80)                                   |
+|-------------|----------|--------------------------------------------------------|---------:|---------------------------------------------------------|
+| `F_NEXT`    | `ED 92`  | `PC <- (DE)`, `DE <- DE + 2`                           | 14 | `ex de,hl` / `ld e,(hl)` / `inc hl` / `ld d,(hl)` / `inc hl` / `ex de,hl` / `jp (hl)` (38 T, 7 bytes) |
+| `PUSHIX BC` | `ED C5`  | `(IX-1) <- B`, `(IX-2) <- C`, `IX <- IX - 2`           | 14 | `dec ix` / `ld (ix+0),b` / `dec ix` / `ld (ix+0),c` (58 T, 10 bytes) |
+| `PUSHIX DE` | `ED D5`  | `(IX-1) <- D`, `(IX-2) <- E`, `IX <- IX - 2`           | 14 | as above, with `d` / `e`                                |
+| `PUSHIX HL` | `ED E5`  | `(IX-1) <- H`, `(IX-2) <- L`, `IX <- IX - 2`           | 14 | as above, with `h` / `l`                                |
+| `POPIX BC`  | `ED C1`  | `C <- (IX)`, `B <- (IX+1)`, `IX <- IX + 2`             | 14 | `ld c,(ix+0)` / `inc ix` / `ld b,(ix+0)` / `inc ix` (58 T, 10 bytes) |
+| `POPIX DE`  | `ED D1`  | `E <- (IX)`, `D <- (IX+1)`, `IX <- IX + 2`             | 14 | as above, with `e` / `d`                                |
+| `POPIX HL`  | `ED E1`  | `L <- (IX)`, `H <- (IX+1)`, `IX <- IX + 2`             | 14 | as above, with `l` / `h`                                |
+
+Notes:
+
+- All instructions are 2 bytes long.  `ED F5` / `ED F1` (the `AF` positions
+  in the `PUSH`/`POP` encoding pattern) are **not** implemented and remain
+  NOPs.
+- `PUSHIX`/`POPIX` treat `IX` as a stack pointer for a stack that grows
+  downward, with `IX` pointing at the low byte of the top item — the layout
+  CamelFORTH uses for its return stack.  The register pair is taken from the
+  currently selected (`EXX`) register bank; `IX` itself is not banked.
+- No assembler supports these mnemonics; emit them with `DB`.  CamelFORTH
+  (`forth/camel80.azm`) wraps them in macros selected by build defines:
+  `CUSTNEXT` (`next`) and `CUSTRSP` (`rpushbc`/`rpushde`/`rpushhl`,
+  `rpopbc`/`rpopde`/`rpophl`).  Without the defines the macros expand to the
+  equivalent stock Z-80 sequences.
+- Kernels built with either define check at startup that the CPU implements
+  the instructions, and print an error and halt (standalone) or exit
+  (CP/M) if it does not.
+- Design notes, cycle-level comparison and verification:
+  `HISTORY.md` and `blog-custom-instructions.md`.
