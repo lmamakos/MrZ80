@@ -76,6 +76,7 @@
 ;   (load the resulting flat .BIN via OSD with Boot Load Target = Block RAM)
 ; ============================================================================
 
+		.z80
                 org     0000h
 
 ; ---- configuration ---------------------------------------------------------

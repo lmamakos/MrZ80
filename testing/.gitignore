@@ -1,2 +1,8 @@
 *.BIN
 *.bin
+*.prn
+*.lst
+*.rel
+*.hex
+*.sym
+*~
