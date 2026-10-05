@@ -43,7 +43,7 @@
 ;       0x83 = data
 ;
 ; BUILD
-;   pasmo --bin testing/sdramexec.asm testing/sdramexec.bin
+;   with Makefile rules
 ;   (load the flat .BIN via OSD with Boot Load Target = Block RAM)
 ; ============================================================================
 

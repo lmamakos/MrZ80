@@ -72,7 +72,7 @@
 ;   per-page progress line).
 ;
 ; BUILD
-;   pasmo --bin testing/sdramtest.asm testing/sdramtest.bin
+;   with Makefile
 ;   (load the resulting flat .BIN via OSD with Boot Load Target = Block RAM)
 ; ============================================================================
 

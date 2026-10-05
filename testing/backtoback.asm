@@ -127,7 +127,7 @@
 ;         0x83 = data (read = RX, write = TX)
 ;
 ; BUILD
-;   pasmo --bin testing/backtoback.asm testing/backtoback.bin
+;   with Makefile
 ;     (load the flat .BIN via OSD with Boot Load Target = Block RAM)
 ; ============================================================================
 

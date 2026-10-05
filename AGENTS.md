@@ -131,6 +131,9 @@ For real, repeatable builds (not one-off exploration), prefer `forth/Makefile`
 (`cd forth && make`) over `z80asm.sh` — the Makefile is the source of truth
 for how `camel80.bin`/`forth.blk` are actually built and installed.
 
+Despite `pasmo` being available, DO NOT use `pasmo` to assemble any Z80
+assembly code programs.  Use the `um80`, `ul80` tools instead.
+
 ## Target device
 
 Cyclone V `5CSEBA6U23I7` (DE10-Nano / MiSTer).
