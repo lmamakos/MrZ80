@@ -222,9 +222,14 @@ architecture struct of MicrocomputerZ80CPM is
         signal fpChainStatic : std_logic;
 
 	signal serialClkCount				: unsigned(15 downto 0);
-	signal cpuClkCount				: std_logic_vector(5 downto 0); 
+	signal cpuClkCount				: std_logic_vector(5 downto 0) := (others => '0');
 	signal sdClkCount				: std_logic_vector(5 downto 0); 	
-	signal cpuClock					: std_logic;
+	-- CPU clock enable. The T80 is clocked by clk (50 MHz) and advances
+	-- one T-state on each clk edge at which cpu_cen = '1': one clk cycle in
+	-- five (10 MHz). cpu_cen is high during the clk cycle in which
+	-- cpuClkCount = 2, so the T80 updates on the same clk edges as the
+	-- rising edge of the old fabric-derived cpuClock register did.
+	signal cpu_cen					: std_logic := '0';
 	signal serialClock				: std_logic;
 	signal sdClock					: std_logic;
 
@@ -234,12 +239,17 @@ architecture struct of MicrocomputerZ80CPM is
 	
 begin
 	--CPM
-	-- Disable ROM if out 38. Re-enable when (asynchronous) reset pressed
-	process (n_ioWR, N_RESET) begin
-		if (N_RESET = '0') then
-			n_RomActive <= '0';
-		elsif (rising_edge(n_ioWR)) then
-			if cpuAddress(7 downto 0) = "00111000" then -- $38
+	-- Disable ROM on any OUT to port $38; re-enable on reset. Sampled in
+	-- the clk domain during the I/O write strobe (the address is stable
+	-- throughout it), like fpLatch, rather than clocked by the n_ioWR
+	-- strobe itself as in the original MultiComp. The ROM is disabled a
+	-- few clk cycles earlier than before (start rather than end of the
+	-- write strobe); no memory read can occur in between.
+	process (clk) begin
+		if rising_edge(clk) then
+			if N_RESET = '0' then
+				n_RomActive <= '0';
+			elsif n_ioWR = '0' and cpuAddress(7 downto 0) = "00111000" then -- $38
 				n_RomActive <= '1';
 			end if;
 		end if;
@@ -269,7 +279,8 @@ cpu1 : entity work.t80s
 generic map(mode => 1, t2write => 1, iowait => 0)
 port map(
 	reset_n => reset_n_internal,
-	clk_n => cpuClock,
+	clk_n => clk,
+	cen => cpu_cen,
 	wait_n => cpu_wait_n,
 	int_n => '1',
 	nmi_n => '1',
@@ -670,7 +681,7 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
 --   to SDRAM (the boot-from-.BIN case) that refresh address ALSO decodes as
 --   SDRAM, so mmu_req_mem_out stays high continuously from the data phase
 --   into the refresh phase -- there is no clean MREQ=0 gap between them at
---   the 50 MHz FSM sampling rate (the CPU runs on the ~10 MHz cpuClock, so
+--   the 50 MHz FSM sampling rate (the CPU advances at ~10 MHz, so
 --   whether the FSM catches the momentary MREQ deassert is alignment-
 --   dependent -> non-deterministic). Keying the S_DONE exit and re-arm off
 --   the actual read/write strobe (mmu_req_read / mmu_req_write), which is
@@ -773,19 +784,20 @@ begin
 					-- below is restored.
 					--
 					-- WAIT-RELEASE PHASE GUARD (SDRAM-review-handoff.md,
-					-- section 5 / step 3a). The T80 is clocked by the
-					-- fabric-derived cpuClock, which RISES on the clk edge at
-					-- which (old) cpuClkCount = 2. If sdram_wait_n changed on
-					-- that same edge, individual T80 flip-flops (TState,
-					-- IR/DI_Reg load enables, PC, RD_n/MREQ_n hold, ...)
-					-- could capture a mixture of the old and new Wait_n value
-					-- (STA: hold violations to -4.1 ns, fast corner), leaving
-					-- the CPU in an inconsistent state -- an intermittently
-					-- mis-executed instruction. So never release on that
-					-- edge; release one clk later instead (sdram_wait_n is
-					-- only ever low for SDRAM cycles, so non-SDRAM cycles are
-					-- unaffected). The exit test below is still correct: the
-					-- CPU cannot drop RD/WR until it has seen Wait_n = '1'.
+					-- section 5 / step 3a). Introduced when the T80 was
+					-- clocked by a fabric-derived cpuClock register rising on
+					-- the clk edge at which (old) cpuClkCount = 2: a Wait_n
+					-- change on that same edge raced the T80 flip-flops
+					-- (hold violations to -4.1 ns). The T80 now runs from clk
+					-- with the cpu_cen enable (REQUIREMENTS.md item 4.1), so
+					-- on that edge it simply samples the old Wait_n and the
+					-- race is gone; the guard is now redundant but harmless
+					-- (a release deferred from that edge to the next one is
+					-- still seen at the same, following, cpu_cen edge). It is
+					-- kept so step 1 of 4.1 is cycle-identical, and is to be
+					-- removed in step 2. The exit test below is still
+					-- correct: the CPU cannot drop RD/WR until it has seen
+					-- Wait_n = '1'.
 					if cpuClkCount /= "000010" then
 						sdram_wait_n <= '1';
 					end if;
@@ -842,11 +854,15 @@ begin
 			cpuClkCount <= (others=>'0');
 		end if;
 		
-		if cpuClkCount < 2 then -- 2 when 10MHz, 2 when 12.5MHz, 2 when 16.6MHz, 1 when 25MHz
-			cpuClock <= '0';
+		-- One-clk-in-five CPU clock enable, high while cpuClkCount = 2 (set
+		-- on the edge at which the old count is 1). If the divider above is
+		-- changed, cpu_cen must still be high for exactly one clk per
+		-- count cycle.
+		if cpuClkCount = 1 then
+			cpu_cen <= '1';
 		else
-			cpuClock <= '1';
-		end if; 
+			cpu_cen <= '0';
+		end if;
 
 		if sdClkCount < 16 then -- 5MHz
 			sdClkCount <= sdClkCount + 1;

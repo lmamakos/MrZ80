@@ -2758,3 +2758,74 @@ onto one line.)
 
 Hardware check: the new kernels (`MS@`/`US@`) and `forth.blk` with the
 `27-bench.fth` helpers were run on the MiSTer and work as expected.
+
+---
+
+## Session update — T80 clock enable, step 1 (`REQUIREMENTS.md` item 4.1)
+
+The T80 is now clocked by `clk` (50 MHz) with a one-in-five clock enable
+instead of the fabric-derived `cpuClock` register.
+
+- `Components/Z80/T80s.vhd` (`LOCAL` change, noted in the file history):
+  new `CEN` input, default `'1'` so the testbenches that instantiate `T80s`
+  directly are unchanged. It is passed to the T80 core (already fully
+  `CEN`/`ClkEn`-gated, no falling-edge logic) and now also gates the
+  `RD_n`/`WR_n`/`IORQ_n`/`MREQ_n`/`DI_Reg` process.
+- `MicrocomputerZ80CPM.vhd`: `cpu1` gets `clk_n => clk`, `cen => cpu_cen`.
+  `cpu_cen` is a register set on the edge at which the old `cpuClkCount`
+  is 1, i.e. high during the clk cycle with `cpuClkCount = 2`, so the T80
+  updates on exactly the clk edges on which `cpuClock` used to rise:
+  same 10 MHz, same wait-state timing, strobes change on the same edges.
+  `cpuClock` is deleted; `cpuClkCount` gets an initial value (helps GHDL;
+  the FPGA powers up at 0 anyway).
+- `n_RomActive` (port `$38` boot-ROM disable) was clocked by the
+  `n_ioWR` strobe; it is now a `clk`-domain register set while
+  `n_ioWR = '0'` and the address is `$38` (the same pattern as `fpLatch`).
+  The ROM is disabled at the start instead of the end of that `OUT`'s
+  write strobe; no memory read can happen in between.
+- The `S_DONE` wait-release guard (`cpuClkCount /= 2`) is kept for this
+  step: with the enable, a release on that edge is simply sampled at the
+  following `cpu_cen` edge, the same edge as the deferred release, so it is
+  now redundant but harmless. Its comment is updated; it goes in step 2.
+- `MultiComp.sdc`: removed the `cpuClk` generated clock, the
+  `-hold -start 1` list (`sdram_wait_n`, `sdramReadData`, MMU, `fpLatch`,
+  `BenchTimer` snapshots, block RAM / ROM) and the "accepted
+  peripheral-read hold" note. Added `set_multicycle_path` setup 5 / hold 4
+  from T80 to T80 registers (`T80s:cpu1|*`: both ends only change/sample on
+  `cpu_cen` edges, 5 clk apart). Every other path into or out of the T80
+  is now an ordinary one-period `clk_sys` path. Kept, retargeted to the T80
+  registers: the `bin_loaded`/`status[13]` false paths, the front-panel
+  `captured_bits` false path, and the T80 → block RAM / boot ROM setup 4 /
+  hold 3 multicycle. That last one was meant to go, but the argument for it
+  still holds (the T80 uses the RAM's output at least one T-state after
+  launching the address) and the path needs it: 61 ns slack against 80 ns
+  at the slow corner, i.e. ~19 ns of data path, too close to a single 20 ns
+  period.
+- Simulation: `sim/run.sh` (tb_inir_race) gives the same result as before
+  (115 iterations in the 20 ms window, 0 mismatches). A VCD of the CPU bus
+  (`cpuAddress`, `cpuDataOut`, `cpuDataIn`, `n_MREQ`, `n_IORQ`, `n_RD`,
+  `n_WR`, `cpu_wait_n`, `sdram_state`, `n_RomActive`) over the first 3 ms is
+  byte-identical to the one from the previous commit, confirming the
+  conversion is cycle-identical. `run_ixmin.sh` and `run_ixstack.sh` (which
+  use `T80s` with the default `CEN`) pass. `tb_inir_race.vhd` now reports
+  `cpu_cen` instead of `cpuClock`.
+- Full build OK. STA, all four corners (`tmp/sta_cen.tcl`):
+  - **hold met at every corner** (worst +0.168 ns, fast -40 °C). The
+    placement-dependent slow -40 °C hold violations from the previous
+    build (-0.144 ns) are gone.
+  - setup: the only failing paths are the known `SBCTextDisplayRGB`
+    `startAddr` → attribute-RAM paths (-2.55 ns slow 100 °C, -2.98 ns
+    slow -40 °C; none of the first 5000 failing paths is anything else).
+  - worst T80 slacks (slow 100 °C): into the T80 +6.5 ns (`mmu_frame` →
+    `IR`, one period), out of the T80 +7.7 ns (`A` → `mmu_frame`),
+    T80 → T80 +82 ns of 100 ns.
+  - Still reported as unconstrained ripple clocks (warning 332060, as
+    before): `T80s|IORQ_n` (the `n_rd`/`n_wr` strobe-clocked registers in
+    `SBCTextDisplayRGB`, `bufferedUART`, `sd_controller`) and
+    `serialClkCount[15]` (UART baud clock). Follow-up: move those
+    peripherals' strobe-clocked processes into the `clk` domain.
+- Hardware: `sdramexec`, `sdramret`, `backtoback` and `timertest` pass;
+  the CamelFORTH `bench` times are unchanged, from block RAM and from
+  SDRAM (as expected for a cycle-identical change). CP/M boot, which
+  exercises the reworked port `$38` ROM disable, could not be re-tested
+  yet (that mechanism is to be retired with the RomWBW port anyway).

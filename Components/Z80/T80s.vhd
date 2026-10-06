@@ -64,6 +64,13 @@
 --
 --	0242 : Updated for T80 interface change
 --
+--	LOCAL : (MultiComp) added a CEN clock-enable input (default '1', so
+--	        existing instantiations are unchanged). It is passed to the
+--	        T80 core (which was already fully CEN-gated) and also gates the
+--	        RD_n/WR_n/IORQ_n/MREQ_n/DI_Reg process below. Lets the CPU be
+--	        clocked from the system clock with a 1-in-N enable instead of
+--	        a fabric-derived clock.
+--
 
 library IEEE;
 use IEEE.std_logic_1164.all;
@@ -79,6 +86,7 @@ entity T80s is
 	port(
 		RESET_n		: in std_logic;
 		CLK_n		: in std_logic;
+		CEN			: in std_logic := '1';
 		WAIT_n		: in std_logic;
 		INT_n		: in std_logic;
 		NMI_n		: in std_logic;
@@ -101,7 +109,6 @@ end T80s;
 
 architecture rtl of T80s is
 
-	signal CEN			: std_logic;
 	signal IntCycle_n	: std_logic;
 	signal NoRead		: std_logic;
 	signal Write		: std_logic;
@@ -111,8 +118,6 @@ architecture rtl of T80s is
 	signal TState		: std_logic_vector(2 downto 0);
 
 begin
-
-	CEN <= '1';
 
 	u0 : T80
 		generic map(
@@ -150,6 +155,7 @@ begin
 			MREQ_n <= '1';
 			DI_Reg <= "00000000";
 		elsif CLK_n'event and CLK_n = '1' then
+		if CEN = '1' then
 			RD_n <= '1';
 			WR_n <= '1';
 			IORQ_n <= '1';
@@ -186,6 +192,7 @@ begin
 			if TState = "010" and Wait_n = '1' then
 				DI_Reg <= DI;
 			end if;
+		end if;
 		end if;
 	end process;
 

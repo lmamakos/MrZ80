@@ -114,7 +114,7 @@ begin
 
     -- ================= seed uninitialized DUT counters =================
     -- MicrocomputerZ80CPM.vhd's cpuClkCount/sdClkCount (the clk-divider
-    -- counters that generate cpuClock/sdClock) have no VHDL initial value,
+    -- counters that generate cpu_cen/sdClock) have no VHDL initial value,
     -- so they start as 'U' ("UUUUUU") in simulation -- real FPGA registers
     -- always power up to a determinate 0/1, so this is a simulation-only
     -- gap, not a real hardware behaviour. Worse, cpuClkCount's own
@@ -122,7 +122,7 @@ begin
     -- to_integer-based comparison) reads a metavalue as integer 0, which
     -- is ALWAYS < 4 -- so the counter never takes its `else` branch to
     -- reset to a defined value, and instead stays "UUUUUU" (arithmetic on
-    -- an all-U unsigned stays all-U) forever, which means cpuClock (gated
+    -- an all-U unsigned stays all-U) forever, which means cpu_cen (gated
     -- by cpuClkCount) never toggles and the Z-80 core never runs at all.
     -- Force both counters to a defined 0 for the first few ns (a standard,
     -- simulation-only testbench technique for seeding otherwise-U
@@ -142,11 +142,11 @@ begin
         wait for 2 ns;
         report "SEED CHECK @" & time'image(now)
              & " cpuClkCount=" & to_hstring(<< signal .tb_inir_race.dut.cpuClkCount : std_logic_vector(5 downto 0) >>)
-             & " cpuClock=" & std_logic'image(<< signal .tb_inir_race.dut.cpuClock : std_logic >>);
+             & " cpu_cen=" & std_logic'image(<< signal .tb_inir_race.dut.cpu_cen : std_logic >>);
         wait for 100 ns;
         report "SEED CHECK @" & time'image(now)
              & " cpuClkCount=" & to_hstring(<< signal .tb_inir_race.dut.cpuClkCount : std_logic_vector(5 downto 0) >>)
-             & " cpuClock=" & std_logic'image(<< signal .tb_inir_race.dut.cpuClock : std_logic >>);
+             & " cpu_cen=" & std_logic'image(<< signal .tb_inir_race.dut.cpu_cen : std_logic >>);
         wait;
     end process;
 

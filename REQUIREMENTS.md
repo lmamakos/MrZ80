@@ -412,6 +412,16 @@ T-states. Acceptable for now; revisit either or both of:
    - Leave the strobe-clocked processes inside the component files as
      later clean-up (record them as follow-ups).
 
+   *Step 1 status: implemented (HISTORY.md, "T80 clock enable, step 1").*
+   GHDL bus trace identical to before; full build: hold met at all
+   corners, setup only fails on the known `SBCTextDisplayRGB` path. The
+   T80 → block RAM / ROM setup 4 / hold 3 multicycle was kept (still valid,
+   and needed). Hardware: `sdramexec`, `sdramret`, `backtoback`,
+   `timertest` pass; CamelFORTH `bench` times unchanged from block RAM and
+   SDRAM; CP/M boot (port `$38` ROM disable) not yet re-tested. Follow-ups: the strobe-clocked
+   processes in `SBCTextDisplayRGB`, `bufferedUART` and `sd_controller`
+   (still reported as the `T80s|IORQ_n` ripple clock).
+
    *Step 2 — reduce the SDRAM penalty:* with `WAIT_n` sampled only on the
    enable cycle, remove the `cpuClkCount` guard, release wait on the
    cycle the read data arrives (combinational bypass) instead of one
