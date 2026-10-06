@@ -312,6 +312,7 @@ set_global_assignment -name VHDL_FILE Components/FRONTPANEL/Transparent_Capture_
 set_global_assignment -name VHDL_FILE Components/FRONTPANEL/Universal_Capture_Chain.vhd
 set_global_assignment -name VHDL_FILE Components/FRONTPANEL/FrontPanel_Subsystem.vhd
 set_global_assignment -name VHDL_FILE Components/alancox/MMU.vhd
+set_global_assignment -name VHDL_FILE Components/TIMER/BenchTimer.vhd
 set_global_assignment -name CDF_FILE jtag.cdf
 set_global_assignment -name QIP_FILE sys/sys.qip
 set_global_assignment -name QIP_FILE rtl/pll.qip

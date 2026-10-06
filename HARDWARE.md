@@ -74,6 +74,7 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 | `0x88`-`0x8F` | 8     | SD card controller (`n_sdCardCS`). Register offset via `cpuAddress(2 downto 0)`.                          |
 | `0xA0`-`0xA7` | 8     | Front-panel subsystem control window (`n_fpSubsysCS`). See Front-panel I/O register map below.            |
 | `0xB0`-`0xBF` | 16    | MMU register window (`n_mmuCS`). 4 frame-mapping low bytes at `+0..+3` (Z2-compatible), 4 high bytes at `+4..+7`, direct-access pointer at `+8..+11` (little-endian), direct-access data port at `+12`. |
+| `0xC0`-`0xCF` | 16    | Benchmark timers (`n_timerCS`, `BenchTimer`). Four 32-bit snapshot channels: ch0/ch1 1 ms/tick, ch2/ch3 1 µs/tick. See below. |
 | `0xFF`        | 1     | Front-panel data latch (R/W). Software writes drive the 8-bit transparent capture chain; reads return the last-written value. |
 
 ### MMU I/O register window detail
@@ -86,6 +87,40 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 | `B8`..`BB` | Direct-access pointer bytes, little-endian (LSB at `B8`)|
 | `BC`       | Direct-access data port (R/W triggers a physical memory cycle at the pointer; pointer post-increments after the access) |
 | `BD`..`BF` | Reserved (reads 0, writes ignored)                     |
+
+### Benchmark timer window detail (`0xC0`-`0xCF`)
+
+`Components/TIMER/BenchTimer.vhd`. Two free-running 32-bit counters, derived
+from the 50 MHz system clock, count microseconds (wraps after ~71.6 min) and
+milliseconds (wraps after ~49.7 days). They start at 0 when the FPGA is
+configured (core loaded) and are **never reset** afterwards — not by the
+CPU reset button, the OSD reset or software — so they are monotonic.
+
+Each of four channels has its own 32-bit snapshot latch:
+
+| Ports        | Channel | Time base | Write (any value)                | Read                              |
+|--------------|---------|-----------|----------------------------------|-----------------------------------|
+| `C0`..`C3`   | 0       | 1 ms      | latch the ms counter into ch0    | ch0 bytes 0..3 (LSB at `C0`)      |
+| `C4`..`C7`   | 1       | 1 ms      | latch the ms counter into ch1    | ch1 bytes 0..3 (LSB at `C4`)      |
+| `C8`..`CB`   | 2       | 1 µs      | latch the µs counter into ch2    | ch2 bytes 0..3 (LSB at `C8`)      |
+| `CC`..`CF`   | 3       | 1 µs      | latch the µs counter into ch3    | ch3 bytes 0..3 (LSB at `CC`)      |
+
+- A write to **any** of a channel's four ports latches that channel (data
+  ignored), once per `OUT`.
+- Reads have no side effects: bytes can be read in any order, repeatedly,
+  and channels are independent (e.g. a benchmark can own ch0 while a
+  monitor uses ch1).
+- Elapsed time = `end - start` modulo 2^32.
+
+```
+        OUT  (0C0h),A      ; snapshot channel 0 (ms)
+        IN   A,(0C0h)      ; bits  7:0
+        IN   A,(0C1h)      ; bits 15:8
+        IN   A,(0C2h)      ; bits 23:16
+        IN   A,(0C3h)      ; bits 31:24
+```
+
+Test program: `testing/timertest.asm`.
 
 ### Front-panel subsystem register map (within the `0xA0`-`0xA7` window)
 

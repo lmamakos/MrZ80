@@ -8,7 +8,7 @@ it does. This document describes *where things stand* and *what to do
 next*.
 
 See also:
-- `IOPORTS.md` — the living I/O port map and memory-map reference. Keep it
+- `HARDWARE.md` — the living I/O port map and memory-map reference. Keep it
   in sync with the code; don't duplicate its tables here.
 - `HISTORY.md` — full narrative history through the 128 MB SDRAM bring-up,
   MMU widening to 256 MB, and the FORTH/front-panel work that followed.
@@ -39,7 +39,7 @@ once the RomWBW port is under way (see "Legacy cleanup" below).
   (`block_ram_page`, physical `0x8000000`) just above it — no more
   shadowing between the two. Frame 0 resets to the block-RAM page (normal
   boot) or to SDRAM page 0 when a `.BIN` has been OSD-loaded
-  (`bin_loaded`). See `IOPORTS.md` for the exact address layout and reset
+  (`bin_loaded`). See `HARDWARE.md` for the exact address layout and reset
   mapping.
 - **SDRAM controller + client FSM** (`MicrocomputerZ80CPM.vhd`): a 4-state
   FSM (`S_IDLE → S_REQ → S_DONE → S_GAP`) drives the CoCo3-derived
@@ -368,14 +368,123 @@ T-states. Acceptable for now; revisit either or both of:
    - re-check the peripherals that use CPU strobes as clocks
      (`n_RomActive` on `n_ioWR`, `bufferedUART`, SD controller, front
      panel) and whether the MMU `cpu_wait` pulse is still needed.
-2. **Investigate a cache in front of the SDRAM** (block RAM, small lines,
-   direct-mapped or 2-way, write-through), so that hits — loops, hot FORTH
-   inner-interpreter code, the return/parameter stacks — complete at
-   block-RAM speed without crossing into `clk_ram`. This is the cache part
-   of the arbiter/cache architecture in item 1: direct-access-port and any
-   future front-panel/DMA writes must update or invalidate it. Measure the
-   hit rate on the FORTH benchmark and on CP/M before committing to a
-   line size/associativity.
+
+   **Investigation findings (2026-10).**
+   - The T80 core is already clock-enable ready: every clocked process in
+     `T80.vhd` and `T80_Reg.vhd` is gated by `CEN`/`ClkEn`, with no
+     falling-edge logic. Only `T80s.vhd` ties `CEN <= '1'`, and its
+     strobe/`DI_Reg` process ignores `CEN`.
+   - `SBCTextDisplayRGB`, `bufferedUART` and `sd_controller` clock
+     registers on `n_rd`/`n_wr` edges, and `n_RomActive` is clocked by
+     `n_ioWR`. Those strobes are T80 flip-flop outputs and remain so (now
+     in the `clk` domain), so these peripherals keep working unchanged.
+   - The MMU's one-`clk` `cpu_wait` pulse on port +12 is shorter than a
+     T-state and is never seen by the T80, before or after this change.
+     It is harmless (the SDRAM FSM wait does the real stalling); document
+     it rather than change it.
+
+   **Agreed plan (deferred until the benchmark timer peripheral, item 5,
+   exists — now implemented — so runs can be timed precisely).**
+
+   *Step 1 — straight conversion, cycle-identical behaviour:*
+   - `T80s.vhd` (`LOCAL MOD`): add a `CEN` input port defaulting to `'1'`
+     and wrap the strobe/`DI_Reg` process body in `if CEN = '1'`.
+   - `MicrocomputerZ80CPM.vhd`: clock `cpu1` from `clk` with
+     `CEN => cpu_cen`, where `cpu_cen` is a register high for exactly the
+     `clk` cycle in which `cpuClock` rises today (`cpuClkCount = 2`), so
+     the CPU still runs at 10 MHz with identical wait-state timing and
+     the SDRAM/peripheral logic sees strobes change on the same `clk`
+     edges. Delete the `cpuClock` register. Convert `n_RomActive` to a
+     `clk`-domain edge detect. Keep the `S_DONE` guard for this step.
+   - `MultiComp.sdc`: remove the `cpuClk` generated clock, all the
+     `-hold -start 1` relaxations, the `cpuClk` → memory multicycle and
+     the "accepted peripheral-read" note. Add a T80 → T80
+     `set_multicycle_path` setup 5 / hold 4 (valid because both ends
+     only change/sample on `cpu_cen`; covers paths through the address
+     decode, MMU read-back and `cpuDataIn` mux). All other paths
+     (peripheral data, `sdramReadData`, wait, block-RAM q → T80) become
+     ordinary 20 ns single-clock paths with normal, skew-free hold
+     checks. Retarget the front-panel `captured_bits` false path.
+   - Re-sync `sim/MicrocomputerZ80CPM_sim.vhd`, run `sim/run.sh`.
+   - Full build, STA at all corners, hardware regression (`sdramexec`,
+     `sdramret`, `backtoback`, CamelFORTH benchmark — times should be
+     unchanged).
+   - Leave the strobe-clocked processes inside the component files as
+     later clean-up (record them as follow-ups).
+
+   *Step 2 — reduce the SDRAM penalty:* with `WAIT_n` sampled only on the
+   enable cycle, remove the `cpuClkCount` guard, release wait on the
+   cycle the read data arrives (combinational bypass) instead of one
+   `clk` later, re-derive `S_GAP`, and consider launching the SDRAM
+   request one `clk` earlier. Measure each change with the benchmark
+   timer. The remaining SDRAM penalty sets the value of the cache
+   (item 4.2).
+2. **SDRAM cache** (block RAM), so that hits — loops, hot FORTH
+   inner-interpreter code, the return/parameter stacks, the RomWBW common
+   bank — complete at block-RAM speed without crossing into `clk_ram`.
+   This is the cache part of the arbiter/cache architecture in item 1.
+   **Do item 4.1 (clock enable) first**: the hit/miss decision must drive
+   `WAIT_n` within the T-state, which is only safely STA-checkable once the
+   T80 is in the `clk_sys` domain; 4.1 also determines the remaining miss
+   penalty and therefore how much a cache is worth.
+
+   Design direction (agreed, to be validated by a trace study):
+
+   - **Physical cache, after the MMU.** Tagged by physical address, so MMU
+     remapping / bank switching needs no flush.
+   - **Write-through, no write-allocate, update-on-hit**, with a one-entry
+     posted write buffer so most writes do not stall. SDRAM is therefore
+     always up to date.
+   - **Direct-access port (MMU +12) accesses bypass allocation.** The MMU
+     already flags them (`map_io_to_direct`):
+     - port *reads* go to SDRAM and never allocate a line (serving a hit
+       from the cache is optional — write-through makes both correct);
+     - port *writes* take the normal write path (write-through,
+       update-on-hit, no allocate), so no separate invalidate path is
+       needed.
+
+     Bank-to-bank copies and disk-sector transfers done with `INIR`/`OTIR`
+     through port +12 therefore do not pollute the cache. This is simpler
+     than per-frame/per-page "non-cacheable" marking: no new
+     software-visible state, and the snoop-on-write logic is needed anyway.
+     The RomWBW MultiComp platform code should use port +12 for
+     `HB_BNKCPY`-style copies and RAM/ROM-disk sector moves to benefit;
+     copies done through frame mapping still go through the cache (4-way
+     LRU limits the damage). A per-page "don't cache" attribute can be
+     added later if the trace study shows a need.
+   - **Ordering:** any SDRAM read (miss fill or port read) first drains the
+     posted write buffer.
+   - **Never cached:** I/O and block RAM.
+   - **Invalidate-all** on reset and on any OSD download into SDRAM (the
+     download writes SDRAM directly, behind the cache). Hold the CPU in
+     reset until the clear completes, or use a valid-generation scheme.
+     Any future DMA / front-panel memory writer must snoop as above.
+   - **Cache-disable control** (OSD option and/or a spare MMU port such as
+     +13) for A/B benchmarking and debugging.
+   - **Hits at 0 wait states** (block-RAM equivalent): tag and data M10K
+     looked up in parallel, with hit/miss resolved before the T80 samples
+     `WAIT_n`.
+   - **Line fill:** 16-byte lines; use SDRAM burst length 8 (currently 2,
+     `sdram2.sv`) or back-to-back accesses, optionally critical-byte-first.
+     Refresh keeps priority over fills; the per-device refresh interval
+     guarantee must still hold.
+   - **Size / associativity:** start from 64 KB, **4-way set-associative**
+     with LRU (~64 data + ~8 tag M10K). Under RomWBW, the user TPA bank,
+     the HBIOS bank and the common bank are all hot at once and alias in a
+     direct-mapped or 2-way cache, so a direct-mapped 64 KB cache is not
+     adequate; 64 KB 4-way (or 128 KB 2/4-way) is expected to be. Budget
+     against block RAM: 384 KB BRAM + 64 KB cache is ~528/553 M10K (tight);
+     128 KB cache needs BRAM ≤ 256 KB.
+   - **Validate before building:** capture physical-address traces (GHDL
+     or a Z80 emulator running CP/M, CamelFORTH and RomWBW) and run a small
+     cache simulator over size / ways / line size; measure the FORTH
+     benchmark before/after on hardware.
+
+   Alternative or complement for RomWBW: with a 384 KB block RAM, place
+   the hot RomWBW banks (HBIOS, user, common, AUX — 128 KB) in block RAM
+   and leave ROM image / ROM disk / RAM disk in SDRAM. Block RAM starts at
+   page 8192, so the MultiComp HBIOS memory-manager code must also write
+   the MMU page high-byte ports (+4..+7).
 3. Optionally reduce CDC latency on its own: run the SDRAM client FSM
    directly in `clk_ram` with a single request/acknowledge crossing, or
    pick `clk_ram` as an integer multiple of `clk_sys` so the crossing can
@@ -385,6 +494,28 @@ T-states. Acceptable for now; revisit either or both of:
 Use the same FORTH benchmark (block RAM vs SDRAM, stock and custom-
 instruction kernels) as the before/after measure, and regress with
 `testing/sdramexec`, `sdramret`, `backtoback` and `sdramtest`.
+
+### 5. Benchmark timer peripheral (implemented 2026-10, hardware test pending)
+
+Replace stopwatch timing of benchmark runs with an on-chip timer.
+`Components/TIMER/BenchTimer.vhd`, I/O ports `0xC0`-`0xCF` (detail in
+`HARDWARE.md`):
+
+- free-running 32-bit millisecond and microsecond counters from the 50 MHz
+  `clk`, never reset after FPGA configuration (monotonic across CPU
+  resets);
+- four independent channels of four ports each: ch0/ch1 = 1 ms/tick,
+  ch2/ch3 = 1 µs/tick. `OUT` to any port of a channel snapshots its
+  counter; `IN` reads the snapshot one byte per port (little-endian, no
+  side effects, no hidden byte pointer, so concurrent users cannot
+  corrupt each other's reads).
+
+Remaining:
+- run `testing/timertest.asm` on hardware (calibration: 1000 ms =
+  1000000 µs ± 200);
+- add CamelFORTH words (e.g. `MS@ ( -- d )`, `US@ ( -- d )`) and make the
+  benchmark print its own elapsed time; re-baseline the block-RAM vs SDRAM
+  numbers with it before starting item 4.1.
 
 ## Next milestone: RomWBW port
 

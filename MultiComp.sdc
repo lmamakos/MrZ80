@@ -53,6 +53,8 @@ derive_clock_uncertainty
 #  was_map_io_to_direct   strobes are cpuClk-launched); repeat writes while
 #                         WR_n stays low write the same value.
 #  fpLatch (port 0xFF)    same as the MMU registers (written by OUT only).
+#  BenchTimer snap        same: captured once, on the first clk_sys edge of
+#  (ports 0xC0-0xCF)      an OUT write strobe; stable during any IN.
 #  block RAM / boot ROM   address is registered every clk_sys edge; on the
 #  internal registers     cpuClk edge it re-registers the unchanged (old)
 #                         T80 address, so q does not change on that edge.
@@ -63,6 +65,7 @@ set wait_safe [get_registers [list \
     "$core|MMU:mmu1|direct_access_pointer[*]" \
     "$core|MMU:mmu1|was_map_io_to_direct" \
     "$core|fpLatch[*]" \
+    "$core|BenchTimer:timer1|snap*[*]" \
     "$core|InternalRam64K:ram1|*" \
     "$core|Z80_CPM_BASIC_ROM:rom1|*" ]]
 set_multicycle_path -hold -start 1 -from $wait_safe -to $cpu_clk

@@ -2676,3 +2676,53 @@ CamelFORTH benchmark: block RAM 13.0 s vs SDRAM 19.3 s (stock kernel);
 9.0 s vs 13.4 s with the custom `NEXT`/`PUSHIX`/`POPIX` instructions —
 SDRAM costs ~30%. Accepted for now; see `REQUIREMENTS.md` item 4 (T80
 clock-enable conversion and/or an SDRAM cache).
+
+---
+
+## Session update — benchmark timer peripheral (`BenchTimer`, ports 0xC0-0xCF)
+
+Added so the CamelFORTH block-RAM vs SDRAM benchmark (and the coming
+clock-enable / cache work, `REQUIREMENTS.md` item 4) can be timed by the
+machine instead of with a stopwatch.
+
+- `Components/TIMER/BenchTimer.vhd`: free-running 32-bit µs and ms
+  counters from the 50 MHz `clk` (µs prescaler /50, ms = 1000 µs), with
+  power-up initial values only — no reset input, so they are monotonic
+  across CPU/OSD resets. Four channels, four ports each: ch0 `C0-C3` and
+  ch1 `C4-C7` latch the ms counter, ch2 `C8-CB` and ch3 `CC-CF` the µs
+  counter. `OUT` (any data) to any port of a channel snapshots it once, on
+  the first `clk` of the write strobe; `IN` returns the snapshot byte
+  `addr(1:0)` (little-endian) with no side effects.
+- Design choice: one port per byte rather than a single port with an
+  auto-incrementing byte pointer, or a control/data port pair. A hidden
+  pointer can be desynchronised by a second user (interrupt handler,
+  monitor) with no indication; per-byte ports make reads idempotent and
+  order-independent, and independent channels let separate programs time
+  things concurrently. A shared "latch several channels at once" mask
+  register was considered and dropped in favour of a fourth channel.
+- Wired into `MicrocomputerZ80CPM.vhd` (`n_timerCS`, `timer1`,
+  `cpuDataIn` mux), `MultiComp.qsf`, `sim/run.sh`. `MultiComp.sdc`: the
+  snapshot registers (`BenchTimer:timer1|snap*[*]`) join the
+  `-hold -start 1` list — they change only on the first `clk` after a
+  `cpuClk`-launched write strobe, like `fpLatch`. (First build used an
+  array signal, which Quartus flattened to `snap~N` names that the SDC
+  filter did not match; now four separate signals.)
+- Verified: GHDL unit test (ms/µs values, re-read stability, 1000 µs per
+  ms); `sim/run.sh` unchanged (0 mismatches); full build OK, ~143 ALUTs /
+  209 registers; setup unchanged apart from the known `SBCTextDisplayRGB`
+  path.
+- Timing note: this placement shows small clk_sys → clk_sys **hold**
+  violations at the slow -40 °C corner only (worst -0.144 ns:
+  `done_seen` → `sdram_state`, `dl_bram_addr_r` → block-RAM `we_reg`,
+  `bin_loaded`/`reset_from_mount` → `mmu_frame`), none involving the
+  timer. They are placement-dependent (absent in the previous build): the
+  compile flow only analyses the slow 100 °C model, so the fitter does not
+  close hold at every corner. Candidate fix: enable multi-corner
+  optimisation/analysis in `MultiComp.qsf`.
+- `testing/timertest.asm`: prints all four channels, checks re-read
+  stability and that the µs counter strictly increases over 4096
+  snapshots, calibrates 1000 ms against the µs counter three times
+  (PASS within ±200 µs), and prints its own run time. Hardware test
+  pending.
+- Port map documented in `HARDWARE.md` (the `IOPORTS.md` references in
+  `REQUIREMENTS.md` now point there — that file was renamed earlier).

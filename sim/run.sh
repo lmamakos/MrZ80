@@ -39,6 +39,7 @@ FILES=(
     Components/FRONTPANEL/Transparent_Capture_Chain.vhd
     Components/FRONTPANEL/FP_RAM_Store.vhd
     Components/FRONTPANEL/FrontPanel_Subsystem.vhd
+    Components/TIMER/BenchTimer.vhd
     sim/MicrocomputerZ80CPM_sim.vhd
     sim/sdram_cdc_fake.vhd
     sim/tb_inir_race.vhd

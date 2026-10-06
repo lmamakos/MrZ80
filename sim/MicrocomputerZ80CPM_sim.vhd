@@ -124,6 +124,7 @@ architecture struct of MicrocomputerZ80CPM is
 	signal sdCardDataOut			: std_logic_vector(7 downto 0);
 	signal fpLatchDataOut			: std_logic_vector(7 downto 0);
 	signal fpSubsysDataOut			: std_logic_vector(7 downto 0);
+	signal timerDataOut				: std_logic_vector(7 downto 0);
 
 	signal n_memWR					: std_logic :='1';
 	signal n_memRD 					: std_logic :='1';
@@ -145,6 +146,7 @@ architecture struct of MicrocomputerZ80CPM is
 	signal n_fpLatchCS				: std_logic :='1';   -- I/O port 0xFF latch
 	signal n_fpSubsysCS				: std_logic :='1';   -- FrontPanel_Subsystem 8-port window at 0xA0..0xA7
 	signal n_mmuCS					: std_logic :='1';   -- MMU 16-port window at 0xB0..0xBF
+	signal n_timerCS				: std_logic :='1';   -- BenchTimer 16-port window at 0xC0..0xCF
 
 	-- MMU plumbing. The MMU translates the Z-80's 16-bit logical address
 	-- into a 28-bit physical address (physical_page_bits = 14), covering a
@@ -556,6 +558,26 @@ fpSubsys : entity work.FrontPanel_Subsystem
 	);
 
 -- ____________________________________________________________________________________
+-- BENCHMARK TIMERS GO HERE
+
+-- Ports $C0-$CF: four 32-bit snapshot channels over free-running counters
+-- (channels 0,1 = 1 ms/tick at $C0-$C3/$C4-$C7; channels 2,3 = 1 us/tick
+-- at $C8-$CB/$CC-$CF). OUT to any port of a channel latches it; IN reads
+-- the latched bytes, little-endian. Counters are never reset after FPGA
+-- configuration (monotonic across CPU resets). See BenchTimer.vhd.
+timer1 : entity work.BenchTimer
+	generic map (
+		CLK_HZ => 50000000
+	)
+	port map (
+		clk    => clk,
+		io_cs  => not n_timerCS,
+		wr_n   => n_ioWR,
+		addr   => cpuAddress(3 downto 0),
+		dout   => timerDataOut
+	);
+
+-- ____________________________________________________________________________________
 -- MEMORY READ/WRITE LOGIC GOES HERE
 
 n_ioWR 	<= n_WR or n_IORQ;
@@ -577,6 +599,7 @@ n_sdCardCS <= '0' when cpuAddress(7 downto 3) = "10001" and (n_ioWR='0' or n_ioR
 n_fpLatchCS <= '0' when cpuAddress(7 downto 0) = x"FF" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 1 Byte $FF (front-panel data latch)
 n_fpSubsysCS <= '0' when cpuAddress(7 downto 3) = "10100" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 8 Bytes $A0-$A7 (front-panel subsystem)
 n_mmuCS <= '0' when cpuAddress(7 downto 4) = "1011" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 16 Bytes $B0-$BF (MMU)
+n_timerCS <= '0' when cpuAddress(7 downto 4) = "1100" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 16 Bytes $C0-$CF (benchmark timers)
 
 -- MMU.io_cs is active-high.
 mmu_io_cs <= '1' when n_mmuCS = '0' else '0';
@@ -605,6 +628,7 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
                  sdCardDataOut       when (n_sdCardCS = '0') else
                  fpLatchDataOut      when (n_fpLatchCS = '0') else
                  fpSubsysDataOut     when (n_fpSubsysCS = '0') else
+                 timerDataOut        when (n_timerCS = '0') else
                  mmu_dataOut         when (mmu_io_cs = '1' and cpuAddress(3 downto 0) /= "1100") else
                  basRomData          when (n_basRomCS = '0') else
                  internalRam1DataOut when (phys_in_blockram = '1') else

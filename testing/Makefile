@@ -1,4 +1,4 @@
-PROGS=	backtoback.bin	sdramexec.bin  sdramtest.bin  sdramsum.bin  sdramret.bin
+PROGS=	backtoback.bin	sdramexec.bin  sdramtest.bin  sdramsum.bin  sdramret.bin  timertest.bin
 MISTER=	mister:/media/fat/games/MultiComp/
 
 all:	${PROGS}
