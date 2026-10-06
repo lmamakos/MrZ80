@@ -33,6 +33,7 @@ emit1:  IN A,(C)
         LD C,A
         LD B,0
         IN A,(C)
+	LD C,0
         AND 01h             ; bit zero is data ready
         JR Z,qkey1
         LD C,0
@@ -221,6 +222,7 @@ addressptr:
   head mmudatport,7,'MMU-DAT',docon
      dw MMUDAT
 
+
 ; RD>MEM ( phys-lo phys-hi c-addr count -- )
 ;   Copy 'count' bytes from RAM-disk physical address (phys-hi:phys-lo)
 ;   into Z-80 logical memory at c-addr, using the MMU direct-access
@@ -267,26 +269,14 @@ rdmem1:	ld a,d			; whole 256-byte chunks remaining?
 	or a
 	jr z,rdmem2		; none: do the final partial chunk
 	ld b,0			; b'=0 => INIR transfers 256 bytes
-
-rdmem4:	in a,(c)                ; ** slower INIR to avoid SDRAM problem
-	ld (hl),a               ; ** slower INIR to avoid SDRAM problem
-	inc hl                  ; ** slower INIR to avoid SDRAM problem
-	dec b                   ; ** slower INIR to avoid SDRAM problem
-	jr nz,rdmem4            ; ** slower INIR to avoid SDRAM problem
-
+	inir
 	dec d
 	jr rdmem1
 rdmem2:	ld a,e			; low byte = remaining bytes (0..255)
 	or a
 	jr z,rdmem3
 	ld b,e
-
-rdmem5:	in a,(c)                ; ** slower INIR to avoid SDRAM problem
-	ld (hl),a               ; ** slower INIR to avoid SDRAM problem
-	inc hl                  ; ** slower INIR to avoid SDRAM problem
-	dec b                   ; ** slower INIR to avoid SDRAM problem
-	jr nz,rdmem5            ; ** slower INIR to avoid SDRAM problem
-
+	inir
 rdmem3:	exx			; back to the main register set (DE=IP intact)
 	pop bc			; refill Forth TOS with the new top cell
 	next
@@ -324,26 +314,14 @@ wrmem1:	ld a,d			; whole 256-byte chunks remaining?
 	or a
 	jr z,wrmem2		; none: do the final partial chunk
 	ld b,0			; b'=0 => OTIR transfers 256 bytes
-
-wrmem4:	ld a,(hl)               ; ** slower OTIR to avoid SDRAM problem
-	out (c),a               ; ** slower OTIR to avoid SDRAM problem
-	inc hl                  ; ** slower OTIR to avoid SDRAM problem
-	dec b                   ; ** slower OTIR to avoid SDRAM problem
-	jr nz,wrmem4            ; ** slower OTIR to avoid SDRAM problem
-
+	otir
 	dec d
 	jr wrmem1
 wrmem2:	ld a,e			; low byte = remaining bytes (0..255)
 	or a
 	jr z,wrmem3
 	ld b,e
-
-wrmem5:	ld a,(hl)               ; ** slower OTIR to avoid SDRAM problem
-	out (c),a               ; ** slower OTIR to avoid SDRAM problem
-	inc hl                  ; ** slower OTIR to avoid SDRAM problem
-	dec b                   ; ** slower OTIR to avoid SDRAM problem
-	jr nz,wrmem5            ; ** slower OTIR to avoid SDRAM problem
-
+	otir
 wrmem3:	exx			; back to the main register set (DE=IP intact)
 	pop bc			; refill Forth TOS with the new top cell
 	next
