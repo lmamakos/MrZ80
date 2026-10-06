@@ -60,6 +60,11 @@
 --
 --	0242 : Fixed I/O instruction timing, cleanup
 --
+--	LOCAL : (MultiComp) port of upstream "0240mj1" HL inc/dec fix for INI, IND,
+--	        INIR, INDR, OUTI, OUTD, OTIR, OTDR. MCycle 3 used IncDec_16 =
+--	        "0010"/"1010" (bit 2 clear), so HL+/-1 was computed but never
+--	        written back and HL stayed constant. Now "0110"/"1110".
+--
 
 library IEEE;
 use IEEE.std_logic_1164.all;
@@ -1949,10 +1954,11 @@ begin
 					Set_BusB_To <= "0110";
 					Set_Addr_To <= aXY;
 				when 3 =>
+					-- LOCAL: bit 2 set so HL+/-1 is written back (0240mj1)
 					if IR(3) = '0' then
-						IncDec_16 <= "0010";
+						IncDec_16 <= "0110";
 					else
-						IncDec_16 <= "1010";
+						IncDec_16 <= "1110";
 					end if;
 					TStates <= "100";
 					Write <= '1';
@@ -1978,10 +1984,11 @@ begin
 					Set_BusB_To <= "0110";
 					Set_Addr_To <= aBC;
 				when 3 =>
+					-- LOCAL: bit 2 set so HL+/-1 is written back (0240mj1)
 					if IR(3) = '0' then
-						IncDec_16 <= "0010";
+						IncDec_16 <= "0110";
 					else
-						IncDec_16 <= "1010";
+						IncDec_16 <= "1110";
 					end if;
 					IORQ <= '1';
 					Write <= '1';
