@@ -510,12 +510,25 @@ Replace stopwatch timing of benchmark runs with an on-chip timer.
   side effects, no hidden byte pointer, so concurrent users cannot
   corrupt each other's reads).
 
+Done:
+- `testing/timertest.asm` passes on hardware.
+- CamelFORTH words `MS@ ( -- ud )` and `US@ ( -- ud )` (`forth/io-multi.azm`,
+  embedded kernels only, not the CP/M variant). Each latches a channel
+  (ch0 / ch2) and returns the 32-bit count as a double, low cell below,
+  high cell on top. ch1 and ch3 are left free for other programs. Tested
+  under GHDL (fake timer ports) on both `camel80.bin` and `camelf.bin`.
+
+- `forth/blocks/27-bench.fth` (added to `blocks/Makefile`) defines `D+`,
+  `D-`, `UD.` (the kernel has none), `timed` / `utimed` ( xt -- ud )
+  (elapsed ms / µs of one execution) and `times` ( xt n -- ) (prints each
+  run and the total in ms); `bench` runs the loop benchmark 50 times
+  through `times`. Verified under GHDL with fake timers that wrap, on both
+  kernels.
+
 Remaining:
-- run `testing/timertest.asm` on hardware (calibration: 1000 ms =
-  1000000 µs ± 200);
-- add CamelFORTH words (e.g. `MS@ ( -- d )`, `US@ ( -- d )`) and make the
-  benchmark print its own elapsed time; re-baseline the block-RAM vs SDRAM
-  numbers with it before starting item 4.1.
+- run `bench` on hardware from block RAM and from SDRAM, stock and
+  custom-instruction kernels, and record the baseline numbers (replaces the
+  stopwatch figures in item 4) before starting item 4.1.
 
 ## Next milestone: RomWBW port
 

@@ -122,6 +122,11 @@ Each of four channels has its own 32-bit snapshot latch:
 
 Test program: `testing/timertest.asm`.
 
+CamelFORTH (embedded kernels `camel80.bin` / `camelf.bin`): `MS@ ( -- ud )`
+returns channel 0 (ms) and `US@ ( -- ud )` channel 2 (µs), each latched at
+the start of the word, as an unsigned double (low cell, high cell on top).
+Channels 1 and 3 are not used by the kernel.
+
 ### Front-panel subsystem register map (within the `0xA0`-`0xA7` window)
 
 Decoded by the `FrontPanel_Subsystem` block from `addr(2 downto 0)`

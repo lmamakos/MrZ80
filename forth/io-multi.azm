@@ -222,6 +222,58 @@ addressptr:
   head mmudatport,7,'MMU-DAT',docon
      dw MMUDAT
 
+; -------------------------------------------------------------------
+; Benchmark timers (BenchTimer, ports 0C0h-0CFh; see HARDWARE.md).
+; Four 32-bit snapshot channels, four ports each, little-endian:
+;   ch0 0C0h-0C3h  1 ms/tick     ch2 0C8h-0CBh  1 us/tick
+;   ch1 0C4h-0C7h  1 ms/tick     ch3 0CCh-0CFh  1 us/tick
+; An OUT (any value) to a port of a channel latches it; IN returns the
+; latched bytes.  The counters are free-running and never reset, so
+; elapsed time is the difference of two readings as 32-bit unsigned
+; values (correct across a wrap).
+;
+; MS@ and US@ use ch0 and ch2.  ch1 and ch3 are left free for programs
+; that want an independent timer (e.g. timing inside a timed run).
+; -------------------------------------------------------------------
+TMRMS    EQU 0C0h	; ch0, milliseconds (wraps after ~49.7 days)
+TMRUS    EQU 0C8h	; ch2, microseconds (wraps after ~71.6 minutes)
+
+; MS@ ( -- ud )  milliseconds since the FPGA core was loaded, as an
+;   unsigned double (low cell, then high cell on top).  The counter is
+;   latched by the first instruction after the push, so the value is
+;   the time at which MS@ started executing.
+  head msfetch,3,'MS@',docode
+	push bc			; old TOS -> param stack
+	out (TMRMS),a		; any write latches ch0
+	in a,(TMRMS)		; bits  7:0
+	ld l,a
+	in a,(TMRMS+1)		; bits 15:8
+	ld h,a
+	push hl			; low cell
+	in a,(TMRMS+2)		; bits 23:16
+	ld c,a
+	in a,(TMRMS+3)		; bits 31:24
+	ld b,a			; high cell = new TOS
+	next
+
+; US@ ( -- ud )  microseconds since the FPGA core was loaded, as an
+;   unsigned double (low cell, then high cell on top).  Wraps every
+;   ~71.6 minutes (2^32 us); the difference of two readings is the
+;   elapsed time for intervals up to that length.
+  head usfetch,3,'US@',docode
+	push bc			; old TOS -> param stack
+	out (TMRUS),a		; any write latches ch2
+	in a,(TMRUS)		; bits  7:0
+	ld l,a
+	in a,(TMRUS+1)		; bits 15:8
+	ld h,a
+	push hl			; low cell
+	in a,(TMRUS+2)		; bits 23:16
+	ld c,a
+	in a,(TMRUS+3)		; bits 31:24
+	ld b,a			; high cell = new TOS
+	next
+
 
 ; RD>MEM ( phys-lo phys-hi c-addr count -- )
 ;   Copy 'count' bytes from RAM-disk physical address (phys-hi:phys-lo)

@@ -2726,3 +2726,32 @@ machine instead of with a stopwatch.
   pending.
 - Port map documented in `HARDWARE.md` (the `IOPORTS.md` references in
   `REQUIREMENTS.md` now point there — that file was renamed earlier).
+
+### CamelFORTH `MS@` and `US@`
+
+`forth/io-multi.azm` (embedded kernels only; `io-cpm.azm` has no timer):
+`MS@ ( -- ud )` latches BenchTimer channel 0 (port `C0`) and `US@
+( -- ud )` channel 2 (port `C8`), reads the four latched bytes with
+immediate-port `IN A,(n)` and leaves the 32-bit count as a double (low
+cell below, high cell on top; HL/A scratch only, DE/IX/IY preserved).
+Channels 1 and 3 stay free for application use. Verified under GHDL with
+a copy of `sim/tb_forth.vhd` that emulates ports `C0-C3`/`C8-CB` (known
+ms = `A1B2C3D4`, us = `01020304`): correct cell order, old TOS preserved,
+`DEPTH` 0 after use, on both `camel80.bin` and `camelf.bin`. The kernel
+still has no `D+`/`D-`/`UD.`, so computing and printing an elapsed time
+needs small helper words (see `REQUIREMENTS.md` item 5).
+
+`forth/blocks/27-bench.fth` now carries the double-cell helpers the kernel
+lacks (it must fit one 16 x 64 block): `D+` (`>R M+ R> +`, using the
+kernel's unsigned `M+`), `D-` (`DNEGATE D+`), `UD.`, `timed`/`utimed`
+( xt -- ud ) (elapsed ms/µs of one execution; end minus start as a 32-bit
+difference, so correct across a counter wrap) and `times` ( xt n -- )
+(prints each run and the total in ms). `bench` is now 50 timed runs of the
+existing `outer` loop. Added to `blocks/Makefile` (`forth.blk`). Verified
+under GHDL on `camel80.bin` and `camelf.bin` with fake timer ports that
+step 500 per latch from `FFFFFE00` (so the difference spans the 32-bit
+wrap): `' nop timed UD.` -> 500, `utimed` -> 500, `' nop 2 times` -> 500,
+500, total 2500, `DEPTH` 0, BASE restored. (The block is compiled by
+`LOAD` as a whole, so `times` may span two lines; the testbench, which
+feeds lines one at a time and waits for `ok`, needed that definition joined
+onto one line.)
