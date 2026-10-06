@@ -392,7 +392,15 @@ port map(
 -- the CPU's MMU-translated physical address and write strobe are used.
 bram_address <= dl_bram_addr when dl_bram_we = '1' else mmu_phys_addr(15 downto 0);
 bram_data    <= dl_bram_data when dl_bram_we = '1' else cpuDataOut;
-bram_wren    <= '1' when dl_bram_we = '1' else not(n_memWR or n_internalRam1CS);
+-- The write strobe is the MMU's promoted memory write (req_mem_out AND
+-- req_write), not n_memWR: n_memWR only covers ordinary memory cycles, so
+-- writes through the MMU direct-access data port (+12, an I/O cycle that
+-- the MMU turns into a physical memory cycle) were silently dropped when
+-- the pointer addressed block RAM. Found by testing/sdramstress.asm, whose
+-- block-RAM reference run does OTIR through the port. For ordinary memory
+-- cycles this is identical to the old not(n_memWR) term.
+bram_wren    <= '1' when dl_bram_we = '1' else
+                (mmu_req_mem_out and mmu_req_write and not n_internalRam1CS);
 
 ram1: entity work.InternalRam64K
 port map

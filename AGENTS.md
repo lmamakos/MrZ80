@@ -134,6 +134,10 @@ for how `camel80.bin`/`forth.blk` are actually built and installed.
 Despite `pasmo` being available, DO NOT use `pasmo` to assemble any Z80
 assembly code programs.  Use the `um80`, `ul80` tools instead.
 
+um80 accepts `.PHASE`/`.DEPHASE` but silently IGNORES them (no address
+shift). For code copied to and run at another address, write its absolute
+self-references as `label+OFFSET` (see `IM` in `testing/sdramstress.asm`).
+
 ## Target device
 
 Cyclone V `5CSEBA6U23I7` (DE10-Nano / MiSTer).

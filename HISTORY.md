@@ -2978,3 +2978,79 @@ just after E+200, so it was seen at E+300.
   (unchanged); SDRAM **29465 ms** (was 36942 ms after step 2, 43692 ms
   before item 4.1) — SDRAM is now within 0.7% of block RAM, so the SDRAM
   cache (item 4.2) is no longer needed for performance.
+
+---
+
+## Session update — hardware SDRAM stress test, direct-access block-RAM write fix
+
+### `testing/sdramstress.asm` (new, in `testing/Makefile`)
+
+Hardware counterpart of `sim/sdram_stress.asm`, for soaking the
+speculative-read / posted-write SDRAM FSM on the real board (refresh
+collisions and `clk_sys`/`clk_ram` phase drift are only partly modelled in
+simulation). Load as a `.BIN` with Boot Load Target = Block RAM; output on
+the serial console; any key stops it and prints the totals and a verdict.
+
+- Each pass builds a 256-byte pattern in block RAM (pass mod 4: `i XOR
+  pass`, `AAh/55h`, walking one, walking zero), then runs the same test
+  image at logical 4000h twice: with frame 1 mapped to block RAM page 8193
+  (reference) and to SDRAM page 4. Each run copies the image into frame 1,
+  verifies the copy (test 0), and runs it 40 times, timed with the
+  benchmark timer's µs channel. One line per pass:
+  `pass N  blk T us  sdram T us  errors: blk E sdram E`; the first failure
+  is reported with test number, run and value.
+- Tests (code, stack at 7F00h and data all in frame 1): write + immediate
+  read-back (256 bytes), PUSH/POP bursts, 64-deep recursion + SP check,
+  `EX (SP),HL`, `RLD`/`RRD` round trips with pattern bytes, `LDIR` +
+  compare, 64 bytes `OTIR` through the MMU direct-access port to logical
+  6000h, read back normally, `INIR` back and compare.
+- `-D SIM` builds a GHDL variant (REPS 1, no serial output, one pass, then
+  results to 0900h-0905h); `sim/run_perf.sh` now runs it after the two
+  simulation payloads, and `tb_sdram_perf` prints the extra result bytes.
+
+### Bug found and fixed: direct-access port writes to block RAM were dropped
+
+The new test's block-RAM reference run failed test 7 in simulation (126
+errors): `OTIR` through the MMU direct-access port (`+12`) with the pointer
+in block RAM (physical 0x8000000-0x800FFFF) never wrote anything. The
+block RAM's write enable was `not (n_memWR or n_internalRam1CS)`, and
+`n_memWR` is only low in ordinary memory cycles, whereas a port-`+12`
+access is an I/O cycle that the MMU promotes to a memory cycle. Reads
+worked (the read data path does not depend on MREQ). Fixed in
+`MicrocomputerZ80CPM.vhd`: `bram_wren = mmu_req_mem_out and mmu_req_write
+and not n_internalRam1CS`, identical to the old term for ordinary memory
+cycles. Pre-existing (not caused by item 4.1); SDRAM was never affected
+(the SDRAM FSM already used the MMU's promoted request).
+
+### Toolchain gotcha: um80 ignores `.PHASE`
+
+um80 accepts `.PHASE`/`.DEPHASE` but treats them as no-ops, so code
+assembled "at" another address keeps its load address. Both stress payloads
+now write intra-image absolute references as `label+IM` (`IM equ
+WORK-image`) instead. Consequence for the earlier `sim/sdram_stress.asm`
+results: its `CALL`s to `rec`, `fail` and `ptr6000` had been executing the
+block-RAM copy of those routines (straight-line code and data were in
+SDRAM as intended); re-run with the fix, still 0 errors. Noted in
+`AGENTS.md`.
+
+### Verification
+
+- `sim/run_perf.sh`: `sdram_perf` 19993 T-states (unchanged),
+  `sdram_stress` 0 errors, `sdramstress -D SIM` 0 errors in both runs
+  (block RAM and SDRAM). `sim/run.sh`: 0 mismatches.
+- Full build OK. STA: setup fails only on the known `SBCTextDisplayRGB`
+  paths. Hold: three tiny slow -40 °C violations (worst -0.153 ns), all
+  from `reset_from_mount` (into `mmu_frame`, `sdram_state`) — the same
+  placement-dependent cold-corner reset paths seen in the BenchTimer build;
+  harmless in practice (that reset is held for 65536 clocks and the CPU
+  stays in reset 65536 clocks longer), still to be cleaned up (false path
+  or multi-corner fitting). `n_memWR` is now unused (Quartus warning
+  10036), kept for readability.
+- `sdramstress.asm` now starts with a core check (writes through port
+  `+12` to block RAM and reads back; prints `BROKEN - core predates the
+  bram_wren fix` on old cores). Added after a first hardware run showed
+  exactly the unfixed behaviour (126 test-7 errors per block-RAM run):
+  the MiSTer had loaded an older, same-date `.rbf`.
+- **Hardware** (fixed core): core check OK; 95 passes with 0 errors in
+  both runs. Block RAM 303950 µs vs SDRAM ~306120 µs per 40 runs of the
+  test image (+0.7%, the same SDRAM overhead as the CamelFORTH bench).

@@ -54,8 +54,12 @@ start:          ld      sp,STACK
                 ld      (DONE_FLAG),a
 fin:            jr      fin
 
+; The image is assembled at its load address in the .BIN but runs at WORK.
+; um80 accepts .PHASE/.DEPHASE but IGNORES them, so every absolute
+; reference from the image to itself is written label+IM (IM = WORK -
+; image) to point into the copy at WORK; relative jumps need nothing.
+IM              equ     WORK-image
 image:
-                .phase  WORK
 test:           ld      (OLDSP),sp
                 ld      sp,7F00h        ; stack in SDRAM
 
@@ -67,7 +71,7 @@ t1:             ld      a,b
                 ld      (hl),a
                 ld      c,(hl)
                 cp      c
-                call    nz,fail
+                call    nz,fail+IM
                 inc     hl
                 djnz    t1
 
@@ -85,36 +89,36 @@ t2:             push    bc
                 pop     hl
                 ld      a,b
                 cp      9Ah
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,c
                 cp      0BCh
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,d
                 cp      56h
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,e
                 cp      78h
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,h
                 cp      12h
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,l
                 cp      34h
-                call    nz,fail
+                call    nz,fail+IM
                 pop     bc
                 djnz    t2
 
 ; 3. recursion, then SP must be back at 7F00h
                 ld      a,12
-                call    rec
+                call    rec+IM
                 ld      hl,0
                 add     hl,sp
                 ld      a,h
                 cp      7Fh
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,l
                 or      a
-                call    nz,fail
+                call    nz,fail+IM
 
 ; 4. EX (SP),HL
                 ld      hl,1111h
@@ -124,16 +128,16 @@ t2:             push    bc
                 pop     de
                 ld      a,h
                 cp      11h
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,l
                 cp      11h
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,d
                 cp      22h
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,e
                 cp      22h
-                call    nz,fail
+                call    nz,fail+IM
 
 ; 5. RLD
                 ld      hl,5100h
@@ -141,10 +145,10 @@ t2:             push    bc
                 ld      a,12h
                 rld
                 cp      13h
-                call    nz,fail
+                call    nz,fail+IM
                 ld      a,(hl)
                 cp      42h
-                call    nz,fail
+                call    nz,fail+IM
 
 ; 6. LDIR 5000h -> 5200h, then compare
                 ld      hl,5000h
@@ -156,14 +160,14 @@ t2:             push    bc
                 ld      b,0
 t6:             ld      a,(de)
                 cp      (hl)
-                call    nz,fail
+                call    nz,fail+IM
                 inc     hl
                 inc     de
                 djnz    t6
 
 ; 7. OTIR to the direct-access port (phys 6000h = logical 6000h in frame 1),
 ;    read back normally, then INIR back through the port
-                call    ptr6000
+                call    ptr6000+IM
                 ld      hl,5000h
                 ld      bc,16*256+DDATA
                 otir
@@ -172,11 +176,11 @@ t6:             ld      a,(de)
                 ld      b,16
 t7:             ld      a,(de)
                 cp      (hl)
-                call    nz,fail
+                call    nz,fail+IM
                 inc     hl
                 inc     de
                 djnz    t7
-                call    ptr6000
+                call    ptr6000+IM
                 ld      hl,5300h
                 ld      bc,16*256+DDATA
                 inir
@@ -185,7 +189,7 @@ t7:             ld      a,(de)
                 ld      b,16
 t8:             ld      a,(de)
                 cp      (hl)
-                call    nz,fail
+                call    nz,fail+IM
                 inc     hl
                 inc     de
                 djnz    t8
@@ -202,7 +206,7 @@ ptr6000:        xor     a
                 ret
 
 rec:            dec     a
-                call    nz,rec
+                call    nz,rec+IM
                 ret
 
 fail:           push    af
@@ -211,7 +215,6 @@ fail:           push    af
                 ld      (ERRS),a
                 pop     af
                 ret
-                .dephase
 imglen          equ     $-image
 
                 end

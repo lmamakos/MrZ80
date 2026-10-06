@@ -146,10 +146,18 @@ begin
     end process;
 
     watch: process(clk_sys)
+        variable last : std_logic_vector(15 downto 0) := (others => '1');
     begin
-        if rising_edge(clk_sys) and p_bram_wren = '1' then
+        if rising_edge(clk_sys) and p_bram_wren = '0' then
+            last := (others => '1');
+        end if;
+        if rising_edge(clk_sys) and p_bram_wren = '1' and p_bram_addr /= last then
+            last := p_bram_addr;
             if unsigned(p_bram_addr) = 16#0900# then
                 result <= p_bram_data;
+            elsif unsigned(p_bram_addr) > 16#0900# and unsigned(p_bram_addr) < 16#0908# then
+                -- optional extra result bytes from the payload
+                report "result byte " & to_hstring(p_bram_addr) & " = " & to_hstring(p_bram_data);
             elsif unsigned(p_bram_addr) = 16#0908# and p_bram_data = x"AA" then
                 sim_done <= true;
             end if;
@@ -232,7 +240,7 @@ begin
 
     stopper: process
     begin
-        wait until sim_done for 20 ms;
+        wait until sim_done for 100 ms;
         wait for 1 us;
         if not sim_done then
             report "TIMEOUT: DONE_FLAG never written" severity error;

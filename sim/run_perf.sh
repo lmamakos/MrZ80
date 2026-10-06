@@ -23,6 +23,8 @@ for p in sdram_perf sdram_stress; do
     "$PROJECT_ROOT/tools/z80asm.sh" -o "$WORKDIR/$p" "sim/$p.asm" > /dev/null
     cp "$WORKDIR/$p.bin" "sim/$p.bin"
 done
+# the hardware soak test, in its GHDL variant (see its SIMULATION note)
+"$PROJECT_ROOT/tools/z80asm.sh" -D SIM -o "$WORKDIR/sdramstress_sim" testing/sdramstress.asm > /dev/null
 
 GHDL_FLAGS=(--std=08 -fsynopsys --workdir="$WORKDIR")
 
@@ -58,4 +60,8 @@ ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf "$@" --ieee-asserts=disable --stop-time
 echo "---- sdram_stress.asm (correctness, RESULT = error count) ----"
 ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN=sim/sdram_stress.bin -gEXPECT_SUM=0 "$@" \
     --ieee-asserts=disable --stop-time=25ms 2>&1 \
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p'
+echo "---- testing/sdramstress.asm -D SIM (1 pass, RESULT = error count) ----"
+ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN="$WORKDIR/sdramstress_sim.bin" -gEXPECT_SUM=0 "$@" \
+    --ieee-asserts=disable --stop-time=110ms 2>&1 \
     | sed -n 's/.*(report \(note\|warning\|error\)): //p'
