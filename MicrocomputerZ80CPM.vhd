@@ -747,7 +747,24 @@ begin
 					-- similarly-reverted cpu_wait_n_sync attempt). The
 					-- original mmu_req_read/mmu_req_write-only condition
 					-- below is restored.
-					sdram_wait_n <= '1';
+					--
+					-- WAIT-RELEASE PHASE GUARD (SDRAM-review-handoff.md,
+					-- section 5 / step 3a). The T80 is clocked by the
+					-- fabric-derived cpuClock, which RISES on the clk edge at
+					-- which (old) cpuClkCount = 2. If sdram_wait_n changed on
+					-- that same edge, individual T80 flip-flops (TState,
+					-- IR/DI_Reg load enables, PC, RD_n/MREQ_n hold, ...)
+					-- could capture a mixture of the old and new Wait_n value
+					-- (STA: hold violations to -4.1 ns, fast corner), leaving
+					-- the CPU in an inconsistent state -- an intermittently
+					-- mis-executed instruction. So never release on that
+					-- edge; release one clk later instead (sdram_wait_n is
+					-- only ever low for SDRAM cycles, so non-SDRAM cycles are
+					-- unaffected). The exit test below is still correct: the
+					-- CPU cannot drop RD/WR until it has seen Wait_n = '1'.
+					if cpuClkCount /= "000010" then
+						sdram_wait_n <= '1';
+					end if;
 					if mmu_req_read = '0' and mmu_req_write = '0' then
 						-- Enforce the inter-request dead time before another
 						-- transaction may start. sdram_we/rd are already low
