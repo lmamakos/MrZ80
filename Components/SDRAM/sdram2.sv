@@ -97,6 +97,7 @@ module sdram_32r8w
 //   addr[0]     = byte within the 16-bit word (DQM select)
 reg chip = 1'b0;            // current device select (drives SDRAM_nCS)
 reg init_chip = 1'b0;      // which device the startup sequence is configuring
+reg refresh_chip = 1'b0;   // device the NEXT auto-refresh goes to (alternates)
 assign SDRAM_nCS  = chip;
 assign SDRAM_nRAS = command[2];
 assign SDRAM_nCAS = command[1];
@@ -118,11 +119,20 @@ localparam sdram_startup_cycles= 14'd12100;// 100us, plus a little more, @ 100MH
 localparam startup_refresh_max = 14'b11111111111111;
 //localparam cycles_per_refresh  = 14'd780;  // (64000*100)/8192-1 Calc'd as (64ms @ 100MHz)/8192 rose
 //localparam cycles_per_refresh  = 14'd890;  // (64000*100)/8192-1 Calc'd as (64ms @ 114.560MHz)/8192 rose (act 895)
-// LOCAL MOD: dual-device alternating refresh. Each refresh interval the
-// `chip` select toggles, so a given device is refreshed only every OTHER
-// interval. Halve the interval so each device still meets its 7.8us row
-// refresh period: (64ms/8192 @ 100MHz)/2 = ~390 cycles.
-localparam cycles_per_refresh  = 14'd390;  // ((64000*100)/8192)/2, dual-device @ 100MHz
+// LOCAL MOD: dual-device alternating refresh (see SDRAM-review-handoff.md
+// section 7.1). Each AUTO_REFRESH goes to the device selected by a
+// DEDICATED toggle (refresh_chip), independent of `chip`, which CPU
+// accesses reload from addr[26]. (The previous version toggled `chip`
+// itself, so whenever a device-0 access fell between two refreshes --
+// i.e. always, while code runs from SDRAM -- every refresh went to
+// device 1 and device 0 was never refreshed.)
+//
+// Each device needs 8192 refreshes / 64 ms = one per 7.8125 us; with the
+// refreshes alternating between two devices, one must be issued at least
+// every 3.906 us. 350 cycles = 3.62 us at the 96.667 MHz clk_ram in use
+// (3.14 us at 111.5 MHz), leaving margin for a refresh to wait behind an
+// in-flight access (< 20 cycles).
+localparam REFRESH_INTERVAL    = 14'd350;
 
 // SDRAM commands
 wire [2:0] CMD_NOP             = 3'b111;
@@ -143,6 +153,9 @@ localparam STATE_RW1     = 3;
 localparam STATE_IDLE    = 4;
 localparam STATE_DLY1    = 5;
 localparam STATE_DLY2    = 6;
+localparam STATE_REFRESH = 7;   // LOCAL MOD: issue AUTO_REFRESH
+localparam STATE_DLY3    = 8;   // LOCAL MOD: extra post-access recovery
+localparam STATE_DLY4    = 9;   // LOCAL MOD: extra post-access recovery
 localparam STATE_IDLE_7  = 17;
 localparam STATE_IDLE_6  = 16;
 localparam STATE_IDLE_5  = 15;
@@ -260,27 +273,34 @@ always @(posedge clk) begin
 		STATE_IDLE_3: state <= STATE_IDLE_2;
 		STATE_IDLE_2: state <= STATE_IDLE_1;
 		STATE_IDLE_1: begin
+			// end of the post-refresh tRFC wait (IDLE_7..IDLE_1)
 			state      <= STATE_IDLE;
 			sdram_busy <= 1'b0;
-			// mask possible refresh to reduce colliding.
-			if(refresh_count > cycles_per_refresh) begin
-				// LOCAL MOD: alternate the device each refresh so both
-				// AS4C32M16SB devices on the shared bus get refreshed. A
-				// CPU access reloads `chip` from addr[26] at command time,
-				// so this toggle only affects refresh cycles.
-				chip     <= ~chip;
-				state    <= STATE_IDLE_7;
-				command  <= CMD_AUTO_REFRESH;
-				refresh_count <= 0;
-				sdram_busy <= 1'b1;
-			end
+		end
+
+		// LOCAL MOD: issue one AUTO_REFRESH to the device selected by
+		// refresh_chip, then alternate. `chip` is driven with the
+		// command so SDRAM_nCS selects the right device in the same
+		// cycle. All banks are idle here: every access uses auto-
+		// precharge and is followed by DLY1..DLY4, and STATE_IDLE spent
+		// one more cycle deciding to come here. The following
+		// IDLE_7..IDLE_1 chain gives 8 cycles (>= 72 ns) before the next
+		// command, covering tRFC/tRC.
+		STATE_REFRESH: begin
+			chip          <= refresh_chip;
+			refresh_chip  <= ~refresh_chip;
+			command       <= CMD_AUTO_REFRESH;
+			refresh_count <= 0;
+			state         <= STATE_IDLE_7;
+			sdram_busy    <= 1'b1;
 		end
 
 		STATE_IDLE: begin
 			saved_vid <= 1'b0;
-			if(refresh_count > (cycles_per_refresh<<1)) 
+			// LOCAL MOD: refresh has priority over a pending request.
+			if(refresh_count >= REFRESH_INTERVAL)
 			begin
-				state <= STATE_IDLE_1;
+				state <= STATE_REFRESH;
 				sdram_busy <= 1'b1;
 			end
 			else
@@ -380,7 +400,18 @@ always @(posedge clk) begin
 		end
 		STATE_DLY1:
 			state   <= STATE_DLY2;
+		// LOCAL MOD: two extra recovery cycles before IDLE. Upstream went
+		// back to IDLE 3 cycles after a WRITE-with-auto-precharge, which
+		// is shorter than tDAL (tWR + tRP, ~2 clk + 21 ns) -- the next
+		// ACTIVE or AUTO_REFRESH could then be issued to a bank still
+		// precharging. 5 cycles (>= 51 ns at 96.7 MHz) covers it. This
+		// does not delay ready/data for the current access (those come
+		// from data_cpu_ready_delay / STATE_RW1, not from this chain).
 		STATE_DLY2:
+			state   <= STATE_DLY3;
+		STATE_DLY3:
+			state   <= STATE_DLY4;
+		STATE_DLY4:
 			state   <= STATE_IDLE;
 	endcase
 
