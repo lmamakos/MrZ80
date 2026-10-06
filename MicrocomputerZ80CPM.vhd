@@ -184,14 +184,25 @@ architecture struct of MicrocomputerZ80CPM is
 	-- SDRAM client FSM. The CPU is stalled via wait_n until the SDRAM
 	-- controller pulses `ready`. Read data comes straight from the CDC's
 	-- ram_byte register (sdram_dout) into the cpuDataIn mux.
-	type sdram_state_t is (S_IDLE, S_REQ, S_DONE, S_GAP);
+	type sdram_state_t is (S_IDLE, S_REQ, S_HOLD, S_DONE, S_WPOST, S_GAP);
 	signal sdram_state				: sdram_state_t := S_IDLE;
 	signal sdram_we_reg				: std_logic := '0';
 	signal sdram_rd_reg				: std_logic := '0';
 	signal sdram_wait_n				: std_logic := '1';
+	-- Address/data latched when a request is raised (held for the CDC).
+	signal sdram_addr_r				: std_logic_vector(26 downto 0) := (others => '0');
+	signal sdram_din_r				: std_logic_vector(7 downto 0) := (others => '0');
+	signal sdram_spec				: std_logic := '0';  -- current read is speculative
+	signal sdram_wdone				: std_logic := '0';  -- posted write completed
+	signal sdram_wgone				: std_logic := '0';  -- posted write's strobe gone
+	signal sdram_cpu_acc			: std_logic;         -- CPU strobe cycle to SDRAM
+	signal sdram_spec_go			: std_logic;         -- T1 of an SDRAM memory read
+	signal sdram_match				: std_logic;         -- CPU reads sdram_addr_r
+	signal cpu_mrd_t1				: std_logic;         -- T80s MRD_T1
 	-- Combinational early release: high in the clk cycle in which the
-	-- completion pulse (sdram_ready) arrives in S_REQ, one cycle before the
-	-- registered sdram_wait_n goes high (REQUIREMENTS.md 4.1 step 2).
+	-- completion pulse (sdram_ready) arrives in S_REQ for a confirmed read
+	-- (or a speculative read is confirmed in S_HOLD), one cycle before the
+	-- registered sdram_wait_n goes high (REQUIREMENTS.md 4.1).
 	signal sdram_release			: std_logic;
 	-- Inter-request dead-time counter. After a transaction the request
 	-- strobe (sdram_we/rd) must stay low long enough for the request-level
@@ -295,6 +306,7 @@ port map(
 	a => cpuAddress,
 	di => cpuDataIn,
 	do => cpuDataOut,
+	mrd_t1 => cpu_mrd_t1,
         REG => cpuDbgRegisters
 );
 
@@ -352,7 +364,9 @@ phys_in_sdram    <= '1' when mmu_phys_addr(27) = '0' else '0';
 -- cycle as the completion pulse instead of one cycle later; the T80 only
 -- samples WAIT_n on cpu_cen edges, and this is an ordinary single-cycle
 -- clk path (done_sync/done_seen -> T80), so it is STA-checked.
-sdram_release <= '1' when sdram_state = S_REQ and sdram_ready = '1' else '0';
+sdram_release <= '1' when (sdram_state = S_REQ and sdram_ready = '1' and
+                           (sdram_spec = '0' or sdram_match = '1')) or
+                          (sdram_state = S_HOLD and sdram_match = '1') else '0';
 cpu_wait_n <= (not mmu_cpu_wait) and (sdram_wait_n or sdram_release);
 -- ____________________________________________________________________________________
 -- ROM GOES HERE	
@@ -657,74 +671,158 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
 -- ____________________________________________________________________________________
 -- SDRAM CLIENT FSM
 --
--- When the MMU promotes the current cycle into a physical memory access
--- (req_mem_out = '1') and the physical address lives in SDRAM, we hand
--- the access to sdram_z80_inst (in MultiComp.sv) and stall the Z-80 via
--- wait_n until the controller pulses `ready`.
+-- Hands SDRAM accesses to sdram_z80_inst (MultiComp.sv: clk_sys <->
+-- clk_ram request/completion synchronisers + sdram_32r8w) and stalls the
+-- Z-80 via WAIT_n only as long as needed (REQUIREMENTS.md item 4.1).
+--
+-- Reads:
+--   * SPECULATIVE READ AT T1. The T80 loads A on the edge that starts T1
+--     and only drives RD_n/MREQ_n low a full T-state later, at the end of
+--     T1; T80s' MRD_T1 output says, during T1, that this bus cycle will be
+--     a memory read (opcode fetch or memory read). When MRD_T1 = '1' and
+--     A maps to SDRAM, S_IDLE starts the read immediately (sdram_spec =
+--     '1'), so it completes before the T80 samples WAIT_n at the end of T2
+--     and costs no wait state. When RD_n then falls, the access is checked
+--     (sdram_match: memory read of exactly the latched physical address);
+--     only then is the CPU released. A mismatch (not expected to happen:
+--     A and the MMU mapping cannot change between T1 and T2) holds the CPU
+--     and redoes the access normally, from the strobe (S_HOLD -> S_GAP ->
+--     S_IDLE).
+--   * Strobe-triggered read (fallback; I/O reads of the MMU direct-access
+--     port +12, which the MMU promotes to a memory access only once IORQ_n
+--     is low, and reads that the FSM was too busy to start in T1): started
+--     on the first clk after RD_n falls; costs one wait state.
+--   * The CPU is released combinationally (sdram_release) in the clk cycle
+--     the completion pulse sdram_ready arrives, then by the registered
+--     sdram_wait_n.
+-- Writes (POSTED):
+--   * On the first clk after WR_n falls, the physical address and data are
+--     latched (sdram_addr_r / sdram_din_r) and the request raised WITHOUT
+--     stalling the CPU (S_WPOST); the write completes in the background.
+--   * Any SDRAM access the CPU starts while the write is still in flight
+--     (or during the following dead time) is held off with WAIT_n until
+--     the FSM is idle again, and then started normally, so SDRAM accesses
+--     stay strictly ordered (a read after a write to the same address sees
+--     the new data).
 --
 -- State graph:
---   S_IDLE: idle, sdram_wait_n='1'. On an SDRAM memory access, latch
---           the address/data/strobes and move to S_REQ.
---   S_REQ : drive sdram_we/rd asserted, stall the CPU. When the
---           controller pulses sdram_ready, release the CPU (combinationally
---           via sdram_release in that cycle, then via the registered
---           sdram_wait_n), drop sdram_we/rd and move to S_DONE.
---   S_DONE: wait for the CPU to drop its READ/WRITE strobe (it does so on
---           the cpu_cen edge at which it sees WAIT_n high), then move to
---           S_GAP.
---   S_GAP : inter-request dead time. Hold the request strobes low for a
---           few clk_sys cycles so the 112 MHz request-level synchroniser
---           in MultiComp.sv registers the deassertion and will see the
---           NEXT request as a fresh rising edge. Without this, tightly
---           spaced SDRAM accesses (consecutive M1 opcode fetches running
---           out of SDRAM) merge into one held request level, the
---           controller never re-triggers, wait_n sticks low and the CPU
---           hangs. This is why a routine runs fine from block RAM but
---           hangs the instant it executes from SDRAM, while data-only
---           tests (LDIR) pass (their non-SDRAM cycles supply the gap).
+--   S_IDLE : on a CPU SDRAM write strobe -> post it (S_WPOST); on a CPU
+--            SDRAM read strobe -> strobe-triggered read (S_REQ); else on
+--            MRD_T1 with an SDRAM address -> speculative read (S_REQ).
+--   S_REQ  : read in flight, CPU held (WAIT_n only matters at the end of
+--            T2). On sdram_ready: release the CPU and go to S_DONE if the
+--            access is confirmed (non-speculative, or sdram_match), else
+--            S_HOLD.
+--   S_HOLD : speculative data ready but the CPU's strobe does not (yet)
+--            match. On match release -> S_DONE; once T1 is over without a
+--            match -> S_GAP (redo/abandon; the CPU stays held if it is
+--            accessing SDRAM).
+--   S_DONE : CPU released; wait for it to drop RD_n/WR_n -> S_GAP.
+--   S_WPOST: posted write in flight. Once it completes, count the dead
+--            time (as S_GAP does); go to S_IDLE when that has elapsed AND
+--            the CPU's write strobe has gone.
+--   S_GAP  : inter-request dead time (3 clk). The request level must be
+--            low for >= 2 clk_ram edges between requests or the request-
+--            level synchroniser in MultiComp.sv merges two requests into
+--            one and the controller never re-triggers (the original "code
+--            hangs as soon as it runs from SDRAM" bug). Never delays the
+--            CPU for back-to-back reads (the next strobe is >= 1 T-state
+--            away).
 --
--- M1 / REFRESH HAZARD (why the exit keys off RD/WR, not MREQ):
---   On a Z-80 M1 opcode fetch the T80 core asserts MREQ in BOTH T2 (the
---   data phase, with RD also asserted) AND T3 (the refresh phase, with RD
---   deasserted and the refresh address I:R on the bus). When frame 0 maps
---   to SDRAM (the boot-from-.BIN case) that refresh address ALSO decodes as
---   SDRAM, so mmu_req_mem_out stays high continuously from the data phase
---   into the refresh phase -- there is no clean MREQ=0 gap between them at
---   the 50 MHz FSM sampling rate (the CPU advances at ~10 MHz, so
---   whether the FSM catches the momentary MREQ deassert is alignment-
---   dependent -> non-deterministic). Keying the S_DONE exit and re-arm off
---   the actual read/write strobe (mmu_req_read / mmu_req_write), which is
---   deasserted in T3 (RD_n=1, WR_n=1), gives a deterministic boundary that
---   the T3 refresh MREQ cannot blur. This is the path instruction fetch
---   from SDRAM depends on, so it was invisible to data-only memory tests.
+-- M1 / REFRESH HAZARD (why exits and triggers key off RD/WR, not MREQ):
+--   On an M1 opcode fetch the T80 asserts MREQ in T2 (data phase, with RD)
+--   AND in T3 (refresh phase, RD high, refresh address I:R on the bus). If
+--   that refresh address also maps to SDRAM, mmu_req_mem_out stays high
+--   from the data phase into the refresh phase with no reliable MREQ=0
+--   gap, so triggers and the S_DONE exit use the read/write strobes
+--   (mmu_req_read / mmu_req_write), which are low in T3. MRD_T1 is low in
+--   T3/T4, so the refresh phase never starts a speculative read either.
+--
+-- ATTEMPTED FIX, REVERTED (kept as a warning): adding `phys_in_sdram = '0'
+--   or` to the S_DONE exit made testing/backtoback.asm dramatically worse
+--   (1 -> 1021 mismatches of 1024): phys_in_sdram is a combinational
+--   decode of whatever the address bus shows, unrelated to whether the
+--   current transaction is finished. Do not reintroduce it without
+--   simulating first (see HISTORY.md, and the similarly-reverted
+--   cpu_wait_n_sync attempt).
+--
 -- READ DATA PATH: the CPU reads sdram_dout (= ram_byte in MultiComp.sv, a
---   clk_ram register) directly, with no clk_sys copy. ram_byte is written
---   on the clk_ram edge that toggles ram_done, and the toggle needs the
---   2-FF done_sync (>= 2 clk_sys edges) before sdram_ready can pulse, so
---   ram_byte is stable for more than a clk_sys period before the earliest
---   cpu_cen edge at which the T80 can see WAIT_n high and capture it
---   (MultiComp.sdc: false path from ram_byte). It then stays unchanged
---   until the next SDRAM transaction completes, which cannot happen
---   before the CPU has started a new SDRAM cycle.
+--   clk_ram register) directly. ram_byte is written on the clk_ram edge
+--   that toggles ram_done, and that toggle needs the 2-FF done_sync
+--   (>= 2 clk_sys edges) before sdram_ready can pulse, so ram_byte is
+--   stable for more than a clk_sys period before the earliest cpu_cen edge
+--   at which the T80 can capture it (MultiComp.sdc: false path from
+--   ram_byte). It then only changes when the next SDRAM transaction
+--   completes (a posted write also rewrites it, with a don't-care byte, but
+--   no read can be released before then).
 --
--- TIMING (sim/tb_sdram_perf.vhd, sdram_cdc_fake at 96.667 MHz): from the
---   cpu_cen edge at which RD_n/WR_n fall (start of T2), the FSM starts the
---   request one clk later; ram_done toggles ~134-144 ns (read) or
---   ~92-103 ns (write) after that edge; sdram_ready follows two clk_sys
---   edges later. A read therefore costs one wait T-state (two before the
---   early release and direct data path: the registered release made the
---   CPU miss the T-state boundary), a write one wait T-state. Starting the
---   request one clk earlier would not remove a further T-state for either.
+-- ADDRESS/DATA: sdram_addr/sdram_din come from clk_sys registers latched
+--   when the request is raised and held until the next request, so they
+--   are stable for the whole transaction as the CDC requires (it captures
+--   them >= 2 clk_ram edges after the request), even though a posted
+--   write lets the CPU move on and the MMU direct-access pointer
+--   post-increments.
 --
--- SDRAM access only occurs when phys_in_sdram = '1', i.e. mmu_phys_addr(27)
--- = '0', so the low 27 bits fully cover the SDRAM access. The block RAM
--- page (bit 27 set) never reaches the SDRAM controller.
-sdram_addr <= mmu_phys_addr(26 downto 0);  -- 27-bit address spans all 128 MB of SDRAM
-sdram_din  <= cpuDataOut;
+-- TIMING (sim/tb_sdram_perf.vhd, sdram_cdc_fake at 96.667 MHz; E = the
+--   cpu_cen edge that ends T1): a speculative read is requested at E-80 ns
+--   and sdram_ready arrives at about E+60..80, before the WAIT_n sample at
+--   E+100: no wait state. A strobe-triggered read is requested at E+20 and
+--   released for the E+200 sample: one wait state. A posted write costs
+--   no wait state unless another SDRAM access follows within ~2 T-states.
+--
+-- SDRAM is phys_addr(27) = '0'; the block RAM page (bit 27 set) never
+-- reaches the SDRAM controller, so the low 27 bits are the SDRAM address.
+sdram_addr <= sdram_addr_r;
+sdram_din  <= sdram_din_r;
 sdram_we   <= sdram_we_reg;
 sdram_rd   <= sdram_rd_reg;
 
+-- A CPU bus cycle (strobe asserted) to SDRAM is in progress.
+sdram_cpu_acc <= '1' when mmu_req_mem_out = '1' and phys_in_sdram = '1' and
+                          (mmu_req_read = '1' or mmu_req_write = '1') else '0';
+-- T1 of a memory read whose address maps to SDRAM (MREQ_n is not yet low,
+-- so this uses the frame mapping; the I/O direct-access port can only be
+-- recognised once IORQ_n is low and is never speculated).
+sdram_spec_go <= cpu_mrd_t1 and phys_in_sdram;
+-- The CPU is reading exactly the speculatively read physical address.
+sdram_match <= '1' when mmu_req_mem_out = '1' and mmu_req_read = '1' and
+                        phys_in_sdram = '1' and
+                        mmu_phys_addr(26 downto 0) = sdram_addr_r else '0';
+
 sdram_fsm: process(clk)
+	-- S_IDLE behaviour: start whatever SDRAM access the CPU needs, else
+	-- stay (or become) idle. Also used directly at the end of S_WPOST so an
+	-- access following a posted write is not delayed by an extra S_IDLE
+	-- cycle.
+	procedure idle_or_start is
+	begin
+		sdram_we_reg <= '0';
+		sdram_rd_reg <= '0';
+		sdram_wait_n <= '1';
+		sdram_spec   <= '0';
+		sdram_wdone  <= '0';
+		sdram_wgone  <= '0';
+		sdram_state  <= S_IDLE;
+		if sdram_cpu_acc = '1' then
+			sdram_addr_r <= mmu_phys_addr(26 downto 0);
+			sdram_din_r  <= cpuDataOut;
+			if mmu_req_write = '1' then
+				-- posted write: the CPU is not stalled
+				sdram_we_reg <= '1';
+				sdram_state  <= S_WPOST;
+			else
+				sdram_rd_reg <= '1';
+				sdram_wait_n <= '0';
+				sdram_state  <= S_REQ;
+			end if;
+		elsif sdram_spec_go = '1' then
+			sdram_addr_r <= mmu_phys_addr(26 downto 0);
+			sdram_rd_reg <= '1';
+			sdram_wait_n <= '0';
+			sdram_spec   <= '1';
+			sdram_state  <= S_REQ;
+		end if;
+	end procedure;
 begin
 	if rising_edge(clk) then
 		if N_RESET = '0' then
@@ -732,124 +830,94 @@ begin
 			sdram_we_reg  <= '0';
 			sdram_rd_reg  <= '0';
 			sdram_wait_n  <= '1';
+			sdram_spec    <= '0';
+			sdram_wdone   <= '0';
+			sdram_wgone   <= '0';
 			sdram_gap_cnt <= (others => '0');
 		else
 			case sdram_state is
 				when S_IDLE =>
-					sdram_we_reg <= '0';
-					sdram_rd_reg <= '0';
-					sdram_wait_n <= '1';
-					-- Kick off a request when the MMU has promoted the cycle
-					-- to a physical memory access targeting SDRAM. The trigger
-					-- keys off the actual READ/WRITE strobe AND req_mem_out so
-					-- it is immune to the M1 T3 refresh MREQ pulse (which
-					-- asserts req_mem_out with both RD_n and WR_n high, i.e.
-					-- mmu_req_read = mmu_req_write = '0'); a refresh therefore
-					-- never starts a spurious SDRAM cycle even when frame 0
-					-- maps to SDRAM. See "M1 / REFRESH HAZARD" above.
-					if mmu_req_mem_out = '1' and phys_in_sdram = '1' then
-						if mmu_req_write = '1' then
-							sdram_we_reg <= '1';
-							sdram_wait_n <= '0';
-							sdram_state  <= S_REQ;
-						elsif mmu_req_read = '1' then
-							sdram_rd_reg <= '1';
-							sdram_wait_n <= '0';
-							sdram_state  <= S_REQ;
+					idle_or_start;
+
+				when S_REQ =>
+					if sdram_ready = '1' then
+						sdram_rd_reg <= '0';
+						if sdram_spec = '0' or sdram_match = '1' then
+							sdram_wait_n <= '1';
+							sdram_state  <= S_DONE;
+						else
+							sdram_state  <= S_HOLD;
 						end if;
 					end if;
 
-				when S_REQ =>
-					-- Hold strobes (and the CPU wait) until the controller
-					-- signals completion. In the cycle sdram_ready pulses,
-					-- sdram_release already lets the CPU go and the read byte
-					-- is already valid on sdram_dout (see READ DATA PATH
-					-- above); from the next cycle the registered sdram_wait_n
-					-- keeps the CPU released. (Before REQUIREMENTS.md 4.1
-					-- step 2 the byte was copied into a clk_sys register
-					-- here and the wait released a cycle after that, to avoid
-					-- capturing the previous transaction's byte; the direct
-					-- path makes that extra cycle unnecessary.)
-					if sdram_ready = '1' then
-						sdram_we_reg  <= '0';
-						sdram_rd_reg  <= '0';
-						sdram_wait_n  <= '1';
-						sdram_state   <= S_DONE;
+				when S_HOLD =>
+					if sdram_match = '1' then
+						sdram_wait_n <= '1';
+						sdram_state  <= S_DONE;
+					elsif cpu_mrd_t1 = '0' then
+						-- T1 is over and the CPU is not reading what was
+						-- fetched: drop it and let S_IDLE start whatever the
+						-- CPU is really doing (held meanwhile if it is an
+						-- SDRAM access; see S_GAP).
+						-- synthesis translate_off
+						report "SDRAM FSM: speculative read not confirmed, redoing access"
+							severity warning;
+						-- synthesis translate_on
+						sdram_wait_n  <= not sdram_cpu_acc;
+						sdram_gap_cnt <= "10";
+						sdram_state   <= S_GAP;
 					end if;
 
 				when S_DONE =>
-					-- The CPU has been released. Wait for
-					-- it to drop its READ/WRITE strobe before accepting a new
-					-- request (this keeps the FSM from re-triggering on the
-					-- same bus cycle). The strobe-based exit (rather than
-					-- MREQ) is immune to the M1 T3 refresh MREQ pulse, which
-					-- otherwise keeps mmu_req_mem_out high across the data->
-					-- refresh boundary and makes the exit alignment-dependent
-					-- (see "M1 / REFRESH HAZARD" above).
-					--
-					-- ATTEMPTED FIX, REVERTED: a prior version of this line
-					-- added `phys_in_sdram = '0' or` to this condition,
-					-- hypothesising that INI/INIR's hard-wired write-to-(HL)
-					-- immediately after the port read (with no possible gap)
-					-- was stalling this exit on an SDRAM-irrelevant write.
-					-- On hardware this made things dramatically WORSE (1
-					-- mismatch -> 1021 out of 1024 in testing/backtoback.asm
-					-- Phase A2/A3), not better. Root cause of the failed
-					-- fix: phys_in_sdram is a continuously-computed
-					-- COMBINATIONAL signal off whatever mmu_phys_addr (i.e.
-					-- whatever the CPU's raw address bus) shows at any given
-					-- instant, with no qualification that a request is even
-					-- active; since the CPU spends the vast majority of its
-					-- time addressing block RAM (frame 0), phys_in_sdram
-					-- reads '0' almost continuously for reasons unrelated to
-					-- whether the CURRENT SDRAM transaction has genuinely
-					-- finished, causing this exit to fire far too eagerly
-					-- and unpredictably. Do NOT reintroduce this without
-					-- simulating first (see HISTORY.md's note on the
-					-- similarly-reverted cpu_wait_n_sync attempt). The
-					-- original mmu_req_read/mmu_req_write-only condition
-					-- below is restored.
-					--
-					-- (The cpuClkCount wait-release phase guard that used to
-					-- be here, needed while the T80 ran on the derived
-					-- cpuClock, was removed in REQUIREMENTS.md 4.1 step 2: the
-					-- T80 now samples WAIT_n only on cpu_cen edges of the
-					-- same clock.)
 					sdram_wait_n <= '1';
 					if mmu_req_read = '0' and mmu_req_write = '0' then
-						-- Enforce the inter-request dead time before another
-						-- transaction may start. sdram_we/rd are already low
-						-- here; hold them low through S_GAP so the 112 MHz
-						-- request-level synchroniser in MultiComp.sv sees a
-						-- clean falling edge and will detect the NEXT request
-						-- as a fresh rising edge. Without this, back-to-back
-						-- SDRAM accesses (e.g. consecutive M1 opcode fetches
-						-- executing from SDRAM) can merge into one held level,
-						-- the controller never re-triggers, wait_n sticks low
-						-- and the CPU hangs -- exactly the symptom where code
-						-- runs from block RAM but hangs the instant it is
-						-- CALLed in SDRAM. Data-only tests (LDIR) never hit it
-						-- because non-SDRAM cycles supply the gap for free.
 						sdram_gap_cnt <= "10";        -- 3 clk_sys cycles of dead time
 						sdram_state   <= S_GAP;
 					end if;
 
+				when S_WPOST =>
+					-- The request level drops when the write completes; the
+					-- inter-request dead time is counted from there (in this
+					-- state, not in S_GAP), so that an opcode fetch right
+					-- after the write can still be read speculatively.
+					if sdram_wdone = '0' then
+						if sdram_ready = '1' then
+							sdram_we_reg  <= '0';
+							sdram_wdone   <= '1';
+							-- 2 clk_sys cycles of dead time (>= 3 clk_ram edges
+							-- at 96.7 MHz; the synchroniser needs 2), counted
+							-- from the request level dropping.
+							sdram_gap_cnt <= "01";
+						end if;
+					elsif sdram_gap_cnt /= 0 then
+						sdram_gap_cnt <= sdram_gap_cnt - 1;
+					end if;
+					if mmu_req_write = '0' then
+						sdram_wgone <= '1';
+					end if;
+					-- Hold off any NEW SDRAM access (one that starts after
+					-- the posted write's own strobe has gone).
+					if sdram_wgone = '1' and sdram_cpu_acc = '1' then
+						sdram_wait_n <= '0';
+					else
+						sdram_wait_n <= '1';
+					end if;
+					-- Done once the write has completed, the dead time has
+					-- elapsed and the CPU's write strobe has gone (else
+					-- S_IDLE would post the same write again).
+					if sdram_wdone = '1' and sdram_gap_cnt = 0 and
+					   (sdram_wgone = '1' or mmu_req_write = '0') then
+						idle_or_start;
+					end if;
+
 				when S_GAP =>
-					-- Strobes held low; just count down the dead time. Re-arm
-					-- only after the request level has been low long enough
-					-- for the clk_ram 2-FF synchroniser (>= 2 clk_ram edges).
-					-- Re-derived for REQUIREMENTS.md 4.1 step 2: this never
-					-- delays the CPU. The request level already falls when
-					-- S_REQ sees sdram_ready; the CPU drops RD_n/WR_n on the
-					-- next cpu_cen edge and cannot assert the next strobe
-					-- until at least one T-state (5 clk) later, by which time
-					-- S_DONE (1) + S_GAP (3) + S_IDLE have elapsed, so the
-					-- next request starts on the first clk after its strobe
-					-- exactly as from S_IDLE, with the level low for >= 6 clk
-					-- (>= 11 clk_ram edges). Kept as a cheap safety margin.
+					-- Request strobes held low for the dead time. Any CPU
+					-- SDRAM bus cycle seen here is a new one (the previous
+					-- one's strobe has gone, or it is the access being
+					-- redone after S_HOLD): hold it until S_IDLE starts it.
 					sdram_we_reg <= '0';
 					sdram_rd_reg <= '0';
-					sdram_wait_n <= '1';
+					sdram_wait_n <= not sdram_cpu_acc;
 					if sdram_gap_cnt = 0 then
 						sdram_state <= S_IDLE;
 					else

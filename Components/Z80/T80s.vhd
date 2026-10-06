@@ -71,6 +71,16 @@
 --	        clocked from the system clock with a 1-in-N enable instead of
 --	        a fabric-derived clock.
 --
+--	LOCAL : (MultiComp) added the MRD_T1 output: high for the whole of T1
+--	        of a bus cycle that will be a memory read (opcode fetch or
+--	        memory read; not an I/O, interrupt-acknowledge, write or
+--	        internal cycle), i.e. exactly the cycles for which the process
+--	        below drives RD_n and MREQ_n low at the end of T1. A is already
+--	        valid throughout T1 (it is loaded on the edge that starts T1),
+--	        so a slow memory can start the read a full T-state before
+--	        RD_n/MREQ_n fall. Purely combinational from registered state;
+--	        may be left open.
+--
 
 library IEEE;
 use IEEE.std_logic_1164.all;
@@ -102,6 +112,7 @@ entity T80s is
 		A			: out std_logic_vector(15 downto 0);
 		DI			: in std_logic_vector(7 downto 0);
 		DO			: out std_logic_vector(7 downto 0);
+		MRD_T1		: out std_logic;
 		REG		: out std_logic_vector(211 downto 0)  -- IFF2, IFF1, IM, IY, HL', DE', BC', IX,
                                                                       -- HL, DE, BC, PC, SP, R, I, F', A', F, A
 	);
@@ -118,6 +129,11 @@ architecture rtl of T80s is
 	signal TState		: std_logic_vector(2 downto 0);
 
 begin
+
+	MRD_T1 <= '1' when TState = "001" and
+	                   ((MCycle = "001" and IntCycle_n = '1') or
+	                    (MCycle /= "001" and NoRead = '0' and Write = '0' and IORQ = '0'))
+	          else '0';
 
 	u0 : T80
 		generic map(

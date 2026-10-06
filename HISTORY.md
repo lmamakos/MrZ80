@@ -2903,3 +2903,78 @@ just after E+200, so it was seen at E+300.
   **29271 ms** (unchanged); SDRAM **36942 ms**, down from 43692 ms with the
   step-1 core (and 43693 ms before the clock-enable work). The SDRAM
   penalty fell from +49% to +26%.
+
+---
+
+## Session update — speculative SDRAM reads and posted writes (`REQUIREMENTS.md` item 4.1, steps 3/4)
+
+### Changes
+
+- `Components/Z80/T80s.vhd` (`LOCAL`): new output `MRD_T1`, high for the
+  whole of T1 of a bus cycle that will be a memory read (opcode fetch, or
+  a non-I/O read with `NoRead = 0`, `Write = 0`), i.e. exactly the cycles
+  for which `T80s` drives `RD_n`/`MREQ_n` low at the end of T1.
+  Combinational from registered state (`TState`, `MCycle`, `IntCycle_n`,
+  and the `MCode` decode). The T80 loads `A` on the edge that starts T1
+  (`T_Res`), so the address is valid all through T1.
+- `MicrocomputerZ80CPM.vhd`, SDRAM FSM rewritten (states `S_IDLE`, `S_REQ`,
+  `S_HOLD`, `S_DONE`, `S_WPOST`, `S_GAP`; header comment describes it):
+  - **Speculative read at T1**: on `MRD_T1` with an SDRAM address, `S_IDLE`
+    starts the read straight away, a full T-state before RD_n falls. It
+    completes (`sdram_ready` at about E+60..80 ns, E = end of T1) before
+    the T80 samples `WAIT_n` at E+100, so it costs no wait state. When
+    RD_n falls, `sdram_match` checks that the CPU really reads the latched
+    physical address; only then is it released. On a mismatch (`S_HOLD`,
+    not expected to happen) the CPU stays held and the access is redone
+    from the strobe. The strobe-triggered read remains as the fallback
+    (MMU port `+12` I/O reads, which are only recognisable once IORQ_n is
+    low, and reads the FSM was too busy to start in T1).
+  - **Posted writes**: on the first clk of WR_n the address and data are
+    latched and the request raised without stalling the CPU (`S_WPOST`).
+    A new SDRAM access while the write is in flight is held by `WAIT_n`
+    and started afterwards, so accesses stay ordered. The dead time after
+    a write (2 clk, >= 3 `clk_ram` edges) is counted from the request
+    level falling, and the next access is started directly from
+    `S_WPOST`, so the opcode fetch after a write can still be read
+    speculatively.
+  - `sdram_addr`/`sdram_din` now come from clk_sys registers latched when
+    the request is raised (`sdram_addr_r`/`sdram_din_r`), not from the
+    live address/data bus; covered by the existing `ram_addr`/`ram_din`
+    false paths.
+- `sim/sdram_cdc_fake.vhd` now models the controller's auto-refresh
+  (every 350 `clk_ram` cycles, 8 busy cycles, priority over requests),
+  so occasional refresh collisions show up.
+- New `sim/sdram_stress.asm` (run by `sim/run_perf.sh` after
+  `sdram_perf.asm`): from SDRAM with the stack in SDRAM — write then
+  immediate read-back of the same address, PUSH/POP bursts, 12-deep
+  recursion, `EX (SP),HL`, `RLD`, `LDIR`, `OTIR`/`INIR` through the MMU
+  direct-access port; RESULT = number of failed checks. The testbench
+  monitor now counts a wait state only when `WAIT_n` is low with RD_n or
+  WR_n active (WAIT_n low during T1, while a speculative read is in
+  flight, is ignored by the T80), and lists the first stalled cycles.
+
+### Results (simulation, `clk_ram` 96.667 MHz)
+
+| `sdram_perf.asm` | T-states | read waits | write waits |
+|---|---|---|---|
+| step 1 (old FSM) | 27854 | 2 each | 1 each |
+| step 2 | 24218 | 1 each | 1 each |
+| speculative reads + posted writes | **19993** | 47 in total (refresh collisions) | 0 |
+| (all accesses with no wait state) | 19946 | | |
+
+- Without the refresh model the result is exactly 19946 (no wait state at
+  all) from 85 to 112 MHz `clk_ram`.
+- `sdram_stress.asm`: 0 errors. As a check of the redo path, a sabotaged
+  sim copy that latched a wrong speculative address produced 4131
+  "speculative read not confirmed" redos and still 0 errors (just slower).
+- `sim/run.sh` (tb_inir_race): 0 mismatches; `run_ixmin.sh`,
+  `run_ixstack.sh` pass.
+- Full build OK. STA, all four corners: hold met everywhere; setup fails
+  only on the known `SBCTextDisplayRGB` paths. Tightest new paths at slow
+  100 °C: into the T80 +4.1 ns (`mmu_frame` → `sdram_match` →
+  `cpu_wait_n` → T80), into the FSM +4.5 ns (T80 `A` → MMU → FSM).
+- **Hardware**: `sdramexec`, `sdramret`, `backtoback`, `timertest` pass
+  from block RAM and SDRAM. CamelFORTH `bench`: block RAM 29271 ms
+  (unchanged); SDRAM **29465 ms** (was 36942 ms after step 2, 43692 ms
+  before item 4.1) — SDRAM is now within 0.7% of block RAM, so the SDRAM
+  cache (item 4.2) is no longer needed for performance.

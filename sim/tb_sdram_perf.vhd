@@ -9,7 +9,7 @@
 --   * the payload (sim/sdram_perf.asm, generic BIN) copies a routine into
 --     SDRAM and runs it from there,
 --   * a monitor counts, at every T80 clock-enable edge, whether the CPU
---     was held by WAIT_n, and builds a histogram of wait T-states per
+--     was held by WAIT_n (WAIT_n low with RD_n or WR_n low), and builds a histogram of wait T-states per
 --     stalled bus cycle, split by cycle type (memory read, memory write,
 --     I/O read/write),
 --   * at the end it reports the number of T-states from reset release to
@@ -61,6 +61,7 @@ architecture sim of tb_sdram_perf is
     signal p_bram_data : std_logic_vector(7 downto 0);
     signal p_bram_wren : std_logic;
     signal p_cen, p_wait_n, p_rd, p_wr, p_iorq, p_rst : std_logic;
+    signal p_addr : std_logic_vector(15 downto 0);
 
     signal result   : std_logic_vector(7 downto 0) := (others => '0');
     signal sim_done : boolean := false;
@@ -111,6 +112,7 @@ begin
     p_rd        <= << signal .tb_sdram_perf.dut.n_RD         : std_logic >>;
     p_wr        <= << signal .tb_sdram_perf.dut.n_WR         : std_logic >>;
     p_iorq      <= << signal .tb_sdram_perf.dut.n_IORQ       : std_logic >>;
+    p_addr      <= << signal .tb_sdram_perf.dut.cpuAddress  : std_logic_vector(15 downto 0) >>;
     p_rst       <= << signal .tb_sdram_perf.dut.reset_n_internal : std_logic >>;
 
     -- sdClkCount has no initial value; seed it as tb_inir_race does.
@@ -162,6 +164,7 @@ begin
         variable h_rd, h_wr, h_io : hist_t := (others => 0);
         variable w_rd, w_wr, w_io : natural := 0;
         variable reported  : boolean := false;
+        variable nshown    : natural := 0;
 
         procedure show(name : string; h : hist_t; total : natural) is
             variable n : natural := 0;
@@ -182,8 +185,17 @@ begin
         if rising_edge(clk_sys) then
             if p_rst = '1' and not sim_done and p_cen = '1' then
                 tstates := tstates + 1;
-                if p_wait_n = '0' then
+                -- A T-state is a wait state only if WAIT_n is low while a
+                -- read/write strobe is active (end of T2 or later); WAIT_n
+                -- low at the end of T1 (speculative SDRAM read in flight)
+                -- is ignored by the T80.
+                if p_wait_n = '0' and (p_rd = '0' or p_wr = '0') then
                     if run = 0 then
+                        if nshown < 8 then
+                            nshown := nshown + 1;
+                            report "stalled cycle at T-state " & integer'image(tstates)
+                                 & ", address " & to_hstring(p_addr);
+                        end if;
                         if p_iorq = '0' then kind := 2;
                         elsif p_wr = '0' then kind := 1;
                         else kind := 0;

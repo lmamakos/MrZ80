@@ -439,7 +439,13 @@ T-states. Acceptable for now; revisit either or both of:
    launch was shown to gain nothing. Measured in simulation with the new
    `sim/run_perf.sh` (payload -13% T-states).
 
-   Possible further steps (not started; each needs a decision):
+   *Steps 3/4 status (speculative reads + posted writes): implemented
+   (HISTORY.md, "speculative SDRAM reads and posted writes"); hardware
+   tests pass. CamelFORTH `bench`: SDRAM 29465 ms vs block RAM 29271 ms
+   (+0.7%; was +49% before item 4.1). This removes the performance case
+   for the SDRAM cache (item 4.2), which is shelved.*
+
+   Steps 3/4 as originally proposed:
    - *Speculative read at T1*: the T80's address is valid for the whole
      of T1, a full T-state before RD_n/MREQ_n fall. Starting SDRAM reads
      there (from the T80's `TState`/`MCycle`/`NoRead`/`Write`/`IORQ`

@@ -1,8 +1,10 @@
 #!/bin/bash
 # run_perf.sh - assemble sim/sdram_perf.asm, then compile and run the
-# tb_sdram_perf testbench with GHDL: reports the wait T-states SDRAM
+# tb_sdram_perf testbench with GHDL, once per payload. sdram_perf.asm
+# reports the wait T-states SDRAM
 # accesses cost (histogram per cycle type) and the total run time in
-# T-states, and checks the payload's checksum. See sim/tb_sdram_perf.vhd.
+# T-states and checks its checksum; sdram_stress.asm checks SDRAM
+# correctness in awkward access orderings (RESULT = error count, 0). See sim/tb_sdram_perf.vhd.
 # Usage: sim/run_perf.sh [workdir] [generic overrides, e.g. -gCLK_RAM_KHZ=112000]
 set -euo pipefail
 
@@ -17,8 +19,10 @@ shift || true
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
-"$PROJECT_ROOT/tools/z80asm.sh" -o "$WORKDIR/sdram_perf" sim/sdram_perf.asm > /dev/null
-cp "$WORKDIR/sdram_perf.bin" sim/sdram_perf.bin
+for p in sdram_perf sdram_stress; do
+    "$PROJECT_ROOT/tools/z80asm.sh" -o "$WORKDIR/$p" "sim/$p.asm" > /dev/null
+    cp "$WORKDIR/$p.bin" "sim/$p.bin"
+done
 
 GHDL_FLAGS=(--std=08 -fsynopsys --workdir="$WORKDIR")
 
@@ -48,5 +52,10 @@ for f in "${FILES[@]}"; do
     ghdl -a "${GHDL_FLAGS[@]}" "$f"
 done
 ghdl -e "${GHDL_FLAGS[@]}" tb_sdram_perf
+echo "---- sdram_perf.asm (timing) ----"
 ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf "$@" --ieee-asserts=disable --stop-time=25ms 2>&1 \
-    | sed -n 's/.*(report \(note\|error\)): //p'
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p'
+echo "---- sdram_stress.asm (correctness, RESULT = error count) ----"
+ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN=sim/sdram_stress.bin -gEXPECT_SUM=0 "$@" \
+    --ieee-asserts=disable --stop-time=25ms 2>&1 \
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p'

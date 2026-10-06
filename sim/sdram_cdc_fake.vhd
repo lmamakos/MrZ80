@@ -97,6 +97,14 @@ architecture sim of sdram_cdc_fake is
     constant ACK_DELAY   : integer := 3;  -- cycles from req-seen to ack
     constant READ_DELAY  : integer := 7;  -- cycles from req-seen to ready (read)
     constant WRITE_DELAY : integer := 3;  -- cycles from req-seen to ready (write)
+    -- Auto-refresh, as sdram2.sv: when 350 cycles have passed since the last
+    -- refresh and the controller is idle, it refreshes (STATE_REFRESH +
+    -- IDLE_7..IDLE_1 = 8 cycles) before accepting a request. A request
+    -- arriving meanwhile waits, so an access occasionally takes longer.
+    constant REFRESH_INTERVAL : integer := 350;
+    constant REFRESH_BUSY     : integer := 8;
+    signal refresh_count : integer range 0 to 1023 := 0;
+    signal refresh_left  : integer range 0 to 15 := 0;
 
 begin
 
@@ -140,8 +148,16 @@ begin
         if rising_edge(clk_ram) then
             sdram_cpu_ack   <= '0';
             sdram_cpu_ready <= '0';
+            if refresh_count < 1023 then
+                refresh_count <= refresh_count + 1;
+            end if;
 
-            if ctrl_busy = '0' then
+            if refresh_left /= 0 then
+                refresh_left <= refresh_left - 1;
+            elsif ctrl_busy = '0' and refresh_count >= REFRESH_INTERVAL then
+                refresh_count <= 0;
+                refresh_left  <= REFRESH_BUSY - 1;
+            elsif ctrl_busy = '0' then
                 if ram_req = '1' then
                     ctrl_busy    <= '1';
                     ctrl_cnt     <= 0;
