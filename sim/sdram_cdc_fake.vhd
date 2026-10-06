@@ -24,11 +24,15 @@
 -- in the same cycle as ack (~3 cycles total). Modelled with a simple
 -- counter below.
 --
--- Fake memory content: dout is simply (byte address) mod 256 for whichever
--- byte address is requested -- an address-derived ramp, matching the
--- pattern testing/backtoback.asm already uses, so mismatches (a captured
--- byte that does NOT equal the byte address requested, mod 256) are
--- trivially recognisable as "captured a stale/wrong transaction's data".
+-- Fake memory content: a 64 KB array indexed by byte address bits 15:0
+-- (aliased every 64 KB), initialised to (byte address) mod 256 -- an
+-- address-derived ramp, matching the pattern testing/backtoback.asm
+-- already uses, so mismatches (a captured byte that does NOT equal the
+-- byte address requested, mod 256) are trivially recognisable as
+-- "captured a stale/wrong transaction's data". Writes are stored, so code
+-- can also be copied into and executed from the fake SDRAM
+-- (sim/tb_sdram_perf.vhd); tb_inir_race only reads, so it still sees the
+-- ramp.
 -- ============================================================================
 
 library ieee;
@@ -49,6 +53,8 @@ entity sdram_cdc_fake is
         sdram_ready_mux : out std_logic;
         sdram_dout_mux  : out std_logic_vector(7 downto 0)
     );
+    -- (clk_ram is supplied by the testbench; the real core runs it at
+    -- 96.667 MHz with SDRAM_CLK_100 defined in MultiComp.sv.)
 end entity sdram_cdc_fake;
 
 architecture sim of sdram_cdc_fake is
@@ -73,6 +79,16 @@ architecture sim of sdram_cdc_fake is
     signal sdram_cpu_ack   : std_logic := '0';
     signal sdram_cpu_ready : std_logic := '0';
     signal sdram_dout16    : std_logic_vector(15 downto 0) := (others => '0');
+
+    type mem_t is array (0 to 65535) of std_logic_vector(7 downto 0);
+    function ramp return mem_t is
+        variable m : mem_t;
+    begin
+        for i in m'range loop
+            m(i) := std_logic_vector(to_unsigned(i mod 256, 8));
+        end loop;
+        return m;
+    end function;
 
     -- ---- back into clk_sys (mirrors MultiComp.sv:311-320) ----
     signal done_sync : std_logic_vector(1 downto 0) := "00";
@@ -118,8 +134,8 @@ begin
 
     -- ---- fake sdram_32r8w CPU-port handshake (clk_ram domain) ----
     process(clk_ram)
-        variable word_addr : unsigned(25 downto 0);
-        variable byte_lo, byte_hi : integer;
+        variable mem : mem_t := ramp;
+        variable wa  : integer;
     begin
         if rising_edge(clk_ram) then
             sdram_cpu_ack   <= '0';
@@ -138,17 +154,14 @@ begin
                     sdram_cpu_ack <= '1';
                     if ctrl_is_read = '0' then
                         sdram_cpu_ready <= '1';  -- write completes with ack
+                        mem(to_integer(unsigned(ram_addr(15 downto 0)))) := ram_din;
                     end if;
                 end if;
 
                 if ctrl_is_read = '1' and ctrl_cnt = READ_DELAY - 1 then
                     sdram_cpu_ready <= '1';
-                    word_addr := unsigned(ram_addr(26 downto 1));
-                    byte_lo := to_integer(word_addr) * 2       mod 256;
-                    byte_hi := (to_integer(word_addr) * 2 + 1) mod 256;
-                    sdram_dout16 <= std_logic_vector(to_unsigned(byte_hi, 8)) &
-                                    std_logic_vector(to_unsigned(byte_lo, 8));
-                    -- report "CTRL: computed ram_addr=" & to_hstring(ram_addr) & " word_addr=" & integer'image(to_integer(word_addr)) & " byte_lo=" & integer'image(byte_lo) & " byte_hi=" & integer'image(byte_hi);
+                    wa := to_integer(unsigned(ram_addr(15 downto 1))) * 2;
+                    sdram_dout16 <= mem(wa + 1) & mem(wa);
                 end if;
 
                 -- Return to idle once the transaction's total delay has

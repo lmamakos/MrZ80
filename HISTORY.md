@@ -2829,3 +2829,77 @@ instead of the fabric-derived `cpuClock` register.
   SDRAM (as expected for a cycle-identical change). CP/M boot, which
   exercises the reworked port `$38` ROM disable, could not be re-tested
   yet (that mechanism is to be retired with the RomWBW port anyway).
+
+---
+
+## Session update — SDRAM penalty reduction, step 2 (`REQUIREMENTS.md` item 4.1)
+
+### New measurement testbench: `sim/tb_sdram_perf.vhd`, `sim/run_perf.sh`
+
+- Same system as `tb_inir_race` (real `MicrocomputerZ80CPM` via its sim
+  copy + `sdram_cdc_fake`), with `clk_ram` at the real 96.667 MHz
+  (`-gCLK_RAM_KHZ=` to change it) and a new payload,
+  `sim/sdram_perf.asm`: maps frame 1 to SDRAM, copies a routine there with
+  `LDIR`, runs it from SDRAM (fills a 64-byte buffer, four passes of
+  read/add/write plus `LDIR` copy-back, returns a checksum, expected
+  `E0h`). A monitor counts, on every `cpu_cen` edge, whether `WAIT_n` held
+  the T80, and prints a histogram of wait T-states per stalled cycle
+  (memory read incl. opcode fetch / memory write / I/O) plus the total
+  T-states to completion.
+- `sim/sdram_cdc_fake.vhd` now stores writes (64 KB array aliased on
+  address bits 15:0, initialised to the old address ramp, so
+  `tb_inir_race`, which only reads, is unaffected). Its read/write
+  latencies (ready 7 / 3 `clk_ram` cycles after the controller sees the
+  request) match `sdram2.sv`'s `IDLE → WAIT → WAIT1 → RW1 → ready-delay`
+  chain exactly.
+- Baseline (step 1 = old FSM): every SDRAM read costs **2** wait T-states,
+  every write **1**; 27854 T-states for the payload, ~28% of them waits
+  (consistent with the ~30% SDRAM penalty measured on hardware).
+
+Latency analysis (96.667 MHz, from the `cpu_cen` edge E at which RD_n /
+WR_n fall, start of T2): the FSM raises the request at E+20 ns; the CDC
+needs 3 `clk_ram` edges, the controller 8 more for a read (4 for a write),
+so `ram_done` toggles at E+134..144 ns (read) / E+92..103 ns (write); the
+2-FF `done_sync` adds two `clk_sys` edges before `sdram_ready`. The T80
+samples `WAIT_n` at E+100, E+200, ... With the old registered release
+(`S_REQ` → `S_DONE` → `sdram_wait_n`, two more clk) a read was released
+just after E+200, so it was seen at E+300.
+
+### Changes (`MicrocomputerZ80CPM.vhd`)
+
+- **Early, combinational wait release**: `sdram_release` = (`S_REQ` and
+  `sdram_ready`) is ORed into `cpu_wait_n`, so the T80 can see the end of
+  the wait in the very cycle the completion pulse arrives; `S_REQ` also
+  sets the registered `sdram_wait_n` on that edge so the release persists.
+- **Direct read-data path**: `cpuDataIn` takes `sdram_dout` (the CDC's
+  `ram_byte` register) directly; `sdramReadData` is gone. Safe because
+  `ram_byte` is written on the `clk_ram` edge that toggles `ram_done`, and
+  `done_sync` delays `sdram_ready` by two `clk_sys` edges, so the byte is
+  stable well before the first `cpu_cen` edge that can capture it; it then
+  only changes when the next SDRAM transaction completes. Covered by the
+  existing `ram_byte` false path in `MultiComp.sdc`.
+- **`cpuClkCount` wait-release guard removed** (redundant since step 1).
+- **`S_GAP` re-derived, unchanged**: it never delays the CPU (the CPU
+  cannot assert its next strobe until a T-state after dropping the last
+  one, by which time `S_DONE` + `S_GAP` + `S_IDLE` have elapsed; the
+  request level is low for >= 6 clk / 11 `clk_ram` edges). Kept as a
+  margin; documented in the `S_GAP` state.
+- **Earlier launch (one clk) not done**: by the analysis above it removes
+  no further T-state for reads or writes.
+
+### Results
+
+- `run_perf.sh`: reads **1** wait T-state (was 2), writes 1 (unchanged);
+  payload 27854 → **24218 T-states (-13%)**; waits are 18% of the
+  T-states instead of 28%. Checksum OK. Same result with `clk_ram` at 94.3,
+  100 and 112 MHz; at 82 MHz some reads take 2 waits (margin check).
+- `sim/run.sh` (tb_inir_race): 0 mismatches; the port-`+12` `INIR` reads
+  now take 1 wait T-state each.
+- Full build OK. STA, all four corners: hold met everywhere; setup fails
+  only on the known `SBCTextDisplayRGB` paths. New path `done_sync[1]` →
+  T80 (via `sdram_release`/`cpu_wait_n`): +8.0 ns at slow 100 °C.
+- **Hardware**: `sdramexec`, `sdramret`, `backtoback`, `timertest` pass.
+  CamelFORTH `bench` (timed by the benchmark timer): block RAM
+  **29271 ms** (unchanged); SDRAM **36942 ms**, down from 43692 ms with the
+  step-1 core (and 43693 ms before the clock-enable work). The SDRAM
+  penalty fell from +49% to +26%.

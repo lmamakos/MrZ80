@@ -429,6 +429,33 @@ T-states. Acceptable for now; revisit either or both of:
    request one `clk` earlier. Measure each change with the benchmark
    timer. The remaining SDRAM penalty sets the value of the cache
    (item 4.2).
+
+   *Step 2 status: implemented (HISTORY.md, "SDRAM penalty reduction,
+   step 2"); hardware tests pass. CamelFORTH `bench`: block RAM
+   29271 ms (unchanged), SDRAM 43692 -> 36942 ms (penalty +49% -> +26%).* Combinational release on the
+   completion pulse plus a direct `ram_byte` → `cpuDataIn` path: an SDRAM
+   read now costs 1 wait T-state instead of 2 (writes still 1); guard
+   removed; `S_GAP` re-derived (costs nothing, kept); a one-clk earlier
+   launch was shown to gain nothing. Measured in simulation with the new
+   `sim/run_perf.sh` (payload -13% T-states).
+
+   Possible further steps (not started; each needs a decision):
+   - *Speculative read at T1*: the T80's address is valid for the whole
+     of T1, a full T-state before RD_n/MREQ_n fall. Starting SDRAM reads
+     there (from the T80's `TState`/`MCycle`/`NoRead`/`Write`/`IORQ`
+     decode, exposed by `T80s`; verifying the address when RD_n falls, and
+     keeping the strobe-triggered path as a fallback) would complete a
+     read before the T80 samples `WAIT_n` at the end of T2: 0 wait states,
+     i.e. block-RAM speed for opcode fetches and reads apart from refresh
+     collisions. Not applicable to writes (`DO` is only loaded at the end
+     of T1).
+   - *Posted writes*: release the CPU as soon as the write is registered
+     (latching address/data in `clk_sys`), and make the next SDRAM access
+     wait for completion: writes at 0 wait states except back-to-back
+     SDRAM writes. This is the one-entry write buffer planned for the cache
+     anyway.
+   Together these would remove most of the SDRAM penalty and may make the
+   cache (4.2) unnecessary; measure first.
 2. **SDRAM cache** (block RAM), so that hits — loops, hot FORTH
    inner-interpreter code, the return/parameter stacks, the RomWBW common
    bank — complete at block-RAM speed without crossing into `clk_ram`.
