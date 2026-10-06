@@ -512,6 +512,8 @@ Replace stopwatch timing of benchmark runs with an on-chip timer.
 
 Done:
 - `testing/timertest.asm` passes on hardware.
+- `MS@`, `US@` and the `27-bench.fth` helpers (`D+`, `D-`, `UD.`, `timed`,
+  `utimed`, `times`, `bench`) tested on hardware: work as expected.
 - CamelFORTH words `MS@ ( -- ud )` and `US@ ( -- ud )` (`forth/io-multi.azm`,
   embedded kernels only, not the CP/M variant). Each latches a channel
   (ch0 / ch2) and returns the 32-bit count as a double, low cell below,

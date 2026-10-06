@@ -2755,3 +2755,6 @@ wrap): `' nop timed UD.` -> 500, `utimed` -> 500, `' nop 2 times` -> 500,
 `LOAD` as a whole, so `times` may span two lines; the testbench, which
 feeds lines one at a time and waits for `ok`, needed that definition joined
 onto one line.)
+
+Hardware check: the new kernels (`MS@`/`US@`) and `forth.blk` with the
+`27-bench.fth` helpers were run on the MiSTer and work as expected.
