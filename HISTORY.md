@@ -646,7 +646,11 @@ all inherently relocatable.
 Build: `pasmo --bin testing/sdramexec.asm testing/sdramexec.bin` (≈1.8 KB
 flat binary, entry at `0x0000`).
 
-### Wait-line phase race: intermittent off-by-one on execute-from-SDRAM (OPEN)
+### Wait-line phase race: intermittent off-by-one on execute-from-SDRAM (RESOLVED)
+
+> **Resolved** by the `S_DONE` wait-release phase guard — see "Session
+> update — SDRAM reliability fixes" at the end of this file and
+> `SDRAM-review-handoff.md`. The narrative below is kept for history.
 
 **Symptom (after the S_GAP deadlock fix below).** `sdramexec.bin` loaded into
 block RAM runs the routine out of SDRAM and *mostly* returns the correct
@@ -1184,8 +1188,10 @@ real-world misbehaviour:
    (cheap since the sum naturally wraps near `CHARS_PER_SCREEN`).
 3. Add a `set_multicycle_path` constraint covering this specific
    register-to-RAM path. Cannot be added to `sys/sys_top.sdc` (that
-   file is externally maintained); would need a project-level SDC
-   referenced from both `.qsf` files.
+   file is externally maintained). A project-level `MultiComp.sdc` now
+   exists; this path is intentionally left unconstrained there so it
+   stays visible until fixed in RTL (it is now the only setup
+   violation in the design).
 
 ### Outstanding work toward the requirements above
 
@@ -1535,6 +1541,11 @@ determination, not a per-byte loop needing a "first mismatch" latch).
     sustained-access failures + new arbitrated/cached architecture").
 
 ### Proposed speculative fixes (advance review)
+
+> **Superseded — do not apply.** `SDRAM-review-handoff.md` section 6 shows
+> these fixes are a no-op/multiple-driver error (Fix 1), unnecessary (Fix 2),
+> a deadlock (Fix 3) or not behaviour-neutral (Fix 4). The actual fixes are
+> in "Session update — SDRAM reliability fixes" at the end of this file.
 
 The four fixes below are recorded here for future reference. After the
 `backtoback.asm` run (see "Test result" immediately below), the plan is to
@@ -2539,3 +2550,129 @@ pop: `R@` (`ld c,(ix+0)` / `ld b,(ix+1)`, 38 T), `I`, `J`, `(loop)`/`(+loop)`
   loop, to compare with the per-primitive figures above.
 - Possible follow-ups: non-popping return-stack fetch for `R@`/`I`, and
   `IX += 4` for `UNLOOP`/`(loop)` termination.
+
+---
+
+## Session update — SDRAM reliability fixes and project timing constraints
+
+Follows the independent review in `SDRAM-review-handoff.md` (which
+supersedes the diagnosis and the four "proposed speculative fixes" in
+`SDRAM-bug-handoff.md` and in the section of that name above — **do not
+apply those**). Starting symptoms: `sdramexec.bin` passed when loaded into
+block RAM but, like `camel80.bin`/`camelf.bin`, printed one or two garbage
+characters and hung when loaded into **SDRAM**.
+
+### Wait-line release phase guard (`MicrocomputerZ80CPM.vhd`) — commit `5be2112`
+
+Root cause of the hang and of the old intermittent `sdramexec` `got=C4`
+(the "Wait-line phase race ... (OPEN)" section above — now **resolved**).
+The T80 is clocked by `cpuClock`, a register dividing `clk` by 5 that is
+promoted to a global clock; it rises on the `clk` edge where (old)
+`cpuClkCount = 2`. When the SDRAM client FSM released `sdram_wait_n` in
+`S_DONE` on that same edge, individual T80 flip-flops (TState, IR/DI_Reg
+load, PC, strobes) could capture a mixture of `Wait_n = 0` and `1`
+(fast-corner hold violations up to -4.1 ns) — a mis-executed instruction.
+Roughly 1 in 5 SDRAM accesses released on that edge, so code running
+entirely from SDRAM crashed almost immediately. Fix: in `S_DONE`, release
+only when `cpuClkCount /= "000010"` (at most one extra `clk`). The earlier
+reverted `cpu_wait_n_sync` attempt released on exactly this edge (the
+rise is at 2→3, not 1→2 as previously assumed).
+
+Result on hardware: `sdramexec` passes from both block RAM and SDRAM;
+`camelf.bin` starts from SDRAM.
+
+### T80 INI/IND/INIR/INDR and OUTI/OUTD/OTIR/OTDR never updated HL (`T80_MCode.vhd`) — commit `93e13c8`
+
+Real core bug present since the initial commit (Wallner 0242): MCycle 3
+used `IncDec_16 = "0010"/"1010"`, and `T80.vhd` only writes the
+incremented value back when bit 2 is set, so HL never changed. Ported the
+upstream "0240mj1" fix (`"0110"/"1110"`). This — plus stale block-RAM
+contents from earlier runs — fully explains `backtoback.asm` A2/A3's "one
+mismatch at offset 0, got=FF" and `sim/STATUS.md`'s "HL never increments"
+blocker (now marked resolved). The GHDL testbench (`sim/run.sh`) reports
+0 mismatches with the fix. `forth/io-multi.azm` still uses the explicit
+`IN`/`LD (HL)`/`INC HL` loops ("slower INIR to avoid SDRAM problem"); they
+can go back to `INIR`/`OTIR`.
+
+### SDRAM refresh starvation (`Components/SDRAM/sdram2.sv`) — commit `c4786c1`
+
+`sdramsum.bin` showed that the image loaded into SDRAM was intact (the
+only in-image difference, block 15, is `COLD` storing `BLKBUF`), yet
+`camelf.bin` became corrupted after a lot of processing from SDRAM. Cause:
+each refresh toggled the shared `chip` select, but every CPU access reloads
+`chip` from `addr[26]`; with code running from device 0, `chip` was always
+0 before each refresh, so every refresh went to device 1 and device 0 was
+**never refreshed** (and each device was refreshed only every ~16 µs at
+best). Fix (all `LOCAL MOD`):
+
+- a dedicated `refresh_chip` toggle and a `STATE_REFRESH` state issue the
+  AUTO_REFRESH to alternating devices independent of CPU traffic;
+- `REFRESH_INTERVAL = 350` `clk_ram` cycles (3.62 µs at 96.67 MHz), so
+  each device is refreshed every ~7.2 µs (< 7.8 µs required); refresh has
+  priority over a pending request;
+- `STATE_DLY3`/`STATE_DLY4`: two extra recovery cycles after every access
+  so the next ACTIVE/AUTO_REFRESH cannot reach a bank still in write
+  recovery + auto-precharge (tDAL). Read/write ready timing is unchanged.
+
+Verified with the new `testing/sdramret.asm` (below): the previous core
+shows retention errors, the fixed core runs every round with
+`errors=0000`. CamelFORTH (stock and custom-instruction kernels) then ran
+the benchmark from SDRAM successfully over multiple runs.
+
+### New diagnostics — commit `988ae33`
+
+- `testing/sdramsum.asm` + `testing/binsums.py`: per-256-byte checksums,
+  re-read check and hex dump of SDRAM page 0, to compare an OSD-loaded
+  image (SDRAM is not cleared by a later download) against the `.bin` on
+  the host.
+- `testing/sdramret.asm`: fills 256 KB of device 0, hammers another
+  device-0 page (the starvation trigger) for ~0 s / 1 s / 9 s / 70 s /
+  280 s, then verifies and prints error counts and the first failures.
+- `sim/`: the GHDL INIR testbench, `run.sh` now assembling with
+  `tools/z80asm.sh` (um80/ul80) instead of pasmo.
+
+### Project timing constraints (`MultiComp.sdc`)
+
+New project-level SDC, added to `MultiComp.qsf` after `sys/sys.qip` so it
+is read after `sys/sys_top.sdc` (which must not be edited). It:
+
+- defines `cpuClock` as generated clock `cpuClk` (`-edges {1 7 11}` on the
+  `clk_sys` PLL output: period 100 ns, high 60 / low 40), so every path
+  into and out of the T80 is now analysed;
+- relaxes the `clk_sys` → `cpuClk` **hold** check by one `clk_sys` period
+  (`-hold -start 1`) only for registers that provably never change on the
+  `cpuClk` rising edge: `sdram_wait_n` (phase guard above),
+  `sdramReadData` (only loaded while wait is asserted), the MMU
+  `mmu_frame`/`direct_access_pointer`/`was_map_io_to_direct`, `fpLatch`,
+  and the block RAM / boot ROM internal registers;
+- `cpuClk` → block RAM / boot ROM: `set_multicycle_path -setup -end 4 /
+  -hold -end 3` (address stable from T1, data used ≥ 1 cpuClk period
+  later; writes are repeated every `clk` while `WR_n` is low, so the last
+  write of the window stores settled data);
+- false paths for the front-panel capture chain (display only), the
+  quasi-static `bin_loaded`/`status[13]`, the `MultiComp.sv` SDRAM CDC
+  (`req_sync[0]`, `ram_addr`/`ram_din`/`ram_rnw`, `done_sync[0]`,
+  `ram_byte` → `clk_sys`) and `reset_from_mount` → SDRAM controller init.
+
+Deliberately **not** relaxed: peripheral read registers (`sd_controller`
+data/status, `FrontPanel_Subsystem` dout, ...) can change on any `clk`
+edge, so an `IN` can race the T80 capture. These are real; with the
+constraints in place the fitter now pads them and hold is met at all
+corners, but the clean fix is the clock-enable conversion
+(`REQUIREMENTS.md` item 4).
+
+Result (all four corners): **hold met everywhere; setup met everywhere
+except the pre-existing `SBCTextDisplayRGB` `startAddr` → attribute-RAM
+path** (-2.5 ns, slow corners; "Known issues" above — a real violation,
+left visible on purpose). Before: clk_ram -10.5 / -390 ns TNS and clk_sys
+-8.9 ns, dominated by false CDC paths, with all T80 paths unanalysed.
+Still unconstrained (pre-existing ripple/glitch clocks, harmless warnings
+332060): `T80s|IORQ_n` (clocks `n_RomActive` and a UART register via
+`n_ioWR`) and `serialClkCount[15]` (UART baud clock).
+
+### Performance note
+
+CamelFORTH benchmark: block RAM 13.0 s vs SDRAM 19.3 s (stock kernel);
+9.0 s vs 13.4 s with the custom `NEXT`/`PUSHIX`/`POPIX` instructions —
+SDRAM costs ~30%. Accepted for now; see `REQUIREMENTS.md` item 4 (T80
+clock-enable conversion and/or an SDRAM cache).

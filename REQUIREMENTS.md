@@ -47,8 +47,10 @@ once the RomWBW port is under way (see "Legacy cleanup" below).
   ↔ `clk_ram` 100 MHz). `S_GAP` and the read/write-strobe-keyed exit (as
   opposed to raw `MREQ`) were both added to work around, respectively, a
   back-to-back-request CDC deadlock and the Z-80 M1 opcode-fetch/refresh
-  hazard. This FSM is the prime suspect for the sustained-access problem
-  below.
+  hazard. The FSM never releases the CPU wait on the `cpuClock` rising
+  edge (phase guard), and the controller refreshes both SDRAM devices
+  correctly; sustained access and execution from SDRAM now work (see item 1
+  status). Project timing constraints live in `MultiComp.sdc`.
 - **Loadable boot ROM / RAM disk**: OSD-loaded `.BIN` (boots at physical/
   logical `0x0000`) and `.DSK` (8 MB RAM-disk images, default top-of-SDRAM)
   streamed in over the HPS `ioctl` download path.
@@ -67,7 +69,17 @@ once the RomWBW port is under way (see "Legacy cleanup" below).
 
 ### 1. Memory subsystem: sustained-access failures + new arbitrated/cached architecture
 
-**Symptom.** Individual memory probes (discrete byte read/write via the MMU
+**Status (2026-10): the sustained-access failures are resolved.** They had
+three causes, none of them the request/gap handshake itself: a same-edge
+race on the wait line into the derived-clock T80, a T80 core bug (INI/OUTI
+family never updated `HL`), and SDRAM device 0 never being refreshed while
+it was in use. With those fixed, `sdramexec`, `sdramret` and CamelFORTH run
+from SDRAM pass repeated runs. See `HISTORY.md` ("Session update — SDRAM
+reliability fixes") and `SDRAM-review-handoff.md`. The arbiter/cache
+architecture below is no longer needed for correctness; it remains a
+performance/feature item (see item 4).
+
+**Original symptom.** Individual memory probes (discrete byte read/write via the MMU
 direct-access port, or through a mapped frame) succeed, but sustained
 access patterns fail: instruction fetch out of SDRAM is unreliable, and
 block-move access via the direct-access port using `INIR`-style repeated
@@ -326,6 +338,53 @@ separately drives it via `assign ... USER_OUT[6]` — a leftover duplicate/
 conflicting driver from the pin-swap commit. Clean this up so there is a
 single, correctly-commented signal path from `FrontPanel_Subsystem` to the
 physical pin.
+
+### 4. Future: SDRAM execution performance (CPU clock and/or SDRAM cache)
+
+**Status.** SDRAM is now functionally reliable for sustained access and
+code execution (wait-release phase guard, T80 INI/OUTI fix, refresh fix,
+project SDC — see `HISTORY.md`, "Session update — SDRAM reliability
+fixes"). It is, however, slow: a CamelFORTH benchmark takes 13.0 s from
+block RAM vs 19.3 s from SDRAM (stock kernel), and 9.0 s vs 13.4 s with the
+custom instructions — roughly 30% slower from SDRAM. Every SDRAM access
+pays the `clk_sys` → `clk_ram` 2-FF request synchroniser, the controller
+latency, the `clk_ram` → `clk_sys` completion synchroniser, the `S_DONE`
+phase guard and the 3-cycle `S_GAP`, all rounded up to whole ~100 ns T80
+T-states. Acceptable for now; revisit either or both of:
+
+1. **Clock the T80 from `clk_sys` with a clock enable** instead of the
+   fabric-derived `cpuClock` register (`SDRAM-review-handoff.md` step 3b):
+   - expose `CEN` on `T80s` (currently tied `'1'`) and gate `T80s`' own
+     strobe/`DI_Reg` process with it; generate a one-cycle `cpu_cen` pulse
+     from `cpuClkCount`;
+   - removes the derived clock and with it the whole class of same-edge
+     races (the `cpuClkCount` wait-release guard, the hold relaxations and
+     the residual peripheral-read hold violations in `MultiComp.sdc`); all
+     CPU paths become single-domain and STA-checked, using
+     `set_multicycle_path` (setup 5 / hold 4) where needed;
+   - allows `WAIT_n` to be sampled on the exact enable cycle, so an SDRAM
+     access no longer has to be rounded up to whole T-states plus a guard
+     cycle, and the `S_GAP` dead time can be re-derived;
+   - re-check the peripherals that use CPU strobes as clocks
+     (`n_RomActive` on `n_ioWR`, `bufferedUART`, SD controller, front
+     panel) and whether the MMU `cpu_wait` pulse is still needed.
+2. **Investigate a cache in front of the SDRAM** (block RAM, small lines,
+   direct-mapped or 2-way, write-through), so that hits — loops, hot FORTH
+   inner-interpreter code, the return/parameter stacks — complete at
+   block-RAM speed without crossing into `clk_ram`. This is the cache part
+   of the arbiter/cache architecture in item 1: direct-access-port and any
+   future front-panel/DMA writes must update or invalidate it. Measure the
+   hit rate on the FORTH benchmark and on CP/M before committing to a
+   line size/associativity.
+3. Optionally reduce CDC latency on its own: run the SDRAM client FSM
+   directly in `clk_ram` with a single request/acknowledge crossing, or
+   pick `clk_ram` as an integer multiple of `clk_sys` so the crossing can
+   be made synchronous (treat any `clk_ram` change as an SDRAM read-capture
+   timing change — see `SDRAM-review-handoff.md` section 6.1).
+
+Use the same FORTH benchmark (block RAM vs SDRAM, stock and custom-
+instruction kernels) as the before/after measure, and regress with
+`testing/sdramexec`, `sdramret`, `backtoback` and `sdramtest`.
 
 ## Next milestone: RomWBW port
 

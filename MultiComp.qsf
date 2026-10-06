@@ -315,6 +315,8 @@ set_global_assignment -name VHDL_FILE Components/alancox/MMU.vhd
 set_global_assignment -name CDF_FILE jtag.cdf
 set_global_assignment -name QIP_FILE sys/sys.qip
 set_global_assignment -name QIP_FILE rtl/pll.qip
+# Project timing constraints (read after sys/sys_top.sdc from sys.qip).
+set_global_assignment -name SDC_FILE MultiComp.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE MultiComp.sv
 set_global_assignment -name VHDL_FILE Components/TERMINAL/SBCTextDisplayRGB.vhd
 set_global_assignment -name VHDL_FILE Components/Z80/T80s.vhd
