@@ -385,9 +385,6 @@ cpuck2:
  pop hl
       ENDIF
 
-        ld a,1       ; turn off Searle Multicomputer boot rom 
-        out (38h),a  ; if that's still somehow around
-
         jp COLD      ; enter top-level Forth word
 
   IFDEF CUSTCPU
