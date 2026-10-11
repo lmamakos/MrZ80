@@ -5,7 +5,7 @@ JedecChain;
 	P ActionCode(Ign)
 		Device PartName(SOCVHPS) MfrSpec(OpMask(0));
 	P ActionCode(Cfg)
-		Device PartName(5CSEBA6U23I7) Path("output_files/") File("MultiComp.sof") MfrSpec(OpMask(1));
+		Device PartName(5CSEBA6U23I7) Path("output_files/") File("MrZ80.sof") MfrSpec(OpMask(1));
 ChainEnd;
 
 AlteraBegin;

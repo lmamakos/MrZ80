@@ -3054,3 +3054,11 @@ SDRAM as intended); re-run with the fix, still 0 errors. Noted in
 - **Hardware** (fixed core): core check OK; 95 passes with 0 errors in
   both runs. Block RAM 303950 µs vs SDRAM ~306120 µs per 40 runs of the
   test image (+0.7%, the same SDRAM overhead as the CamelFORTH bench).
+
+## Renaming to **MrZ80**
+
+The name of the project has changed from `MultiComp` to `MrZ80`.  The
+effect is to change the name of the artifacts that are produced.  It
+also reflects the change to no longer support multiple microprocessors
+within a single desigh, but to focus exclusively on the Z80 and an
+environment that targets supporting RomWBW well.

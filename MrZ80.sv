@@ -381,18 +381,16 @@ assign AUDIO_MIX = 0;
 
 `include "build_id.v"
 parameter CONF_STR = {
-	"MultiComp;;",
-	"S,IMG,SD card image;",
-	"OF,Reset after Mount,No,Yes;", 
-	"-;",
+	"MrZ80;;",
 	"F1,BINROM,Boot Rom Image;",                     // index 1: boot ROM image -> SDRAM @ 0x000000 (or block RAM if OD set)
 	"F2,DSK,8MB Disk Image;",                        // index 2: RAM-disk image -> SDRAM, top 8 MB first
 	"OD,Boot Load Target,SDRAM,Block RAM;",          // status[13]: 0=BIN->SDRAM, 1=BIN->block RAM (debug)
 	"-;",
-	"O68,CPU-ROM,Z80-CP/M;",
+	"S,IMG,SD card image;",
+	"OF,Reset after Mount,No,Yes;", 
 	"-;",
+	"OC,Serial Port,Console Port,User IO (SNAC) Port;",
 	"O9B,Baud Rate tty,115200,38400,19200,9600,4800,2400;",
-	"OC,Serial Port,Console Port,User IO Port;",
 	"OE,Flow Control,None,RTS/CTS;",  // New flow control option
 	"-;",
 	"RE,Reset;",
@@ -693,6 +691,7 @@ wire flow_control_enable = status[14];    // 0 = No flow control, 1 = RTS/CTS en
 // Serial interface routing 
 wire serial_rx = serial_port_select ? user_rx : UART_RXD;
 wire serial_tx;
+wire fpLED_serial;   // Front-panel WS2812 line, routed to USER_OUT[6]
 
 localparam INIT_TIMEOUT = 24'd50000; // 1ms at 50MHz clock
 reg [23:0] init_counter = 0;
@@ -749,9 +748,6 @@ assign user_fpLED_serial = USER_OUT[6];
 
 assign CLK_VIDEO = clk_sys;
 
-typedef enum {cpuZ80CPM='b000} cpu_type_enum;
-wire [2:0] cpu_type = status[8:6];
-
 typedef enum {baud115200='b000, baud38400='b001, baud19200='b010, baud9600='b011, baud4800='b100, baud2400='b101} baud_rate_enum;
 wire [2:0] baud_rate = status[11:9];
 
@@ -760,29 +756,13 @@ wire hs, vs;
 wire [1:0] r,g,b;
 wire driveLED;
 
-wire [4:0] _hblank, _vblank;
-wire [4:0] _hs, _vs;
-wire [1:0] _r[4:0], _g[4:0], _b[4:0];
-wire [4:0] _driveLED;
-wire [4:0] _CE_PIXEL;
-wire [4:0] _SD_CS;
-wire [4:0] _SD_MOSI;
-wire [4:0] _SD_SCK;
-wire [4:0] _txd;
-wire [4:0] _rts;  // RTS signals from CPUs
-wire [4:0] _fpLED_serial;  // Front-panel WS2812 line per CPU
-wire       fpLED_serial;   // Selected by cpu_type, routed to USER_OUT[4]
+// Z-80 core SDRAM client bus (overridden by the OSD download path below).
+wire [26:0] z80_sdram_addr;
+wire [7:0]  z80_sdram_din;
+wire        z80_sdram_we;
+wire        z80_sdram_rd;
 
-// Per-CPU SDRAM client buses. Only the CPM core currently drives them;
-// other CPU selections leave their slot undriven (the cpu_type mux
-// below picks the active slot, so undriven slots are harmless).
-wire [26:0] _sdram_addr [4:0];
-wire [7:0]  _sdram_din  [4:0];
-wire        _sdram_we   [4:0];
-wire        _sdram_rd   [4:0];
-
-// Final SDRAM client signals routed into sdram_z80_inst. Gated by
-// cpu_type == cpuZ80CPM 
+// Final SDRAM client signals routed into sdram_z80_inst.
 wire [26:0] sdram_addr_mux;
 wire [7:0]  sdram_din_mux;
 wire        sdram_we_mux;
@@ -803,25 +783,6 @@ always @(*) begin
         baud2400:   baud_increment = 16'd50;    // 2400
         default:    baud_increment = 16'd2416;  // Default to 115200
     endcase
-end
-
-always_comb 
-begin
-    hblank      <= _hblank[cpu_type];
-    vblank      <= _vblank[cpu_type];
-    hs          <= _hs[cpu_type];
-    vs          <= _vs[cpu_type];
-    r           <= _r[cpu_type][1:0];
-    g           <= _g[cpu_type][1:0];
-    b           <= _b[cpu_type][1:0];
-    CE_PIXEL    <= _CE_PIXEL[cpu_type];
-	sdss		<= _SD_CS[cpu_type];
-	sdmosi		<= _SD_MOSI[cpu_type];
-	sdclk		<= _SD_SCK[cpu_type];
-	driveLED 	<= _driveLED[cpu_type];
-    serial_tx   <= _txd[cpu_type];
-    serial_rts  <= _rts[cpu_type];
-    fpLED_serial <= _fpLED_serial[cpu_type];
 end
 
 //////////////  OSD FILE DOWNLOAD -> SDRAM  ///////////////
@@ -962,47 +923,44 @@ end
 // window; block-RAM path completes immediately (single-cycle write).
 assign ioctl_wait = dl_busy;
 
-// SDRAM client mux: only the CPM core currently has SDRAM ports wired,
-// so gate strobes by cpu_type == cpuZ80CPM. During an OSD download the
-// download path overrides the CPU client (CPU is in reset). Address/data
-// pass through unconditionally; with we=rd=0 the controller stays idle.
-assign sdram_addr_mux  = ioctl_download ? dl_addr_r : _sdram_addr[cpu_type];
-assign sdram_din_mux   = ioctl_download ? dl_din_r  : _sdram_din [cpu_type];
-assign sdram_we_mux    = ioctl_download ? dl_we
-                                        : (_sdram_we[cpu_type] & (cpu_type == cpuZ80CPM));
-assign sdram_rd_mux    = ioctl_download ? 1'b0
-                                        : (_sdram_rd[cpu_type] & (cpu_type == cpuZ80CPM));
+// SDRAM client mux. During an OSD download the download path overrides
+// the Z-80 client (CPU is in reset). Address/data pass through
+// unconditionally; with we=rd=0 the controller stays idle.
+assign sdram_addr_mux  = ioctl_download ? dl_addr_r : z80_sdram_addr;
+assign sdram_din_mux   = ioctl_download ? dl_din_r  : z80_sdram_din;
+assign sdram_we_mux    = ioctl_download ? dl_we     : z80_sdram_we;
+assign sdram_rd_mux    = ioctl_download ? 1'b0      : z80_sdram_rd;
 
 
 MicrocomputerZ80CPM MicrocomputerZ80CPM
 (
-    .N_RESET(~reset & cpu_type == cpuZ80CPM),
-    .clk(cpu_type == cpuZ80CPM ? clk_sys : 0),
+    .N_RESET(~reset),
+    .clk(clk_sys),
     .baud_increment(baud_increment),
-    .R(_r[cpuZ80CPM][1:0]),
-    .G(_g[cpuZ80CPM][1:0]), 
-    .B(_b[cpuZ80CPM][1:0]),
-    .HS(_hs[cpuZ80CPM]),
-    .VS(_vs[cpuZ80CPM]),
-    .hBlank(_hblank[cpuZ80CPM]),
-    .vBlank(_vblank[cpuZ80CPM]),
-    .cepix(_CE_PIXEL[cpuZ80CPM]),
+    .R(r),
+    .G(g), 
+    .B(b),
+    .HS(hs),
+    .VS(vs),
+    .hBlank(hblank),
+    .vBlank(vblank),
+    .cepix(CE_PIXEL),
     .ps2Clk(PS2_CLK),
     .ps2Data(PS2_DAT),
-	.sdCS		(_SD_CS[cpuZ80CPM]),
-	.sdMOSI		(_SD_MOSI[cpuZ80CPM]),
+	.sdCS		(sdss),
+	.sdMOSI		(sdmosi),
 	.sdMISO		(sdmiso),
-	.sdSCLK		(_SD_SCK[cpuZ80CPM]),
-    .driveLED(_driveLED[cpuZ80CPM]),
+	.sdSCLK		(sdclk),
+    .driveLED(driveLED),
     .rxd1(serial_rx),
-    .txd1(_txd[cpuZ80CPM]),
-    .rts1(_rts[cpuZ80CPM]),
+    .txd1(serial_tx),
+    .rts1(serial_rts),
     .cts1(serial_cts),
-    .fpLED_serial(_fpLED_serial[cpuZ80CPM]),
-    .sdram_addr (_sdram_addr[cpuZ80CPM]),
-    .sdram_din  (_sdram_din [cpuZ80CPM]),
-    .sdram_we   (_sdram_we  [cpuZ80CPM]),
-    .sdram_rd   (_sdram_rd  [cpuZ80CPM]),
+    .fpLED_serial(fpLED_serial),
+    .sdram_addr (z80_sdram_addr),
+    .sdram_din  (z80_sdram_din),
+    .sdram_we   (z80_sdram_we),
+    .sdram_rd   (z80_sdram_rd),
     .sdram_dout (sdram_dout_mux),
     .sdram_ready(sdram_ready_mux),
     .bin_loaded (bin_loaded),

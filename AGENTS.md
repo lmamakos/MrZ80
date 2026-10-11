@@ -1,4 +1,4 @@
-# MultiComp MiSTer FPGA
+# MrZ80 MiSTer FPGA
 
 This project implements a Z-80 based system to run CP/M 2.2, CP/M 3.0 and
 other operating systems at present.  The intent is to port the RomWBW
@@ -8,18 +8,16 @@ system to run on this core in the future.
 
 - **Top-level entity**: `sys_top` (`sys/sys_top.v`). Wraps the MiSTer framework
   (video, audio, SD, HPS I/O) and instantiates CPU/memory components.
-- **`MultiComp.sv`**: `module emu` — the MiSTer core shell. Connects to
+- **`MrZ80.sv`**: `module emu` — the MiSTer core shell. Connects to
   `sys_top` via MiSTer's standard interface. Not the top-level entity.
-- **CPU cores** under `Components/` (Z80 via T80 VHD).
-  Machine selection is done via OSD, wired through `MultiComp.sv`.  
 - Project development occurs in a Linux environment.  When editing files,
   use only LF (line feed) characters for end of line; do not insert
   carriage return 0x0D characters.
   
 ## Quartus revision
 
-`MultiComp.qpf` defines a single revision, `MultiComp`, with its settings
-in `MultiComp.qsf` (USB support, Z80, SignalTap enabled, aggressive
+`MrZ80.qpf` defines a single revision, `MrZ80`, with its settings
+in `MrZ80.qsf` (USB support, Z80, SignalTap enabled, aggressive
 optimization settings).
 
 Run Analysis & Synthesis after changing `.qsf` assignments.
@@ -33,14 +31,14 @@ Three mechanisms, pick the right one:
    common support application for all MiSTer cores.
 2. **Files elsewhere (Components/, new dirs)**: add a direct
    `set_global_assignment -name SYSTEMVERILOG_FILE path/to/your.sv` to
-   `MultiComp.qsf`.
+   `MrZ80.qsf`.
 3. **IP cores**: create a `.qip` file (same format as `sys.qip`) and add
    `set_global_assignment -name QIP_FILE path/to/core.qip` to
-   `MultiComp.qsf`.
+   `MrZ80.qsf`.
 
 ## Conditional compilation macros
 
-All macros in `MultiComp.qsf` are **commented out**:
+All macros in `MrZ80.qsf` are **commented out**:
 
 ```
 ARCADE_SYS, USE_FB, USE_SDRAM, USE_DDRAM, DEBUG_NOHDMI
@@ -68,26 +66,26 @@ tools/build.sh synth
 tools/build.sh help
 
 # Custom quartus_sh arguments:
-tools/quartus_build.sh --flow compile_synthesis MultiComp -c MultiComp
+tools/quartus_build.sh --flow analysis_and_synthesis MrZ80 -c MrZ80
 ```
 
 **How it works:**
-- Both scripts detect the project root automatically (by finding `MultiComp.qpf`/`MultiComp.qsf`).
+- Both scripts detect the project root automatically (by finding `MrZ80.qpf`/`MrZ80.qsf`).
 - `tools/quartus_build.sh`: low-level wrapper that SSH's to `tycho`, runs Docker with Quartus 17.0, and passes all arguments directly to `quartus_sh`.
 - `tools/build.sh`: high-level convenience wrapper with common targets (`full`, `synth`, `help`).
-- The Docker container mounts the local project directory as `/build`, so output files are written back to the local `output_files/MultiComp.rbf`.
+- The Docker container mounts the local project directory as `/build`, so output files are written back to the local `output_files/MrZ80.rbf`.
 
 ### Manual build via Quartus GUI/CLI (advanced)
 
 If you have Quartus installed locally:
 
 ```sh
-# GUI: open MultiComp.qpf, Process → Start Compilation
+# GUI: open MrZ80.qpf, Process → Start Compilation
 # CLI (headless):
-quartus_sh --flow compile MultiComp -c MultiComp
+quartus_sh --flow compile MrZ80 -c MrZ80
 ```
 
-Output: `output_files/MultiComp.rbf`.
+Output: `output_files/MrZ80.rbf`.
 
 **Note:** Building the HDL core typically happens via the wrapper scripts above, which invoke
 a containerized Quartus environment on `tycho` to avoid local tool dependencies.

@@ -1060,7 +1060,7 @@ BLKBUFSIZE EQU 1024
         DW LIT,80h,COUNT,INTERPRET
     ENDIF
         DW XSQUOTE
-        DB 45,00Dh,0Ah,'Z80 CamelForth v1.02 2026-07-10a for CP/M'
+        DB 45,00Dh,0Ah,'Z80 CamelForth v1.02 2026-10-11 for CP/M '
         DB 0dh,0ah
         DW TYPE
 	DW ABORT       ; ABORT never returns

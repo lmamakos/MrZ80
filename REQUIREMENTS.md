@@ -24,8 +24,13 @@ MMU, working paged/SDRAM memory, and eventually HBIOS changes to target
 this board's peripherals.
 
 Only the Z-80 CPU core is in scope going forward; the other CPU cores
-inherited from the original MultiComp are legacy and candidates for removal
+inherited from the original MultiComp are legacy and had been removed
 once the RomWBW port is under way (see "Legacy cleanup" below).
+
+The project name has been changed from MultiComp to **MrZ80** to reflect
+the shift from multiple microprocessor cores to a distinctly specific
+Z80 core targeted to host the RomWBW software environment.  As such,
+some file names have been changed to relfect that.
 
 ## Current architecture (summary)
 
@@ -50,7 +55,7 @@ once the RomWBW port is under way (see "Legacy cleanup" below).
   hazard. The FSM never releases the CPU wait on the `cpuClock` rising
   edge (phase guard), and the controller refreshes both SDRAM devices
   correctly; sustained access and execution from SDRAM now work (see item 1
-  status). Project timing constraints live in `MultiComp.sdc`.
+  status). Project timing constraints live in `MrZ80.sdc`.
 - **Loadable boot ROM / RAM disk**: OSD-loaded `.BIN` (boots at physical/
   logical `0x0000`) and `.DSK` (8 MB RAM-disk images, default top-of-SDRAM)
   streamed in over the HPS `ioctl` download path.
@@ -225,7 +230,7 @@ that holds `wr_n`/`rd_n` low for 6 `clk` cycles (simulating the slow
 Z-80 clock) and confirms `global_ptr` advances by exactly 1 per access.
 
 **Fixed: `FP_RAM_Store` colour/map RAM read back as zero on hardware.**
-Root cause confirmed via `output_files/MultiComp.fit.rpt`: the Master
+Root cause confirmed via `output_files/MrZ80.fit.rpt`: the Master
 Controller's only consumers of the colour/map RAM's read port
 (`r_col_b`, `r_map_b`) had been temporarily replaced with hardcoded
 literals for testing (now commented out, not deleted, for easy restore),
@@ -331,7 +336,7 @@ checking all 64 `shadow_reg` bit positions against four different bit
 patterns, including back-to-back refresh cycles (steady-state, not just
 post-reset) — all 256 checks (4 patterns × 64 bits) pass.
 
-**Also fix while in this code:** `MultiComp.sv` currently declares
+**Also fix while in this code:** `MrZ80.sv` currently declares
 `user_fpLED_serial` from `USER_OUT[4]` (a stale comment/declaration left
 over from before the LED output was moved to a different pin) and
 separately drives it via `assign ... USER_OUT[6]` — a leftover duplicate/
@@ -359,7 +364,7 @@ T-states. Acceptable for now; revisit either or both of:
      from `cpuClkCount`;
    - removes the derived clock and with it the whole class of same-edge
      races (the `cpuClkCount` wait-release guard, the hold relaxations and
-     the residual peripheral-read hold violations in `MultiComp.sdc`); all
+     the residual peripheral-read hold violations in `MrZ80.sdc`); all
      CPU paths become single-domain and STA-checked, using
      `set_multicycle_path` (setup 5 / hold 4) where needed;
    - allows `WAIT_n` to be sampled on the exact enable cycle, so an SDRAM
@@ -396,7 +401,7 @@ T-states. Acceptable for now; revisit either or both of:
      the SDRAM/peripheral logic sees strobes change on the same `clk`
      edges. Delete the `cpuClock` register. Convert `n_RomActive` to a
      `clk`-domain edge detect. Keep the `S_DONE` guard for this step.
-   - `MultiComp.sdc`: remove the `cpuClk` generated clock, all the
+   - `MrZ80.sdc`: remove the `cpuClk` generated clock, all the
      `-hold -start 1` relaxations, the `cpuClk` → memory multicycle and
      the "accepted peripheral-read" note. Add a T80 → T80
      `set_multicycle_path` setup 5 / hold 4 (valid because both ends
@@ -490,7 +495,7 @@ T-states. Acceptable for now; revisit either or both of:
      through port +12 therefore do not pollute the cache. This is simpler
      than per-frame/per-page "non-cacheable" marking: no new
      software-visible state, and the snoop-on-write logic is needed anyway.
-     The RomWBW MultiComp platform code should use port +12 for
+     The RomWBW MrZ80 platform code should use port +12 for
      `HB_BNKCPY`-style copies and RAM/ROM-disk sector moves to benefit;
      copies done through frame mapping still go through the cache (4-way
      LRU limits the damage). A per-page "don't cache" attribute can be
@@ -526,7 +531,7 @@ T-states. Acceptable for now; revisit either or both of:
    Alternative or complement for RomWBW: with a 384 KB block RAM, place
    the hot RomWBW banks (HBIOS, user, common, AUX — 128 KB) in block RAM
    and leave ROM image / ROM disk / RAM disk in SDRAM. Block RAM starts at
-   page 8192, so the MultiComp HBIOS memory-manager code must also write
+   page 8192, so the MrZ80 HBIOS memory-manager code must also write
    the MMU page high-byte ports (+4..+7).
 3. Optionally reduce CDC latency on its own: run the SDRAM client FSM
    directly in `clk_ram` with a single request/acknowledge crossing, or
@@ -592,5 +597,6 @@ notably:
 - The port-`0x38` boot-ROM-disable trigger (`n_RomActive`/`n_basRomCS` in
   `MicrocomputerZ80CPM.vhd`) — a Searle-convention mechanism for unmapping
   the boot ROM overlay that RomWBW's own boot sequence will supersede.
-- Any remaining non-Z-80 CPU support (6800/6502/6809 cores and their mux
-  logic) once it's confirmed nothing else in the build depends on them.
+- ~~Any remaining non-Z-80 CPU support (6800/6502/6809 cores and their mux
+  logic)~~ — done: the OSD CPU selector and the `cpu_type`-indexed signal
+  muxes in `MultiComp.sv` have been removed; the Z-80 core connects directly.

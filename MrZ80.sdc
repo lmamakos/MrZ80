@@ -1,5 +1,5 @@
 # ============================================================================
-# MultiComp.sdc - project-level timing constraints (MultiComp core).
+# MrZ80.sdc - project-level timing constraints (MultiComp core).
 #
 # sys/sys_top.sdc (maintained externally, never edit) defines the board/PLL
 # clocks and puts every output of the core PLL (emu|pll) in ONE clock group,
@@ -75,7 +75,7 @@ set_multicycle_path -hold  -end 3 -from $t80_regs -to $mem_regs
 # CPU and is overwritten on the next clk.
 set_false_path -from $t80_regs -to [get_registers "$core|Transparent_Capture_Chain:*|captured_bits[*]"]
 
-# ---- clk_sys <-> clk_ram CDC (MultiComp.sv SDRAM adapter) -----------
+# ---- clk_sys <-> clk_ram CDC (MrZ80.sv SDRAM adapter) -----------
 # Request level (sdram_we_mux | sdram_rd_mux) -> 2-FF synchroniser req_sync.
 # Address/data/direction (ram_addr, ram_din, ram_rnw) are captured only on
 # the synchronised rising edge of that level, >= 2 clk_ram cycles after the

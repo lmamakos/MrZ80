@@ -6,24 +6,24 @@
 #   (or ./tools/quartus_build.sh if in the project root)
 #
 # Examples:
-#   tools/quartus_build.sh --flow compile MultiComp -c MultiComp
+#   tools/quartus_build.sh --flow compile MrZ80 -c MrZ80
 #     (builds the entire project)
 #
-#   tools/quartus_build.sh --flow compile_synthesis MultiComp -c MultiComp
+#   tools/quartus_build.sh --flow analysis_and_synthesis MrZ80 -c MrZ80
 #     (runs only analysis & synthesis, skipping place & route)
 #
-#   tools/quartus_build.sh -t MultiComp
+#   tools/quartus_build.sh -t MrZ80
 #     (queries current timing for the compiled design)
 #
 # Environment:
 #   - Connects via SSH to the host 'tycho' (assumed to be in ~/.ssh/config or resolvable)
 #   - Runs Docker container: ghcr.io/raetro/quartus:17.0
-#   - Project root on tycho: Projects/z80fp/RomWBW_MultiComp_MiSTer
+#   - Project root on tycho: Projects/z80fp/RomWBW_MrZ80_MiSTer
 #   - Mounts current directory into /build inside the container
 #
 # Notes:
 #   - This script can be run from the project root or from any subdirectory within it
-#     (it will traverse up to find MultiComp.qpf and MultiComp.qsf).
+#     (it will traverse up to find MrZ80.qpf and MrZ80.qsf).
 #   - All output files are written back to the local project directory
 #     after the container exits.
 #   - This script requires SSH access to 'tycho' and Docker to be installed/configured there.
@@ -34,7 +34,7 @@ set -euo pipefail
 find_project_root() {
     local dir="$(cd "$(dirname "$0")" && pwd)"
     while [[ "$dir" != "/" ]]; do
-        if [[ -f "$dir/MultiComp.qpf" && -f "$dir/MultiComp.qsf" ]]; then
+        if [[ -f "$dir/MrZ80.qpf" && -f "$dir/MrZ80.qsf" ]]; then
             echo "$dir"
             return 0
         fi
@@ -44,7 +44,7 @@ find_project_root() {
 }
 
 PROJECT_ROOT=$(find_project_root) || {
-    echo "Error: Could not find project root (MultiComp.qpf and MultiComp.qsf)."
+    echo "Error: Could not find project root (MrZ80.qpf and MrZ80.qsf)."
     echo "Please ensure this script is run from within the project directory tree."
     exit 1
 }

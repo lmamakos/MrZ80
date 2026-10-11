@@ -305,7 +305,7 @@ set_global_assignment -name USE_SIGNALTAP_FILE "output_files/status13-stp1.stp"
 set_global_assignment -name SYSTEMVERILOG_FILE Components/SDCARD/image_card.sv
 # Active SDRAM controller: CoCo3 sdram_32r8w (Components/SDRAM/sdram2.sv).
 # Written for this dual-AS4C32M16SB 128 MB board; correctly masks byte
-# writes. Runs at ~100 MHz (clk_ram) with a CDC adapter in MultiComp.sv.
+# writes. Runs at ~100 MHz (clk_ram) with a CDC adapter in MrZ80.sv.
 set_global_assignment -name SYSTEMVERILOG_FILE Components/SDRAM/sdram2.sv
 set_global_assignment -name VHDL_FILE Components/FRONTPANEL/FP_RAM_Store.vhd
 set_global_assignment -name VHDL_FILE Components/FRONTPANEL/Transparent_Capture_Chain.vhd
@@ -317,8 +317,8 @@ set_global_assignment -name CDF_FILE jtag.cdf
 set_global_assignment -name QIP_FILE sys/sys.qip
 set_global_assignment -name QIP_FILE rtl/pll.qip
 # Project timing constraints (read after sys/sys_top.sdc from sys.qip).
-set_global_assignment -name SDC_FILE MultiComp.sdc
-set_global_assignment -name SYSTEMVERILOG_FILE MultiComp.sv
+set_global_assignment -name SDC_FILE MrZ80.sdc
+set_global_assignment -name SYSTEMVERILOG_FILE MrZ80.sv
 set_global_assignment -name VHDL_FILE Components/TERMINAL/SBCTextDisplayRGB.vhd
 set_global_assignment -name VHDL_FILE Components/Z80/T80s.vhd
 set_global_assignment -name VHDL_FILE Components/Z80/T80_Reg.vhd

@@ -16,7 +16,7 @@
 #   tools/build.sh synth        # Synthesis only
 #   tools/build.sh help         # Show Quartus help
 #
-# The output .rbf file will be written to output_files/MultiComp.rbf
+# The output .rbf file will be written to output_files/MrZ80.rbf
 
 set -euo pipefail
 
@@ -27,8 +27,8 @@ PROJECT_ROOT="$(dirname "$TOOLS_DIR")"
 QUARTUS_BUILD="$TOOLS_DIR/quartus_build.sh"
 
 # Validate project root and quartus_build.sh
-if [[ ! -f "$PROJECT_ROOT/MultiComp.qpf" || ! -f "$PROJECT_ROOT/MultiComp.qsf" ]]; then
-    echo "Error: MultiComp.qpf and MultiComp.qsf not found in $PROJECT_ROOT"
+if [[ ! -f "$PROJECT_ROOT/MrZ80.qpf" || ! -f "$PROJECT_ROOT/MrZ80.qsf" ]]; then
+    echo "Error: MrZ80.qpf and MrZ80.qsf not found in $PROJECT_ROOT"
     echo "Please run this script from the project root or a subdirectory."
     exit 1
 fi
@@ -45,11 +45,11 @@ TARGET="${1:-full}"
 case "$TARGET" in
     full)
         echo "Building entire project (analysis, synthesis, place & route)..."
-        "$QUARTUS_BUILD" --flow compile MultiComp -c MultiComp
+        "$QUARTUS_BUILD" --flow compile MrZ80 -c MrZ80
         ;;
     synth)
         echo "Running analysis & synthesis only (skipping place & route)..."
-        "$QUARTUS_BUILD" --flow compile_synthesis MultiComp -c MultiComp
+        "$QUARTUS_BUILD" --flow analysis_and_synthesis MrZ80 -c MrZ80
         ;;
     help)
         echo "Usage: tools/build.sh [target]"
