@@ -857,13 +857,19 @@ wire [9:0]  dl_dsk_slot = ioctl_index[15:6];             // 0 = first DSK
 wire [26:0] dl_dsk_base = SDRAM_TOP - ((dl_dsk_slot + 1'b1) * DSK_IMAGE_SIZE);
 wire [26:0] dl_addr     = dl_is_dsk ? (dl_dsk_base + ioctl_addr) : ioctl_addr;
 
-// Debug option (status[13]): when set, a .BIN is loaded into the on-chip
-// 64 KB block RAM (low 16 bits of the file offset) instead of SDRAM. Block
-// RAM stays enabled, so this isolates a faulty SDRAM path from a faulty
-// load. Only BIN images use this; DSK images are 8 MB and always go to
-// SDRAM. A block-RAM write completes in one cycle, so it bypasses the
-// SDRAM handshake below.
-wire        dl_to_bram = ioctl_download & dl_is_bin & status[13];
+// Debug option (status[13]): when set, the first 64 KB of a .BIN is loaded
+// into the on-chip 64 KB block RAM instead of SDRAM. Block RAM stays
+// enabled, so this isolates a faulty SDRAM path from a faulty load. Any
+// bytes beyond the first 64 KB (ioctl_addr >= 0x10000) do not fit in block
+// RAM and are written to SDRAM at their file offset, so larger images no
+// longer wrap around and overwrite the start of the block RAM. Only BIN
+// images use this; DSK images are 8 MB and always go to SDRAM. A block-RAM
+// write completes in one cycle, so it bypasses the SDRAM handshake below.
+// The selection is evaluated per byte (ioctl_addr is stable while ioctl_wr
+// is being synchronized, since HPS is held off by ioctl_wait / the slow SPI
+// byte rate).
+wire        dl_to_bram = ioctl_download & dl_is_bin & status[13]
+                       & (ioctl_addr[26:16] == 11'd0);
 
 // Synchronize the ioctl_wr strobe (CLK_50M domain) into clk_sys and
 // edge-detect it. CLK_50M and clk_sys are both ~50 MHz PLL taps but are
