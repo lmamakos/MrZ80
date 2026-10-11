@@ -867,6 +867,8 @@ end generate GEN_NO_ATTRAM;
 						cursorHoriz <= 0;
 						paramCount<=0;
 					elsif paramCount=1 and dispByteLatch=x"4B" and param1=0 then -- ESC[K - erase EOL
+						cursorHorizRestore <= cursorHoriz;
+						cursorVertRestore <= cursorVert;
 						dispState <= clearLine;
 						paramCount<=0;
 					elsif paramCount=1 and dispByteLatch=x"73" and param1=0 then -- ESC[s - save cursor pos
@@ -1042,7 +1044,7 @@ end generate GEN_NO_ATTRAM;
 						else
 							cursorVert <= param1-1;
 						end if;
-						if param2<0 then
+						if param2<1 then
 							cursorHoriz <= 0;
 						elsif param2>HORIZ_CHARS then
 							cursorHoriz <= HORIZ_CHARS-1;
@@ -1080,7 +1082,12 @@ end generate GEN_NO_ATTRAM;
 					cursorHorizRestore <= 0;
 					cursorVertRestore <= 0;
 					dispState<=clearScreen;
-				elsif dispCharWRData=8 or dispCharWRData=127 then
+				elsif dispCharWRData=8 then -- backspace - move only, no erase, clamp at column 0
+					if cursorHoriz>0 then
+						cursorHoriz <= cursorHoriz-1;
+					end if;
+					dispState<=idle;
+				elsif dispCharWRData=127 then -- DEL - move and erase
 					if cursorHoriz>0 then
 						cursorHoriz <= cursorHoriz-1;
 					elsif cursorHoriz=0 and cursorVert>0 then
