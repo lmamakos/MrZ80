@@ -77,6 +77,101 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 | `0xC0`-`0xCF` | 16    | Benchmark timers (`n_timerCS`, `BenchTimer`). Four 32-bit snapshot channels: ch0/ch1 1 ms/tick, ch2/ch3 1 µs/tick. See below. |
 | `0xFF`        | 1     | Front-panel data latch (R/W). Software writes drive the 8-bit transparent capture chain; reads return the last-written value. |
 
+### Serial-like devices
+
+There are two devices, occupying 4 total I/O ports between `0x80` and `0x83`.  Both of these
+emulate the programming interface of an 6850 ACIA device.
+
+#### Video Terminal Display Device
+
+The video display implements a VGA display resolution terminal.  It has
+a display resolution 80x25 characters.  It emulates a basic ANSI terminal
+with display attributes, cursor positioning, etc.
+
+##### I/O Ports
+
+| Port       | Function                                                |
+|------------|---------------------------------------------------------|
+| `80`       | Read: Status Register, Write: Control register          |
+| `81`       | Read: Keyboard input character, Write: Display terminal emulator |
+
+##### Status register 
+|  7   |  6 |  5  |  4  |  3  |  2  |  1  |  0  |
+|-----------------------------------------------|
+| nInt |  -  |  -  |  -  | nCTS | nDCD | TXDONE | RXRDY |
+
+##### Status Register Signal Descriptions
+
+| Signal | Description                              |
+|--------|------------------------------------------|
+| nInt   | active low Interrupt - interrupt pending if interrupts enabled. |
+| nCTS   | active low CTS signal, tied low (active) |
+| nDCD   | active low DCD signal, tied low (active) |
+| TXDONE | Ready to send more characters to display |
+| RXRDY  | Input character from keyboard ready      |
+
+##### Keyboard Input
+
+This module processes PS/2 keyboard input events.  Of course, on the
+MiSTer there are no PS/2 keyboards connected to the hardware.  The
+host Linux system takes keybaord input from a USB attached keyboard
+device and then synthesizes PS/2 keyboard events to pass to this
+terminal emulator.  This device then turns these events back into
+characters that appear as if they were received on a serial port.
+
+There is no mapping for different keyboard layouts here; I believe
+that's a capability abstracted away to the general MiSTer platform to
+manage, rather than specific FPGA cores such as this one.
+
+##### ANSI Terminal Emulation
+
+The terminal emulates a basic ANSI terminal on output.
+
+#### ACIA UART
+
+This is not an emulated terminal, but either an emulated serial port or
+an actual serial UART implemented in the FPGA.  In either case, the
+programming model for Z80 programs is a 6850 ACIA serial controller.  This
+peripheral can be connected in either of two ways.
+
+1. By default, when the MrZ80 MiSTer core starts up, this serial device
+is connected to a virtual serial device on the MiSTer's Linux
+host.  It is available as a /dev/ttyS0 device in the Linux environment.
+You can SSH into the Linux host, and use the `screen` program to talk
+to that serial device that's connected to the Z80.
+
+2. Using the OSD (on screen display) of the MiSTer, you can alternatively
+select the `USER` device which are hardware serial in and out pins on
+the USER connector on the side of the MiSTer I/O board.  Inexplicably,
+the designers chose to use a USB3 **A** connector.. because it had enough
+pins?  Here there are 3.3V TTL level signals that you can connect to
+a USB/serial adapter or other device.  **It is important to recognicze
+that these are 3.3V logic signals, and you should not connected 5V
+TTL level signals to these FPGA pins.**  The FPGA is _not_ 5V tolerant
+and it is easy to damage those I/O pins.
+
+##### I/O Ports
+
+| Port       | Function                                                |
+|------------|---------------------------------------------------------|
+| `82`       | Read: Status Register, Write: Control register          |
+| `83`       | Read: Keyboard input character, Write: Display terminal emulator |
+
+##### Status register 
+|  7   |  6 |  5  |  4  |  3  |  2  |  1  |  0  |
+|-----------------------------------------------|
+| nInt |  -  |  -  |  -  | nCTS | nDCD | TXDONE | RXRDY |
+
+##### Status Register Signal Descriptions
+
+| Signal | Description                              |
+|--------|------------------------------------------|
+| nInt   | active low Interrupt - interrupt pending if interrupts enabled. |
+| nCTS   | active low CTS signal, tied low (active) |
+| nDCD   | active low DCD signal, tied low (active) |
+| TXDONE | Ready to send more characters to display |
+| RXRDY  | Input character from keyboard ready      |
+
 ### MMU I/O register window detail
 16 consecutive ports, decoded relative to `io_cs` on the low 4 address bits, `0xB0` - `0xBF`:
 

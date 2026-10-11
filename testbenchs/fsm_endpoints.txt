@@ -1,0 +1,12 @@
+   3.320  *sdram_state*                emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|IORQ_n -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|sdram_state.S_IDLE
+   6.391  *sdram_rd_reg*               emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|IORQ_n -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|sdram_rd_reg
+   6.384  *sdram_we_reg*               emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|IORQ_n -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|sdram_we_reg
+   6.380  *sdram_wait_n*               emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|IORQ_n -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|sdram_wait_n
+   6.149  *sdram_gap_cnt*              emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|RD_n -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|sdram_gap_cnt[0]
+   8.278  *mmu1|was_map_io_to_direct*  emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|IORQ_n -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|MMU:mmu1|was_map_io_to_direct
+  -0.139  *mmu1|direct_access_pointer* emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|T80:u0|A[5] -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|MMU:mmu1|direct_access_pointer[0]
+   2.537  *mmu1|mmu_frame*             emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|T80:u0|DO[3] -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|MMU:mmu1|mmu_frame[3][3]
+   2.149  *fpLatch*                    emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|T80:u0|A[0] -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|fpLatch[0]
+  -1.498  *ram1*porta_we_reg*          emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|IORQ_n -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|InternalRam64K:ram1|altsyncram:altsyncram_component|altsyncram_ba04:auto_generated|ram_block1a4~porta_we_reg
+  -4.834  *ram1*porta_datain_reg*      emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|T80:u0|DO[0] -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|InternalRam64K:ram1|altsyncram:altsyncram_component|altsyncram_ba04:auto_generated|ram_block1a0~porta_datain_reg5
+  -7.636  *ram1*porta_address_reg*     emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|T80s:cpu1|IORQ_n -> emu:emu|MicrocomputerZ80CPM:MicrocomputerZ80CPM|InternalRam64K:ram1|altsyncram:altsyncram_component|altsyncram_ba04:auto_generated|ram_block1a36~porta_address_reg10
