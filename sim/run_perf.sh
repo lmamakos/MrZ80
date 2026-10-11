@@ -19,7 +19,7 @@ shift || true
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
-for p in sdram_perf sdram_stress; do
+for p in sdram_perf sdram_stress sim_unused_io; do
     "$PROJECT_ROOT/tools/z80asm.sh" -o "$WORKDIR/$p" "sim/$p.asm" > /dev/null
     cp "$WORKDIR/$p.bin" "sim/$p.bin"
 done
@@ -36,7 +36,7 @@ FILES=(
     Components/Z80/T80_MCode.vhd
     Components/Z80/T80.vhd
     Components/Z80/T80s.vhd
-    Components/alancox/MMU.vhd
+    Components/MMU/MMU.vhd
     sim/behav_ram_rom.vhd
     sim/behav_display.vhd
     sim/bufferedUART_sim.vhd
@@ -64,4 +64,8 @@ ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN=sim/sdram_stress.bin -gEXPECT_SUM
 echo "---- testing/sdramstress.asm -D SIM (1 pass, RESULT = error count) ----"
 ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN="$WORKDIR/sdramstress_sim.bin" -gEXPECT_SUM=0 "$@" \
     --ieee-asserts=disable --stop-time=110ms 2>&1 \
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p'
+echo "---- sim_unused_io.asm (unclaimed I/O ports read 0FFh, RESULT = error count) ----"
+ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN=sim/sim_unused_io.bin -gEXPECT_SUM=0 "$@" \
+    --ieee-asserts=disable --stop-time=25ms 2>&1 \
     | sed -n 's/.*(report \(note\|warning\|error\)): //p'

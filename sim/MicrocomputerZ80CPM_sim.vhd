@@ -69,7 +69,7 @@ entity MicrocomputerZ80CPM is
 		-- SDRAM client interface. The Z-80's logical address is
 		-- translated by the on-core MMU; any physical address that
 		-- does not fall inside the low 64 KB block-RAM region exits
-		-- through these ports to the SDRAM controller in MultiComp.sv.
+		-- through these ports to the SDRAM controller in MrZ80.sv.
 		sdram_addr		: out std_logic_vector(26 downto 0);
 		sdram_din		: out std_logic_vector(7 downto 0);
 		sdram_we		: out std_logic;
@@ -206,7 +206,7 @@ architecture struct of MicrocomputerZ80CPM is
 	signal sdram_release			: std_logic;
 	-- Inter-request dead-time counter. After a transaction the request
 	-- strobe (sdram_we/rd) must stay low long enough for the request-level
-	-- 2-FF synchroniser in the 112 MHz clk_ram domain (MultiComp.sv) to
+	-- 2-FF synchroniser in the 112 MHz clk_ram domain (MrZ80.sv) to
 	-- register the deassertion, otherwise a tightly-spaced following request
 	-- (e.g. consecutive M1 opcode fetches running out of SDRAM) is never
 	-- seen as a fresh rising edge and the controller deadlocks. clk_ram is
@@ -663,7 +663,12 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
     --     from the physical-memory path below.
     --   * ROM overlay at logical 0x0000-0x1FFF wins over RAM.
     --   * Physical-memory path: block RAM for phys < 0x010000, SDRAM
-    --     otherwise.
+    --     otherwise. Both legs are qualified by mmu_req_mem_out (a memory
+    --     cycle, or the MMU's promoted direct-access port +12), because
+    --     the MMU translates cpuAddress on I/O cycles too: without the
+    --     qualifier an unclaimed I/O port would read back stale memory
+    --     data instead of the floating-bus value.
+    --   * Anything else (unclaimed I/O port): x"FF", the pulled-up bus.
     cpuDataIn <= interface1DataOut   when (n_interface1CS = '0') else
                  interface2DataOut   when (n_interface2CS = '0') else
                  sdCardDataOut       when (n_sdCardCS = '0') else
@@ -672,14 +677,14 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
                  timerDataOut        when (n_timerCS = '0') else
                  mmu_dataOut         when (mmu_io_cs = '1' and cpuAddress(3 downto 0) /= "1100") else
                  basRomData          when (n_basRomCS = '0') else
-                 internalRam1DataOut when (phys_in_blockram = '1') else
-                 sdram_dout          when (phys_in_sdram = '1') else
+                 internalRam1DataOut when (mmu_req_mem_out = '1' and phys_in_blockram = '1') else
+                 sdram_dout          when (mmu_req_mem_out = '1' and phys_in_sdram = '1') else
                  x"FF";
 
 -- ____________________________________________________________________________________
 -- SDRAM CLIENT FSM
 --
--- Hands SDRAM accesses to sdram_z80_inst (MultiComp.sv: clk_sys <->
+-- Hands SDRAM accesses to sdram_z80_inst (MrZ80.sv: clk_sys <->
 -- clk_ram request/completion synchronisers + sdram_32r8w) and stalls the
 -- Z-80 via WAIT_n only as long as needed (REQUIREMENTS.md item 4.1).
 --
@@ -731,7 +736,7 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
 --            the CPU's write strobe has gone.
 --   S_GAP  : inter-request dead time (3 clk). The request level must be
 --            low for >= 2 clk_ram edges between requests or the request-
---            level synchroniser in MultiComp.sv merges two requests into
+--            level synchroniser in MrZ80.sv merges two requests into
 --            one and the controller never re-triggers (the original "code
 --            hangs as soon as it runs from SDRAM" bug). Never delays the
 --            CPU for back-to-back reads (the next strobe is >= 1 T-state
@@ -754,12 +759,12 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
 --   simulating first (see HISTORY.md, and the similarly-reverted
 --   cpu_wait_n_sync attempt).
 --
--- READ DATA PATH: the CPU reads sdram_dout (= ram_byte in MultiComp.sv, a
+-- READ DATA PATH: the CPU reads sdram_dout (= ram_byte in MrZ80.sv, a
 --   clk_ram register) directly. ram_byte is written on the clk_ram edge
 --   that toggles ram_done, and that toggle needs the 2-FF done_sync
 --   (>= 2 clk_sys edges) before sdram_ready can pulse, so ram_byte is
 --   stable for more than a clk_sys period before the earliest cpu_cen edge
---   at which the T80 can capture it (MultiComp.sdc: false path from
+--   at which the T80 can capture it (MrZ80.sdc: false path from
 --   ram_byte). It then only changes when the next SDRAM transaction
 --   completes (a posted write also rewrites it, with a don't-care byte, but
 --   no read can be released before then).

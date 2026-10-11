@@ -31,7 +31,7 @@ FILES=(
     Components/Z80/T80_MCode.vhd
     Components/Z80/T80.vhd
     Components/Z80/T80s.vhd
-    Components/alancox/MMU.vhd
+    Components/MMU/MMU.vhd
     sim/behav_ram_rom.vhd
     sim/behav_display.vhd
     sim/bufferedUART_sim.vhd
