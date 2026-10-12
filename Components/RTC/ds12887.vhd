@@ -164,7 +164,10 @@ architecture rtl of ds12887 is
     signal tog_r2    : std_logic := '0';
     signal host_ev   : std_logic := '0';
     signal host_raw  : std_logic_vector(63 downto 0) := (others => '0');
-    signal sync_pend : std_logic := '0';
+    -- pending host sync: handshake between the host-sync process (sync_req)
+    -- and the core process (sync_ack) so each signal has a single driver
+    signal sync_req  : std_logic := '0';
+    signal sync_ack  : std_logic := '0';
     signal synced    : std_logic := '0';   -- host data applied at least once
     signal guest_owned : std_logic := '0'; -- guest wrote time/calendar/alarm
 
@@ -260,14 +263,22 @@ architecture rtl of ds12887 is
         if h24 then
             return enc_sec(v, bcd);
         end if;
-        pmb := '1' when v >= 12 else '0';
+        if v >= 12 then
+            pmb := '1';
+        else
+            pmb := '0';
+        end if;
         h12 := v mod 12;
         if h12 = 0 then
             h12 := 12;
         end if;
         if bcd then
             -- {PM, tens(0|1), 00, units}
-            tens := '1' when h12 >= 10 else '0';
+            if h12 >= 10 then
+                tens := '1';
+            else
+                tens := '0';
+            end if;
             return pmb & tens & "00" & b2bc(h12 mod 10);
         else
             -- {PM, 000, hour 1-12}
@@ -427,9 +438,9 @@ begin
                 host_ev  <= '0';
             end if;
             if reset = '1' then
-                sync_pend <= '0';
+                sync_req <= sync_ack;           -- clear pending
             elsif host_ev = '1' then
-                sync_pend <= '1';
+                sync_req <= not sync_ack;       -- set pending
             end if;
         end if;
     end process;
@@ -583,8 +594,8 @@ begin
                 -- (e) host sync (load-time pushes are applied in the reset
                 --     branch; this handles the periodic 60 s refreshes)
                 ------------------------------------------------------------
-                if sync_pend = '1' then
-                    sync_pend <= '0';
+                if sync_req /= sync_ack then
+                    sync_ack <= sync_req;
                     -- guest software has written the time/calendar: the
                     -- periodic host refreshes must not override it
                     if guest_owned = '0' and host_valid(host_raw) then

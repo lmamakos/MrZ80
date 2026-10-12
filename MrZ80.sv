@@ -435,6 +435,10 @@ wire [26:0] ioctl_addr;
 wire  [7:0] ioctl_dout;
 wire        ioctl_wait;
 
+// Host time (BCD + toggle in bit 64) for the DS12887 RTC. Updated by the
+// HPS at core load and once a minute; synchronised inside the RTC model.
+wire [64:0] hps_rtc;
+
 hps_io #(
 	.CONF_STR(CONF_STR),
 	.PS2DIV (2000)
@@ -468,7 +472,9 @@ hps_io #(
 	.ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
-	.ioctl_wait(ioctl_wait)
+	.ioctl_wait(ioctl_wait),
+
+	.RTC(hps_rtc)
 );
 
 ///////////////////////   CLOCKS   ///////////////////////////////
@@ -967,7 +973,8 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
     .boot_to_blockram(status[13]),
     .dl_bram_addr(dl_bram_addr_r),
     .dl_bram_data(dl_bram_data_r),
-    .dl_bram_we  (dl_bram_we_r)
+    .dl_bram_we  (dl_bram_we_r),
+    .hps_rtc     (hps_rtc)
 );
 
 video_cleaner video_cleaner

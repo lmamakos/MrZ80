@@ -69,6 +69,7 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 | Port(s)       | Width | Function                                                                                                  |
 |---------------|-------|-----------------------------------------------------------------------------------------------------------|
 | `0x38`        | 1     | ROM-disable trigger. Any write disables the boot ROM at `0x0000-0x1FFF` and exposes the RAM beneath it.   |
+| `0x70`-`0x71` | 2     | DS12887 real-time clock (`n_rtcCS`, `Components/RTC/ds12887.vhd`). AT-style index/data pair: `0x70` = register index, `0x71` = selected register. See below. |
 | `0x80`-`0x81` | 2     | SBCTextDisplayRGB (`n_interface1CS`). VGA/PS-2 text display.                                              |
 | `0x82`-`0x83` | 2     | bufferedUART (`n_interface2CS`). Serial console.                                                          |
 | `0x88`-`0x8F` | 8     | SD card controller (`n_sdCardCS`). Register offset via `cpuAddress(2 downto 0)`.                          |
@@ -221,6 +222,65 @@ CamelFORTH (embedded kernels `camel80.bin` / `camelf.bin`): `MS@ ( -- ud )`
 returns channel 0 (ms) and `US@ ( -- ud )` channel 2 (µs), each latched at
 the start of the word, as an unsigned double (low cell, high cell on top).
 Channels 1 and 3 are not used by the kernel.
+
+### Real-time clock window detail (`0x70`-`0x71`)
+
+`Components/RTC/ds12887.vhd`, a behavioural Dallas DS12887 (MC146818
+compatible) with 128 registers. The 7-bit register address cannot be decoded
+directly in the 8-bit I/O space, so access is through an AT-style index/data
+pair (decode `n_rtcCS`, `cpuAddress(7 downto 1) = "0111000"`):
+
+| Port   | Write                                   | Read                         |
+|--------|-----------------------------------------|------------------------------|
+| `0x70` | register index (bits 6..0; bit 7 ignored) | current index (bit 7 = 0)  |
+| `0x71` | write the register selected by the index | read the register selected by the index |
+
+The index is not auto-incremented and is cleared on reset.
+
+Register map (see `Components/RTC/README.md` for full detail):
+
+| Index         | Register                                                                  |
+|---------------|---------------------------------------------------------------------------|
+| `00`          | Seconds                                                                   |
+| `01`          | Seconds alarm                                                             |
+| `02`          | Minutes                                                                   |
+| `03`          | Minutes alarm                                                             |
+| `04`          | Hours                                                                     |
+| `05`          | Hours alarm                                                               |
+| `06`          | Day of week (1 = Sunday)                                                  |
+| `07`          | Day of month                                                              |
+| `08`          | Month                                                                     |
+| `09`          | Year (00-99)                                                              |
+| `0A`          | Register A (UIP, DV2..0, RS3..0)                                          |
+| `0B`          | Register B (SET, PIE, AIE, UIE, SQWE, DM, 24/12, DSE)                     |
+| `0C`          | Register C (IRQF, PF, AF, UF); read clears all flags                      |
+| `0D`          | Register D (VRT)                                                          |
+| `0E`,`0F`     | Unused, read `0xFF`                                                       |
+| `10`-`7F`     | 112 bytes of general-purpose RAM (volatile; not battery backed)           |
+
+- **Time source:** the MiSTer HPS pushes the host's local time (BCD) when the
+  core is loaded and once a minute thereafter (`hps_io` `RTC[64:0]`). The
+  clock starts running from that time in 24-hour BCD mode, so software sees a
+  valid clock without any setup. Once software writes the time/calendar
+  registers the periodic host refresh no longer overrides them. The time is
+  re-read from the host on each core reset, and the RAM is not preserved
+  across FPGA reconfiguration.
+- **Bus timing:** the DS12887 model sees a one-clock `req`/`wrt` pulse per
+  `IN`/`OUT` to `0x71`, so reading Register C clears the flags exactly once.
+- **Not implemented / deviations:** the SQW output is not generated, DST is
+  stored but has no effect, and the interrupt output is **not connected**
+  (the Z-80 `/INT` input is tied inactive); software must poll Register C.
+  Periodic-interrupt tap rates are derived from the 50 MHz clock (< 0.02 %
+  error).
+
+```
+        LD   A,00h
+        OUT  (70h),A       ; select seconds
+        IN   A,(71h)       ; A = seconds (BCD)
+        LD   A,0Bh
+        OUT  (70h),A       ; select Register B
+        IN   A,(71h)
+```
 
 ### Front-panel subsystem register map (within the `0xA0`-`0xA7` window)
 

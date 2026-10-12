@@ -5,7 +5,7 @@ RAM peripheral, with the time sourced from the **MiSTer host's Linux RTC**
 via the `hps_io` `.RTC` bus. Intended for Z80 (or any) MiSTer cores that
 expect a DS12887/DS1386-style I/O peripheral.
 
-* `ds12887.vhd` — the model (VHDL-93 clean, compiles with `--std=08`)
+* `ds12887.vhd` — the model (VHDL-93, synthesizes in Quartus 17.0, also compiles with `--std=08`)
 * `tb_ds12887.vhd` — self-checking testbench (VHDL-2008, uses `std.env.finish`)
 
 ## Register map (A0–A6, 128 bytes)

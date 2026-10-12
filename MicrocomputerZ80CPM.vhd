@@ -97,7 +97,11 @@ entity MicrocomputerZ80CPM is
 		-- CPU's own block-RAM accesses.
 		dl_bram_addr	: in  std_logic_vector(15 downto 0) := (others => '0');
 		dl_bram_data	: in  std_logic_vector(7 downto 0)  := (others => '0');
-		dl_bram_we		: in  std_logic := '0'
+		dl_bram_we		: in  std_logic := '0';
+
+		-- MiSTer hps_io real-time-clock bus (BCD time + toggle in bit 64),
+		-- feeds the DS12887 RTC at I/O ports $70/$71.
+		hps_rtc			: in  std_logic_vector(64 downto 0) := (others => '0')
 		);
 end MicrocomputerZ80CPM;
 
@@ -125,6 +129,7 @@ architecture struct of MicrocomputerZ80CPM is
 	signal fpLatchDataOut			: std_logic_vector(7 downto 0);
 	signal fpSubsysDataOut			: std_logic_vector(7 downto 0);
 	signal timerDataOut				: std_logic_vector(7 downto 0);
+	signal rtcDataOut				: std_logic_vector(7 downto 0);
 
 	signal n_memWR					: std_logic :='1';
 	signal n_memRD 					: std_logic :='1';
@@ -147,6 +152,17 @@ architecture struct of MicrocomputerZ80CPM is
 	signal n_fpSubsysCS				: std_logic :='1';   -- FrontPanel_Subsystem 8-port window at 0xA0..0xA7
 	signal n_mmuCS					: std_logic :='1';   -- MMU 16-port window at 0xB0..0xBF
 	signal n_timerCS				: std_logic :='1';   -- BenchTimer 16-port window at 0xC0..0xCF
+	signal n_rtcCS					: std_logic :='1';   -- DS12887 RTC index/data pair at 0x70/0x71
+
+	-- DS12887 RTC plumbing (index/data port pair)
+	signal rtc_idx					: std_logic_vector(6 downto 0) := (others => '0');
+	signal rtc_stb_d1				: std_logic := '0';
+	signal rtc_stb_d2				: std_logic := '0';
+	signal rtc_pulse				: std_logic;
+	signal rtc_req					: std_logic;
+	signal rtc_wrt					: std_logic;
+	signal rtc_dbi					: std_logic_vector(7 downto 0);
+	signal rtc_rdata				: std_logic_vector(7 downto 0) := (others => '1');
 
 	-- MMU plumbing. The MMU translates the Z-80's 16-bit logical address
 	-- into a 28-bit physical address (physical_page_bits = 14), covering a
@@ -619,6 +635,71 @@ timer1 : entity work.BenchTimer
 	);
 
 -- ____________________________________________________________________________________
+-- DS12887 REAL-TIME CLOCK GOES HERE
+
+-- Ports $70/$71, AT-style index/data pair:
+--   $70  W: register index (bits 6..0; bit 7 ignored)   R: index (bit 7 = 0)
+--   $71  R/W: DS12887 register selected by the index (0x00-0x7F)
+-- The DS12887 model needs a 7-bit address (128 registers), which cannot be
+-- decoded directly in the 8-bit I/O space, hence the index register.
+--
+-- The model's Register C read clears its flags on every clk cycle in which
+-- req is asserted, and dbi is combinational. A Z-80 I/O strobe lasts several
+-- clk cycles, so req/wrt are single-clk pulses generated on the 2nd clk of
+-- the strobe (address and write data are stable by then), and read data is
+-- captured into rtc_rdata on that same edge for the CPU to sample at the
+-- end of the cycle.
+rtc_pulse <= rtc_stb_d1 and not rtc_stb_d2;
+rtc_req   <= rtc_pulse and cpuAddress(0);
+rtc_wrt   <= rtc_req and (not n_ioWR);
+
+process (clk)
+begin
+	if rising_edge(clk) then
+		rtc_stb_d1 <= not n_rtcCS;
+		rtc_stb_d2 <= rtc_stb_d1;
+		if N_RESET = '0' then
+			rtc_idx <= (others => '0');
+		else
+			if rtc_pulse = '1' then
+				if n_ioWR = '0' then
+					if cpuAddress(0) = '0' then
+						rtc_idx <= cpuDataOut(6 downto 0);
+					end if;
+				else
+					if cpuAddress(0) = '0' then
+						rtc_rdata <= '0' & rtc_idx;
+					else
+						rtc_rdata <= rtc_dbi;
+					end if;
+				end if;
+			end if;
+		end if;
+	end if;
+end process;
+
+rtcDataOut <= rtc_rdata;
+
+-- irq (open-drain) is not routed: the Z-80 /INT input is tied inactive.
+rtc1 : entity work.ds12887
+	generic map (
+		SYS_CLK => 50_000_000
+	)
+	port map (
+		clk_sys   => clk,
+		reset     => not N_RESET,
+		req       => rtc_req,
+		wrt       => rtc_wrt,
+		adr       => rtc_idx,
+		dbo       => cpuDataOut,
+		dbi       => rtc_dbi,
+		irq       => open,
+		sqw       => open,
+		rtc       => hps_rtc,
+		pof_in    => '0'
+	);
+
+-- ____________________________________________________________________________________
 -- MEMORY READ/WRITE LOGIC GOES HERE
 
 n_ioWR 	<= n_WR or n_IORQ;
@@ -641,6 +722,8 @@ n_fpLatchCS <= '0' when cpuAddress(7 downto 0) = x"FF" and (n_ioWR='0' or n_ioRD
 n_fpSubsysCS <= '0' when cpuAddress(7 downto 3) = "10100" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 8 Bytes $A0-$A7 (front-panel subsystem)
 n_mmuCS <= '0' when cpuAddress(7 downto 4) = "1011" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 16 Bytes $B0-$BF (MMU)
 n_timerCS <= '0' when cpuAddress(7 downto 4) = "1100" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 16 Bytes $C0-$CF (benchmark timers)
+
+n_rtcCS <= '0' when cpuAddress(7 downto 1) = "0111000" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 2 Bytes $70-$71 (DS12887 RTC index/data)
 
 -- MMU.io_cs is active-high.
 mmu_io_cs <= '1' when n_mmuCS = '0' else '0';
@@ -675,6 +758,7 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
                  fpLatchDataOut      when (n_fpLatchCS = '0') else
                  fpSubsysDataOut     when (n_fpSubsysCS = '0') else
                  timerDataOut        when (n_timerCS = '0') else
+                 rtcDataOut          when (n_rtcCS = '0') else
                  mmu_dataOut         when (mmu_io_cs = '1' and cpuAddress(3 downto 0) /= "1100") else
                  basRomData          when (n_basRomCS = '0') else
                  internalRam1DataOut when (mmu_req_mem_out = '1' and phys_in_blockram = '1') else
