@@ -3062,3 +3062,48 @@ effect is to change the name of the artifacts that are produced.  It
 also reflects the change to no longer support multiple microprocessors
 within a single desigh, but to focus exclusively on the Z80 and an
 environment that targets supporting RomWBW well.
+
+## Fix: `FC` (auto-load) config-string entries hung the core at start
+
+**Symptom.** With `FC` instead of `F` in `CONF_STR`, a core with saved
+files (`config/MrZ80.f1`, `.f2`) never started normally and showed no
+"Loading" progress bar. Loading the same files by hand from the OSD worked.
+
+**Cause.** For `FC` entries the HPS (`Main_MiSTer` `parse_config()`) streams
+the saved files immediately at core start, while it is still holding
+`status[0]` (reset) high and *before* it restores the saved status word.
+`sdram_init_reset` included `status[0]`, so the SDRAM controller sat in
+`STATE_STARTUP`, never acknowledged the first download write, `dl_busy` /
+`ioctl_wait` stayed asserted, and the HPS blocked inside its first 4 KB
+SPI chunk (the progress bar is only drawn after that chunk).
+
+**Changes (`MrZ80.sv`, `MrZ80.sdc`).**
+1. `sdram_init_reset = RESET | buttons[1] | reset_from_mount`; `status[0]`
+   removed. The controller still initializes at configuration and on a hard
+   `RESET`/button/mount reset; an OSD Reset now only resets the CPU.
+2. `bin_loaded` is now edge-triggered: set (with priority) on the falling
+   edge of a `.BIN` download, cleared only on the rising edge of
+   `RESET | status[0] | buttons[1]`. Previously the level-sensitive clear
+   kept it 0 during an auto-load and wiped it when the HPS re-asserted
+   `status[0]`, so the core booted the built-in ROM.
+
+**Known limitation.** The "Boot Load Target" option (`status[13]`, Block
+RAM) only works for manual OSD loads. During an `FC` auto-load the saved
+status has not yet been applied, so the BIN always goes to SDRAM. SDRAM is
+the default (`status[13]=0`); Block RAM is a debug aid only.
+
+**Verification.** Not yet built or tested on hardware.
+
+## Fix: OSD "Reset" menu item did not reset the CPU
+
+`CONF_STR` had `"RE,Reset;"`, which makes the HPS pulse status bit `E`
+(14), the same bit as the Flow Control option (`OE`). `status[0]`, the bit
+the `reset` logic watches, was never driven, so the item did nothing useful
+(and briefly toggled flow control). Changed to `"R0,Reset;"`, the MiSTer
+convention for reset on bit 0. Not yet tested on hardware.
+
+**Follow-up: OSD Reset restarts the loaded image.** `bin_loaded` no longer
+clears on `status[0]`; only a rising edge of `RESET` or `buttons[1]` returns
+to the built-in ROM. The OSD Reset item resets the CPU (via `status[0]` in
+`reset`) and the loaded image in SDRAM is kept, since `sdram_init_reset`
+also excludes `status[0]`. Not yet tested on hardware.

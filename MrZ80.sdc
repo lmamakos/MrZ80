@@ -90,7 +90,7 @@ set_false_path -to [get_registers {emu:emu|ram_addr[*] emu:emu|ram_din[*] emu:em
 set_false_path -from $clk_ram -to [get_registers {emu:emu|done_sync[0]}]
 set_false_path -from [get_registers {emu:emu|ram_byte[*]}] -to $clk_sys
 
-# SDRAM controller init (sdram_init_reset = RESET | status[0] | buttons[1] |
+# SDRAM controller init (sdram_init_reset = RESET | buttons[1] |
 # reset_from_mount) is an unsynchronised level into clk_ram. Each source is
 # held for many thousands of clk_ram cycles (reset_from_mount: 65536 clk_sys
 # cycles), so a one-cycle skew between controller registers on assertion or

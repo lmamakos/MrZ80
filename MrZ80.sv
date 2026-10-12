@@ -382,9 +382,9 @@ assign AUDIO_MIX = 0;
 `include "build_id.v"
 parameter CONF_STR = {
 	"MrZ80;;",
-	"F1,BINROM,Boot Rom Image;",                     // index 1: boot ROM image -> SDRAM @ 0x000000 (or block RAM if OD set)
-	"F2,DSK,8MB Disk Image;",                        // index 2: RAM-disk image -> SDRAM, top 8 MB first
-	"OD,Boot Load Target,SDRAM,Block RAM;",          // status[13]: 0=BIN->SDRAM, 1=BIN->block RAM (debug)
+	"FC1,BINROM,Boot Rom Image;",                     // index 1: boot ROM image -> SDRAM @ 0x000000 (or block RAM if OD set)
+	"FC2,DSK,8MB Disk Image;",                        // index 2: RAM-disk image -> SDRAM, top 8 MB first
+	"OD,Boot Load Target,SDRAM,Block RAM;",          // status[13]: 0=BIN->SDRAM (default), 1=BIN->block RAM (debug, manual load only; NOT valid with "FC" auto-load)
 	"-;",
 	"S,IMG,SD card image;",
 	"OF,Reset after Mount,No,Yes;", 
@@ -393,7 +393,7 @@ parameter CONF_STR = {
 	"O9B,Baud Rate tty,115200,38400,19200,9600,4800,2400;",
 	"OE,Flow Control,None,RTS/CTS;",  // New flow control option
 	"-;",
-	"RE,Reset;",
+	"R0,Reset;",                                     // status[0]: OSD Reset (CPU reset only; keeps loaded image)
 	"V,v",`BUILD_DATE
 };
 
@@ -402,7 +402,7 @@ parameter CONF_STR = {
 // 0         1         2         3          4         5         6   
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// X     XXXXXXX XX
+// X     XXXXXXX XX     (bit 0 = Reset via "R0"; bit 14 = Flow Control only)
    
 //////////////////   HPS I/O   ///////////////////
 wire  [1:0] buttons;
@@ -549,22 +549,31 @@ end
 //
 // bin_loaded persists the "boot from the loaded .BIN" decision: it is set
 // when a .BIN download finishes and stays set until a deliberate hard reset
-// (RESET / OSD Reset / status[0]). The post-download auto-reset below only
-// pulses the CPU reset, so the freshly-loaded BIN boots without clearing
-// the flag.
+// (rising edge of RESET / user button buttons[1]). The OSD Reset item
+// (status[0]) and the post-download auto-reset only reset the CPU, so the
+// loaded image is restarted rather than discarded; its bytes are still in
+// SDRAM because the SDRAM controller is not re-initialized by them.
+//
+// The clear is EDGE-triggered, and the download-complete set has priority,
+// so a hard reset that is still held when a download completes cannot wipe
+// the freshly set flag.
 reg        bin_loaded = 1'b0;
 reg        ioctl_download_d = 1'b0;
+reg        hard_reset_d = 1'b0;
 reg        dl_reset_stretch = 1'b0;
 reg [15:0] dl_reset_counter = 16'd0;
+wire       hard_reset_req = RESET | buttons[1];   // NOT status[0]: OSD Reset restarts the loaded image
 always @(posedge clk_sys) begin
     ioctl_download_d <= ioctl_download;
+    hard_reset_d     <= hard_reset_req;
 
-    // Hard reset clears the boot-source latch (return to built-in ROM).
-    if (RESET | status[0] | buttons[1]) begin
-        bin_loaded <= 1'b0;
-    end else if (ioctl_download_d & ~ioctl_download & dl_is_bin) begin
+    if (ioctl_download_d & ~ioctl_download & dl_is_bin) begin
         // Falling edge of a .BIN download: latch boot-from-BIN.
         bin_loaded <= 1'b1;
+    end else if (hard_reset_req & ~hard_reset_d) begin
+        // Rising edge of a hard reset clears the boot-source latch
+        // (return to built-in ROM). OSD Reset (status[0]) does not.
+        bin_loaded <= 1'b0;
     end
 
     // On the falling edge of ANY download, hold the CPU in reset for a
@@ -585,9 +594,17 @@ wire reset = RESET | status[0] | buttons[1] | reset_from_mount
            | ioctl_download | dl_reset_stretch;
 
 // The SDRAM controller must NOT be re-initialized during a download (that
-// would wipe the bytes we are streaming in) or during the post-download
-// CPU-reset stretch. Its init is driven only by the genuine hard resets.
-wire sdram_init_reset = RESET | status[0] | buttons[1] | reset_from_mount;
+// would wipe the bytes we are streaming in, and would stall the HPS forever
+// waiting on ioctl_wait) or during the post-download CPU-reset stretch.
+//
+// In particular status[0] (OSD Reset) is deliberately NOT part of this
+// term. The HPS holds status[0]=1 while it auto-loads "FC" config-string
+// files at core start; if that kept the controller in its init state, the
+// first download byte would never complete, ioctl_wait would stay asserted
+// and the HPS would hang in its first transfer. The controller still
+// initializes itself at configuration (power-up) and on a genuine hard
+// RESET / user button / mount reset; an OSD Reset only resets the CPU.
+wire sdram_init_reset = RESET | buttons[1] | reset_from_mount;
 
 /////////////////  SDCARD  ////////////////////////
 
@@ -824,7 +841,8 @@ wire [9:0]  dl_dsk_slot = ioctl_index[15:6];             // 0 = first DSK
 wire [26:0] dl_dsk_base = SDRAM_TOP - ((dl_dsk_slot + 1'b1) * DSK_IMAGE_SIZE);
 wire [26:0] dl_addr     = dl_is_dsk ? (dl_dsk_base + ioctl_addr) : ioctl_addr;
 
-// Debug option (status[13]): when set, the first 64 KB of a .BIN is loaded
+// Debug option (status[13]): SDRAM is the default (status[13]=0). When set,
+// the first 64 KB of a .BIN is loaded
 // into the on-chip 64 KB block RAM instead of SDRAM. Block RAM stays
 // enabled, so this isolates a faulty SDRAM path from a faulty load. Any
 // bytes beyond the first 64 KB (ioctl_addr >= 0x10000) do not fit in block
@@ -832,6 +850,12 @@ wire [26:0] dl_addr     = dl_is_dsk ? (dl_dsk_base + ioctl_addr) : ioctl_addr;
 // longer wrap around and overwrite the start of the block RAM. Only BIN
 // images use this; DSK images are 8 MB and always go to SDRAM. A block-RAM
 // write completes in one cycle, so it bypasses the SDRAM handshake below.
+//
+// LIMITATION: this option only works for a file loaded MANUALLY from the
+// OSD. Files auto-loaded at core start by "FC" config-string entries are
+// streamed by the HPS before it restores the saved status word, so
+// status[13] always reads 0 at that point and the BIN goes to SDRAM
+// regardless of the saved setting. Treat "FC" auto-load as SDRAM-only.
 // The selection is evaluated per byte (ioctl_addr is stable while ioctl_wr
 // is being synchronized, since HPS is held off by ioctl_wait / the slow SPI
 // byte rate).
