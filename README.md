@@ -162,7 +162,17 @@ This section describes the On-Screen Display menu configuration for the MultiCom
 
 ### System Control
 
-- __Mount *.IMG__: Provide the image in the games/Multicomp directory if no image is specified it will attempt to use the secondary SD card
+- __Boot Rom Image__ (`.BIN`/`.ROM`): loaded into SDRAM at address 0 and started
+  in place of the built-in boot ROM. The last file chosen is remembered and
+  loaded automatically when the core starts. OSD Reset restarts the loaded
+  image; a hard reset (reloading the core or the user button) returns to the
+  built-in boot ROM.
+- __Mount *.IMG__ (SD card image): mounts an image file as a block device at Z-80
+  I/O ports `0x90`-`0x97` (see `HARDWARE.md`, "Storage"). It is independent of
+  the physical SD card socket, which is served by the SPI controller at
+  ports `0x88`-`0x8F`; both can be used at the same time. Software that
+  expects the SPI SD card (the stock CP/M CBIOS and monitor) does not see the
+  mounted image.
 - __Reset after Mount__: Configures system behavior after mounting storage - Options: No, Yes
 - __Reset__: System reset function
 
@@ -201,9 +211,12 @@ The menu system is designed for straightforward navigation and configuration of 
 ### Storage Issues
 
 - If unable to access CP/M:
-- Verify Secondary SD card is properly formatted or an image is selected in the OSD
+- Verify the SD card in the secondary SD socket is properly formatted (ports `0x88`-`0x8F`), or, for software that uses the image block device (ports `0x90`-`0x97`), that an image is mounted in the OSD
 - Try toggling "Reset after Mount" option
-- Once either the secondary SD card is selected or the Image file is selected a complete MiSTer re-start is required to change the selection i.e. it can not be changed with a reset of the core.
+- The mounted image can be changed at any time from the OSD; the block device
+  aborts any transfer in progress. `testing/blockdevtest.asm` exercises the
+  image block device (read tests, then optional write tests on the top 100
+  blocks of the image, which are backed up and restored).
 
 ### System Stability
 

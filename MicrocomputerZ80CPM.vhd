@@ -101,7 +101,24 @@ entity MicrocomputerZ80CPM is
 
 		-- MiSTer hps_io real-time-clock bus (BCD time + toggle in bit 64),
 		-- feeds the DS12887 RTC at I/O ports $70/$71.
-		hps_rtc			: in  std_logic_vector(64 downto 0) := (others => '0')
+		hps_rtc			: in  std_logic_vector(64 downto 0) := (others => '0');
+
+		-- MiSTer hps_io block-storage interface, serving the image-backed
+		-- block device (hps_blockdev) at I/O ports $90-$97. The SPI sd_controller
+		-- at $88-$8F is NOT connected to this; it only drives the physical
+		-- SD card pins (sdCS/sdMOSI/sdMISO/sdSCLK).
+		bd_lba			: out std_logic_vector(31 downto 0);
+		bd_rd			: out std_logic;
+		bd_wr			: out std_logic;
+		bd_ack			: in  std_logic := '0';
+		bd_buff_addr	: in  std_logic_vector(8 downto 0) := (others => '0');
+		bd_buff_dout	: in  std_logic_vector(7 downto 0) := (others => '0');
+		bd_buff_din		: out std_logic_vector(7 downto 0);
+		bd_buff_wr		: in  std_logic := '0';
+		bd_img_mounted	: in  std_logic := '0';
+		bd_img_readonly	: in  std_logic := '0';
+		bd_img_size		: in  std_logic_vector(63 downto 0) := (others => '0');
+		bd_activity		: out std_logic
 		);
 end MicrocomputerZ80CPM;
 
@@ -148,6 +165,8 @@ architecture struct of MicrocomputerZ80CPM is
 	signal n_interface1CS			: std_logic :='1';
 	signal n_interface2CS			: std_logic :='1';
 	signal n_sdCardCS				: std_logic :='1';
+	signal n_blockDevCS				: std_logic :='1';   -- hps_blockdev at $90-$97
+	signal blockDevDataOut			: std_logic_vector(7 downto 0);
 	signal n_fpLatchCS				: std_logic :='1';   -- I/O port 0xFF latch
 	signal n_fpSubsysCS				: std_logic :='1';   -- FrontPanel_Subsystem 8-port window at 0xA0..0xA7
 	signal n_mmuCS					: std_logic :='1';   -- MMU 16-port window at 0xB0..0xBF
@@ -498,6 +517,30 @@ port map(
         clk => clk
     );
 
+    -- Image-backed block device (HPS file), same register layout as sd_controller.
+    bd1 : entity work.hps_blockdev
+    port map(
+        clk => clk,
+        n_reset => N_RESET,
+        n_wr => n_blockDevCS or n_ioWR,
+        n_rd => n_blockDevCS or n_ioRD,
+        dataIn => cpuDataOut,
+        dataOut => blockDevDataOut,
+        regAddr => cpuAddress(2 downto 0),
+        sd_lba => bd_lba,
+        sd_rd => bd_rd,
+        sd_wr => bd_wr,
+        sd_ack => bd_ack,
+        sd_buff_addr => bd_buff_addr,
+        sd_buff_dout => bd_buff_dout,
+        sd_buff_din => bd_buff_din,
+        sd_buff_wr => bd_buff_wr,
+        img_mounted => bd_img_mounted,
+        img_readonly => bd_img_readonly,
+        img_size => bd_img_size,
+        activity => bd_activity
+    );
+
 
 -- ____________________________________________________________________________________
 -- FRONT PANEL GOES HERE
@@ -718,6 +761,7 @@ n_basRomCS <= '0' when cpuAddress(15 downto 13) = "000" and n_memRD='0' and n_Ro
 n_interface1CS <= '0' when cpuAddress(7 downto 1) = "1000000" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 2 Bytes $80-$81
 n_interface2CS <= '0' when cpuAddress(7 downto 1) = "1000001" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 2 Bytes $82-$83
 n_sdCardCS <= '0' when cpuAddress(7 downto 3) = "10001" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 8 Bytes $88-$8F
+n_blockDevCS <= '0' when cpuAddress(7 downto 3) = "10010" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 8 Bytes $90-$97 (HPS image block device)
 n_fpLatchCS <= '0' when cpuAddress(7 downto 0) = x"FF" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 1 Byte $FF (front-panel data latch)
 n_fpSubsysCS <= '0' when cpuAddress(7 downto 3) = "10100" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 8 Bytes $A0-$A7 (front-panel subsystem)
 n_mmuCS <= '0' when cpuAddress(7 downto 4) = "1011" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 16 Bytes $B0-$BF (MMU)
@@ -755,6 +799,7 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
     cpuDataIn <= interface1DataOut   when (n_interface1CS = '0') else
                  interface2DataOut   when (n_interface2CS = '0') else
                  sdCardDataOut       when (n_sdCardCS = '0') else
+                 blockDevDataOut     when (n_blockDevCS = '0') else
                  fpLatchDataOut      when (n_fpLatchCS = '0') else
                  fpSubsysDataOut     when (n_fpSubsysCS = '0') else
                  timerDataOut        when (n_timerCS = '0') else

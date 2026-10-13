@@ -353,18 +353,11 @@ sdram_32r8w sdram_inst
 	.sdram_busy      (sdram_busy)
 );
 
-wire sdram_init_done = ~sdram_busy;
-
 assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
 
 //assign UART_RTS = UART_CTS;
 assign UART_DTR = UART_DSR;
 
-// LED_USER: lit solid once SDRAM init has completed; blinks at vsd_sel
-// rate before init is done. This gives a visible "SDRAM is alive"
-// indicator on the MiSTer board's user LED.
-assign LED_USER  = sdram_init_done ? 1'b1 : (vsd_sel & sd_act);
-assign LED_DISK  = ~driveLED;
 assign LED_POWER = 0;
 assign BUTTONS = 0;
 
@@ -421,13 +414,17 @@ wire  [8:0] sd_buff_addr;
 wire  [7:0] sd_buff_dout;
 wire  [7:0] sd_buff_din[1];
 wire        sd_buff_wr;
-wire        sd_ack_conf;
 wire        img_mounted;
 wire        img_readonly;
 wire [63:0] img_size;
 
 // ARM -> FPGA download (OSD-loaded .BIN boot image / .DSK RAM-disk image).
-// These run in the CLK_50M domain (hps_io.clk_sys = CLK_50M below).
+// hps_io runs on clk_sys (the core's PLL clock), so every hps_io output
+// (ioctl_*, status, buttons, the sd_* block interface, img_*) is already
+// synchronous to the logic that consumes it. Running it from CLK_50M instead
+// created an unsynchronised, untimed (async clock group) crossing into
+// clk_sys that made the boot-source latch and the block-device buffer
+// fit-dependent.
 wire        ioctl_download;
 wire [15:0] ioctl_index;
 wire        ioctl_wr;
@@ -444,7 +441,7 @@ hps_io #(
 	.PS2DIV (2000)
 	) hps_io
 (
-	.clk_sys(CLK_50M),
+	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
 
 	.buttons(buttons),
@@ -530,6 +527,12 @@ wire clk_ram_100;       // PLL outclk_2 ~100 MHz (fallback)
 
 /////////////////  RESET  /////////////////////////
 
+// The framework RESET comes from another clock domain: synchronise it once
+// and use only the synchronised copy below.
+reg  [1:0] reset_s = 2'b11;
+always @(posedge clk_sys) reset_s <= {reset_s[0], RESET};
+wire       RESET_sync = reset_s[1];
+
 reg reset_from_mount = 0;
 reg [15:0] reset_counter = 0;
 
@@ -562,7 +565,7 @@ reg        ioctl_download_d = 1'b0;
 reg        hard_reset_d = 1'b0;
 reg        dl_reset_stretch = 1'b0;
 reg [15:0] dl_reset_counter = 16'd0;
-wire       hard_reset_req = RESET | buttons[1];   // NOT status[0]: OSD Reset restarts the loaded image
+wire       hard_reset_req = RESET_sync | buttons[1];   // NOT status[0]: OSD Reset restarts the loaded image
 always @(posedge clk_sys) begin
     ioctl_download_d <= ioctl_download;
     hard_reset_d     <= hard_reset_req;
@@ -590,7 +593,7 @@ always @(posedge clk_sys) begin
 end
 
 // CPU is held in reset during a download and for the post-download stretch.
-wire reset = RESET | status[0] | buttons[1] | reset_from_mount
+wire reset = RESET_sync | status[0] | buttons[1] | reset_from_mount
            | ioctl_download | dl_reset_stretch;
 
 // The SDRAM controller must NOT be re-initialized during a download (that
@@ -604,88 +607,39 @@ wire reset = RESET | status[0] | buttons[1] | reset_from_mount
 // and the HPS would hang in its first transfer. The controller still
 // initializes itself at configuration (power-up) and on a genuine hard
 // RESET / user button / mount reset; an OSD Reset only resets the CPU.
-wire sdram_init_reset = RESET | buttons[1] | reset_from_mount;
+wire sdram_init_reset = RESET_sync | buttons[1] | reset_from_mount;
 
 /////////////////  SDCARD  ////////////////////////
+//
+// Two independent SD-style storage devices, active at the same time:
+//
+//  * sd_controller (inside MicrocomputerZ80CPM, I/O ports $88-$8F) speaks
+//    SPI and is wired ONLY to the physical SD socket pins below. It never
+//    touches the HPS image interface.
+//  * hps_blockdev (inside MicrocomputerZ80CPM, I/O ports $90-$97) has the
+//    same register layout but no SPI/SD protocol: it moves 512-byte blocks
+//    to/from the image file mounted from the OSD ("S,IMG" entry) through
+//    the hps_io block interface (sd_lba/sd_rd/sd_wr/sd_ack/sd_buff_*).
+//
+// (This replaces the earlier image_card SPI-card emulation and the vsd_sel
+// switch that routed the single sd_controller either to the socket or to
+// the image.)
 
 wire sdclk;
 wire sdmosi;
-wire sdmiso = vsd_sel ? vsdmiso : SD_MISO;
+wire sdmiso = SD_MISO;
 wire sdss;
 
-wire vsdmiso;
-reg vsd_sel = 0;
+assign SD_CS   = sdss;
+assign SD_SCK  = sdclk;
+assign SD_MOSI = sdmosi;
 
-// latch vsd_sel if user selects an image file
-always @(posedge clk_sys) begin
-    if(RESET) begin  // Only clear on hard reset
-        vsd_sel <= 0;
-    end
-    else begin
-        if(img_mounted) begin
-            // Latch the selection based on image size
-            vsd_sel <= |img_size;
-        end
-    end
-end
-
-//always @(posedge clk_sys) if(img_mounted) vsd_sel <= |img_size;
-
-// uses the previous sd_card implementation i.e. now in components/sdcard
-image_card image_card
-(
-    .clk_sys(clk_sys),
-    .reset(reset),
-    .sdhc(1),
-
-    .sd_lba(sd_lba[0]),
-    .sd_rd(sd_rd),             // New connection
-    .sd_wr(sd_wr),             // New connection
-    .sd_ack(sd_ack),           // New connection
-
-    .sd_buff_addr(sd_buff_addr),   // New connection
-    .sd_buff_dout(sd_buff_dout),   // New connection
-    .sd_buff_din(sd_buff_din[0]),
-    .sd_buff_wr(sd_buff_wr),        // New connection
-
-    .clk_spi(clk_sys),
-    .ss(sdss | ~vsd_sel),
-    .sck(sdclk),
-    .mosi(sdmosi),
-    .miso(vsdmiso)
-);
-
-// this does not work i.e. with the new sd_card in /sys, not sure why yet
-// sd_card sd_card
-// (
-//     .clk_sys(clk_sys),
-//     .reset(reset),
-//     .sdhc(1),
-
-// 	.img_mounted(img_mounted),
-// 	.img_size(img_size),
-
-//     .sd_lba(sd_lba[0]),
-//     .sd_rd(sd_rd),             // New connection
-//     .sd_wr(sd_wr),             // New connection
-//     .sd_ack(sd_ack),           // New connection
-
-//     .sd_buff_addr(sd_buff_addr),   // New connection
-//     .sd_buff_dout(sd_buff_dout),   // New connection
-//     .sd_buff_din(sd_buff_din[0]),
-//     .sd_buff_wr(sd_buff_wr),        // New connection
-
-//     .clk_spi(clk_sys),
-//     .ss(sdss | ~vsd_sel),
-//     .sck(sdclk),
-//     .mosi(sdmosi),
-//     .miso(vsdmiso)
-// );
-
-
-assign SD_CS   = sdss   |  vsd_sel;
-assign SD_SCK  = sdclk  & ~vsd_sel;
-assign SD_MOSI = sdmosi & ~vsd_sel;
+// hps_blockdev <-> hps_io (the block interface carries one device: VDNUM=1)
+wire [31:0] bd_lba;
+wire  [7:0] bd_buff_din;
+wire        bd_activity;     // block device busy / recent activity
+assign sd_lba[0]      = bd_lba;
+assign sd_buff_din[0] = bd_buff_din;
 
 reg sd_act;
 
@@ -704,6 +658,13 @@ always @(posedge clk_sys) begin
 
 	if((old_mosi ^ sdmosi) || (old_miso ^ sdmiso)) timeout <= 0;
 end
+
+// LED_USER: activity of EITHER storage device: the SD-socket SPI lines
+// (sd_act) OR the HPS block device (bd_activity).
+assign LED_USER  = sd_act | bd_activity;
+// Disk LED: lit by activity of either device (driveLED is the active-low
+// sd_controller activity). LED_DISK[1]=1 -> LED follows bit 0 only.
+assign LED_DISK  = {1'b1, (~driveLED) | bd_activity};
 
 // Serial port selection
 wire serial_port_select = status[12];    // 0 = Console Port (UART), 1 = User IO Port
@@ -862,9 +823,9 @@ wire [26:0] dl_addr     = dl_is_dsk ? (dl_dsk_base + ioctl_addr) : ioctl_addr;
 wire        dl_to_bram = ioctl_download & dl_is_bin & status[13]
                        & (ioctl_addr[26:16] == 11'd0);
 
-// Synchronize the ioctl_wr strobe (CLK_50M domain) into clk_sys and
-// edge-detect it. CLK_50M and clk_sys are both ~50 MHz PLL taps but are
-// distinct nets, so treat the crossing conservatively.
+// Edge-detect the ioctl_wr strobe. hps_io now runs on clk_sys, so this is
+// no longer a clock-domain crossing; the shift register is kept only as a
+// harmless pipeline (the strobe is one clk_sys cycle wide).
 reg  [2:0]  iowr_sync = 3'b000;
 always @(posedge clk_sys) iowr_sync <= {iowr_sync[1:0], ioctl_wr};
 wire        dl_wr_edge = iowr_sync[1] & ~iowr_sync[2];
@@ -998,7 +959,21 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
     .dl_bram_addr(dl_bram_addr_r),
     .dl_bram_data(dl_bram_data_r),
     .dl_bram_we  (dl_bram_we_r),
-    .hps_rtc     (hps_rtc)
+    .hps_rtc     (hps_rtc),
+
+    // HPS image-backed block device ($90-$97)
+    .bd_lba          (bd_lba),
+    .bd_rd           (sd_rd),
+    .bd_wr           (sd_wr),
+    .bd_ack          (sd_ack),
+    .bd_buff_addr    (sd_buff_addr),
+    .bd_buff_dout    (sd_buff_dout),
+    .bd_buff_din     (bd_buff_din),
+    .bd_buff_wr      (sd_buff_wr),
+    .bd_img_mounted  (img_mounted),
+    .bd_img_readonly (img_readonly),
+    .bd_img_size     (img_size),
+    .bd_activity     (bd_activity)
 );
 
 video_cleaner video_cleaner

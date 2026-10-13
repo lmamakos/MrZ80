@@ -3107,3 +3107,132 @@ clears on `status[0]`; only a rising edge of `RESET` or `buttons[1]` returns
 to the built-in ROM. The OSD Reset item resets the CPU (via `status[0]` in
 `reset`) and the loaded image in SDRAM is kept, since `sdram_init_reset`
 also excludes `status[0]`. Not yet tested on hardware.
+
+## HPS image-backed block device (`hps_blockdev`) alongside the SPI SD card
+
+**Why.** The single `sd_controller` was switched between the physical SD
+socket and an image file mounted from the OSD by emulating an SD card on
+the SPI wires (`image_card.sv`, SPI/CMD/CRC protocol) and a `vsd_sel`
+mux in `MrZ80.sv`. `image_controller.vhd` was an unused, non-functional
+skeleton (no HPS ports, no data path). Both are removed.
+
+**New arrangement: two independent devices, usable at the same time.**
+- `sd_controller` at I/O `$88-$8F`: unchanged, now wired *only* to the
+  physical SD pins (`SD_CS/SCK/MOSI/MISO` straight through, no mux).
+- `hps_blockdev` at I/O `$90-$97` (`Components/SDCARD/hps_blockdev.vhd`):
+  the same register layout as `sd_controller` (DATA / STATUS|CONTROL /
+  LBA0-2, SDHC-style block numbers) but no SPI or SD protocol; it asks the
+  HPS to move a 512-byte block through `hps_io`'s `sd_lba/sd_rd/sd_wr/
+  sd_ack/sd_buff_*` interface. The OSD `S,IMG` entry mounts an image for
+  this device. `hps_io` stays at `VDNUM=1`.
+
+**Register map of `hps_blockdev`** (offsets from `$90`):
+
+| Reg | Read | Write |
+|---|---|---|
+| 0 | DATA (sequential) | DATA |
+| 1 | STATUS | CONTROL: `00` read block, `01` write block |
+| 2-4 | - | LBA0, LBA1, LBA2 |
+| 5-7 | image size in 512-byte blocks (24-bit LE, saturates at `$FFFFFF` = 8 GB; 0 with no image) | - |
+
+STATUS: b7 write byte OK, b6 read byte available, b5 block busy, **b4 no
+image mounted** (reads `$90`), **b3 image read-only**, **b2 last command
+rejected** (no image, LBA >= size, or write to read-only; cleared by the
+next accepted command). Typical values: `$80` idle, `$E0` read byte ready,
+`$A0` ready for a write byte, `$20` waiting for the HPS. Sequences are as
+documented in the header of `sd_controller.vhd`.
+
+**Behaviour notes.**
+- CPU strobes are edge-detected on `clk` (no gated clocks).
+- The mounted-image info (present / read-only / size) is *not* cleared by a
+  CPU reset or a hard reset; the HPS reports a mount only once, so clearing
+  it would make the core disagree with the HPS. A mount event aborts any
+  transfer in progress. "Reset after Mount" (`status[15]`) still applies.
+- Sector buffer: one 512x8 simple-dual-port M10K (inferred), shared by the
+  HPS and CPU sides in mutually exclusive states.
+- Activity: `bd_activity` (busy plus a 20 ms stretch). `LED_DISK` is lit by
+  `sd_controller`'s `driveLED` OR `bd_activity`. `LED_USER` keeps its
+  existing "SDRAM alive" solid-on behaviour once SDRAM init completes and,
+  before that, blinks with `sd_act` (SD-socket SPI line activity) OR
+  `bd_activity`.
+
+**Simulation.**
+- New `sim/tb_hps_blockdev.vhd` + `sim/run_blockdev.sh`: self-checking
+  testbench with a behavioural HPS model (unmounted, read, write+readback,
+  out-of-range LBA, CPU reset mid-transfer, read-only image, size register
+  incl. saturation and 2 GB, unmount, activity decay). PASS.
+- New `sim/sim_blockdev_io.asm` (run from `sim/run_perf.sh`): Z-80 payload
+  checking the top-level decode of `$90-$97`.
+- `sim/MicrocomputerZ80CPM_sim.vhd` was already out of sync with the real
+  top level (it lacked the DS12887 RTC from the previous commit, so
+  `sim/check_sync.sh` failed); it is resynchronised, `ds12887.vhd` and
+  `hps_blockdev.vhd` are added to the sim file lists, and
+  `sim/sim_unused_io.asm` now skips `$70-$71` (RTC) and `$90-$97`.
+- `sim/run_perf.sh`: `sdram_perf` 19993 T-states (unchanged), `sdram_stress`
+  0 errors, `sdramstress -D SIM` 0 errors, `sim_unused_io` 0 errors,
+  `sim_blockdev_io` 0 errors. `sim/run.sh` times out waiting for DONE_FLAG
+  with 115 iterations / 0 mismatches, identical to before this change.
+
+**Verification.** `tools/build.sh synth` (Analysis & Synthesis): 0 errors.
+Not yet place-and-routed, timing-checked, or tested on hardware; no BIOS
+driver for the new port block exists yet.
+
+### Follow-up: LED_USER, HARDWARE.md and the end-to-end test program
+
+- `LED_USER` is now simply `sd_act | bd_activity` (activity of either storage
+  device); the "SDRAM alive" solid-on indication (`sdram_init_done`) was dropped
+  as no longer needed.
+- `HARDWARE.md`: new "Storage" section (register map, STATUS bits for both
+  devices, programming sequence, mounting behaviour, LEDs) and the `0x90-0x97`
+  row in the I/O port table.
+- New `testing/blockdevtest.asm` (`make -C testing blockdevtest.bin`): boot it
+  as a BIN with an image mounted. Output goes to both the video terminal and
+  the serial console; the prompt accepts a key from either.
+  - Phase 1, read-only tests: status, size registers, block 0 polled per byte
+    and with `INIR` (must match), last block, blocks 2^n (every LBA bit),
+    out-of-range LBA rejected and recovery afterwards.
+  - Phase 2, only after a "y": backs up the 100 sectors at the top of the
+    device to physical RAM at `0x400000` (verified), writes each with a
+    per-sector pattern, reads back in the opposite order (catches aliasing),
+    twice (second time inverted, alternating polled and block transfers),
+    then restores the originals and verifies them. Skipped for read-only
+    images or images smaller than 100 blocks.
+  - Checksum shown for each block: 16-bit `s = rol1(s) + byte`; the host
+    equivalent is in the source comment.
+- New `sim/tb_blockdev_prog.vhd` + `sim/run_blockdev_prog.sh`: runs that program
+  (assembled `-D SIM`: 2 sectors instead of 100, no console waits, the prompt
+  answers `y`) on the real top level against a behavioural HPS block model, in
+  parallel configurations: normal, read-only image, image mounted late, and two
+  fault injections (HPS drops writes to the last block; HPS write address bit 0
+  stuck) that the program must report as failures. The normal run also checks
+  that the image is bit-identical afterwards.
+
+### Fix: hps_io moved onto clk_sys (unsynchronised clock-domain crossing)
+
+Symptom: with the block device in the tree, BIN images loaded from the OSD
+(manual or `FC` auto-load) fell back to the boot ROM prompt, while the
+committed build worked. A diagnostic build (identical except for LED logic)
+booted BINs correctly, so the failure depended on the fit, not the logic.
+
+Cause: `hps_io` was clocked by `CLK_50M` while all the core logic runs on
+`clk_sys` (PLL output). `sys/sys_top.sdc` puts those clocks in separate
+asynchronous groups, so every `hps_io` output used in `clk_sys`
+(`ioctl_download`, `ioctl_index`, `status`, `buttons`, the `sd_*` block
+interface feeding `hps_blockdev`) crossed with no synchroniser and no timing
+check. The boot-source latch (`bin_loaded`) and the sector-buffer writes
+depended on placement.
+
+Fix (`MrZ80.sv`): `hps_io.clk_sys` is now `clk_sys`, as in standard MiSTer
+cores, which makes all of those signals synchronous. The remaining genuinely
+asynchronous input, the framework `RESET`, goes through a 2-FF synchroniser
+(`RESET_sync`) before it is used in `reset`, `hard_reset_req` and
+`sdram_init_reset`.
+
+Hardware verification (DE10-Nano) of the build with `hps_io` on `clk_sys`:
+BIN images auto-load at core start and load from the OSD and run; OSD Reset
+restarts the loaded image; `testing/blockdevtest.asm` passes all read tests
+(T1-T7, including INIR vs polled) and the write/restore tests (W1-W3) against
+a 128 MiB image (262144 blocks), including the wait-for-mount path when the
+program is started before an image is mounted. The T4 mismatches seen with the
+`CLK_50M`-clocked `hps_io` are gone, consistent with the crossing being their
+cause.

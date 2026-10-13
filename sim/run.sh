@@ -36,6 +36,8 @@ FILES=(
     sim/behav_display.vhd
     sim/bufferedUART_sim.vhd
     sim/sd_controller_sim.vhd
+    Components/SDCARD/hps_blockdev.vhd
+    Components/RTC/ds12887.vhd
     Components/FRONTPANEL/Transparent_Capture_Chain.vhd
     Components/FRONTPANEL/FP_RAM_Store.vhd
     Components/FRONTPANEL/FrontPanel_Subsystem.vhd

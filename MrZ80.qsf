@@ -302,7 +302,6 @@ set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to BTN_*
 
 set_global_assignment -name ENABLE_SIGNALTAP ON
 set_global_assignment -name USE_SIGNALTAP_FILE "output_files/status13-stp1.stp"
-set_global_assignment -name SYSTEMVERILOG_FILE Components/SDCARD/image_card.sv
 # Active SDRAM controller: CoCo3 sdram_32r8w (Components/SDRAM/sdram2.sv).
 # Written for this dual-AS4C32M16SB 128 MB board; correctly masks byte
 # writes. Runs at ~100 MHz (clk_ram) with a CDC adapter in MrZ80.sv.
@@ -330,7 +329,7 @@ set_global_assignment -name VHDL_FILE Components/Z80/T80.vhd
 set_global_assignment -name VHDL_FILE Components/TERMINAL/CGABoldRom.vhd
 set_global_assignment -name VHDL_FILE Components/UART/bufferedUART.vhd
 set_global_assignment -name VHDL_FILE Components/SDCARD/sd_controller.vhd
-set_global_assignment -name VHDL_FILE Components/SDCARD/image_controller.vhd
+set_global_assignment -name VHDL_FILE Components/SDCARD/hps_blockdev.vhd
 # set_global_assignment -name QIP_FILE ROMS/Z80/Z80_BASIC_ROM.qip
 set_global_assignment -name QIP_FILE Components/TERMINAL/DisplayRam1K.qip
 # set_global_assignment -name CDF_FILE output_files/m6502.cdf

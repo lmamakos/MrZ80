@@ -15,7 +15,8 @@
 ;      counts the reads that do not return 0FFh,
 ;   3. stores the error count at RESULT (expect 0) and 0AAh at DONE_FLAG.
 ;
-; Decoded ports skipped: 80-83 UARTs, 88-8F SD, A0-A7 front panel,
+; Decoded ports skipped: 70-71 RTC, 80-83 UARTs, 88-8F SD, 90-97 HPS block
+; device, A0-A7 front panel,
 ; B0-BF MMU, C0-CF timers, FF front-panel latch.
 ;
 ; Build: tools/z80asm.sh -o /tmp/sim_unused_io sim/sim_unused_io.asm
@@ -50,16 +51,22 @@ nextb:          ld      a,(4000h)       ; prime SDRAM read data (78h)
                 inc     hl
                 ld      c,0
 nextc:          ld      a,c
+                cp      70h
+                jr      c,test          ; 00-6F
+                cp      72h
+                jr      c,skip          ; 70-71 RTC
                 cp      80h
-                jr      c,test          ; 00-7F
+                jr      c,test          ; 72-7F
                 cp      84h
                 jr      c,skip          ; 80-83
                 cp      88h
                 jr      c,test          ; 84-87
                 cp      90h
                 jr      c,skip          ; 88-8F
+                cp      98h
+                jr      c,skip          ; 90-97 HPS block device
                 cp      0A0h
-                jr      c,test          ; 90-9F
+                jr      c,test          ; 98-9F
                 cp      0A8h
                 jr      c,skip          ; A0-A7
                 cp      0B0h

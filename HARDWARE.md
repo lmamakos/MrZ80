@@ -72,11 +72,119 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 | `0x70`-`0x71` | 2     | DS12887 real-time clock (`n_rtcCS`, `Components/RTC/ds12887.vhd`). AT-style index/data pair: `0x70` = register index, `0x71` = selected register. See below. |
 | `0x80`-`0x81` | 2     | SBCTextDisplayRGB (`n_interface1CS`). VGA/PS-2 text display.                                              |
 | `0x82`-`0x83` | 2     | bufferedUART (`n_interface2CS`). Serial console.                                                          |
-| `0x88`-`0x8F` | 8     | SD card controller (`n_sdCardCS`). Register offset via `cpuAddress(2 downto 0)`.                          |
+| `0x88`-`0x8F` | 8     | SPI SD card controller (`n_sdCardCS`, `sd_controller.vhd`). Talks only to the physical SD socket. Register offset via `cpuAddress(2 downto 0)`. See SD storage below. |
+| `0x90`-`0x97` | 8     | HPS image block device (`n_blockDevCS`, `Components/SDCARD/hps_blockdev.vhd`). Same register layout as the SD controller plus image-size registers; storage is an image file on the MiSTer Linux side, mounted from the OSD. See SD storage below. |
 | `0xA0`-`0xA7` | 8     | Front-panel subsystem control window (`n_fpSubsysCS`). See Front-panel I/O register map below.            |
 | `0xB0`-`0xBF` | 16    | MMU register window (`n_mmuCS`). 4 frame-mapping low bytes at `+0..+3` (Z2-compatible), 4 high bytes at `+4..+7`, direct-access pointer at `+8..+11` (little-endian), direct-access data port at `+12`. |
 | `0xC0`-`0xCF` | 16    | Benchmark timers (`n_timerCS`, `BenchTimer`). Four 32-bit snapshot channels: ch0/ch1 1 ms/tick, ch2/ch3 1 µs/tick. See below. |
 | `0xFF`        | 1     | Front-panel data latch (R/W). Software writes drive the 8-bit transparent capture chain; reads return the last-written value. |
+
+### Storage: SPI SD card (`0x88`) and HPS image block device (`0x90`)
+
+The core has two independent block storage devices that can be used at the
+same time. Both transfer 512-byte blocks addressed by a 24-bit block number
+(SDHC-style: the block number, not a byte address) and have the same
+register layout, so one driver can serve both with only a different base
+port.
+
+| Device | Base | Backing store | Module |
+|--------|------|---------------|--------|
+| SPI SD card | `0x88` | a physical SD card in the SD-card socket (SPI wires `SD_CS`/`SD_SCK`/`SD_MOSI`/`SD_MISO` are connected directly to it) | `Components/SDCARD/sd_controller.vhd` |
+| HPS image block device | `0x90` | an image file on the MiSTer Linux host, mounted with the OSD **SD card image** entry (`S,IMG`) | `Components/SDCARD/hps_blockdev.vhd` |
+
+The SPI controller never touches the HPS image interface and the block
+device never touches the SD pins, so neither can disturb the other. (Earlier
+versions emulated an SD card on the SPI wires and switched the one
+`sd_controller` between the socket and the image; that was removed.) With no
+physical card inserted `sd_controller` stays in its initialisation state
+(`STATUS` bit 4 stays set), which is how software sees an absent card.
+
+#### Register map (offsets from the base port: `0x88` or `0x90`)
+
+| Offset | Read | Write | Notes |
+|--------|------|-------|-------|
+| 0 | DATA | DATA | Sequential byte stream of the current block |
+| 1 | STATUS | CONTROL | Control: `0x00` = read block, `0x01` = write block |
+| 2 | - | LBA0 | block number bits 7:0 |
+| 3 | - | LBA1 | block number bits 15:8 |
+| 4 | - | LBA2 | block number bits 23:16 (24-bit block numbers = 8 GB) |
+| 5 | SIZE0 | - | **HPS block device only**: image size in 512-byte blocks, bits 7:0 |
+| 6 | SIZE1 | - | bits 15:8 |
+| 7 | SIZE2 | - | bits 23:16 |
+
+The SPI controller has no registers 5-7 (they read 0).
+
+STATUS bits:
+
+| Bit | SPI SD card (`0x88`) | HPS block device (`0x90`) |
+|-----|----------------------|---------------------------|
+| 7 | write byte can be accepted | same |
+| 6 | read byte available | same |
+| 5 | block busy | block busy (command in progress / waiting for the HPS) |
+| 4 | **init busy** (card being initialised, or absent) | **no image mounted** |
+| 3 | 0 | image is **read-only** |
+| 2 | 0 | last command was **rejected** (no image, LBA >= size, or a write to a read-only image); cleared by the next accepted command |
+| 1:0 | 0 | 0 |
+
+Typical HPS block device status values: `0x90` no image, `0x80` idle (`0x88`
+if the image is read-only), `0x20` command accepted and waiting for the HPS,
+`0xE0` read data ready, `0xA0` ready for write data, `0x84`/`0x8C` idle with
+the "rejected" flag set.
+
+SIZE0..2 read 0 when no image is mounted and saturate at `0xFFFFFF` blocks
+(8 GB). A mounted size that is not a multiple of 512 is rounded down.
+
+#### Programming sequence
+
+```
+read block N:    wait STATUS = 0x80 (mask 0xF0)    ; previous command done
+                 OUT LBA0, LBA1, LBA2
+                 OUT CONTROL, 0x00
+                 512 times: wait STATUS = 0xE0 ; IN DATA
+write block N:   wait STATUS = 0x80 (mask 0xF0)
+                 OUT LBA0, LBA1, LBA2
+                 OUT CONTROL, 0x01
+                 512 times: wait STATUS = 0xA0 ; OUT DATA
+                 (the device then writes the block; STATUS = 0x20 until it
+                  has finished, then 0x80 again)
+```
+
+The HPS block device keeps the STATUS read/write-ready bits set for the
+whole block, so after the first status check the 512 bytes can be moved
+with `INIR` / `OTIR` (the SPI controller needs a status check per byte). A
+rejected command leaves the device idle with bit 2 set, so after issuing a
+command wait for `0xE0`/`0xA0` *or* for bit 2 to get set; do not wait for
+`0xE0` alone. Completed transfers with bit 2 clear show STATUS `0x80`.
+
+#### HPS block device details
+
+- **Mounting.** Choose an image with the OSD *SD card image* entry. The HPS
+  reports the mount once; the device remembers the image presence, the
+  read-only flag and the size across a CPU reset or an OSD Reset, and
+  forgets them only if the image is un-mounted (size 0) or the core is
+  reloaded. A mount (or un-mount) aborts a transfer that is in progress.
+  With the OSD option *Reset after Mount* set to *Yes* the core is reset
+  after every mount.
+- **Writes.** STATUS returns to idle only after the HPS has taken the block
+  from the device's buffer, so a following read of the same block sees the
+  new data.
+- **Block addressing** is the same for any image size; there is no
+  partitioning or file system in the hardware.
+- **Activity LEDs.** The disk LED (`LED_DISK`) is lit by activity on either
+  device. The user LED (`LED_USER`) shows SD-socket SPI line activity OR
+  block device activity. The block device stretches its activity signal
+  by 20 ms so that short transfers are visible.
+- **Clocking.** `hps_io` runs on `clk_sys` (the core PLL clock), not on
+  `CLK_50M`, so the mount, block-transfer and file-download signals are
+  synchronous with this device and with the boot-source latch. (An earlier
+  version clocked `hps_io` from `CLK_50M`; `sys_top.sdc` treats that as an
+  asynchronous clock group, so the crossing was unsynchronised and untimed
+  and made behaviour depend on the fit.)
+- **Test program.** `testing/blockdevtest.asm` (read tests, then optional
+  write/read-back tests on the 100 sectors at the top of the image, which
+  are backed up and restored; verified on hardware with a 128 MiB image).
+  Simulated end to end in GHDL by `sim/run_blockdev_prog.sh`; unit testbench `sim/tb_hps_blockdev.vhd`
+  (`sim/run_blockdev.sh`).
 
 ### Serial-like devices
 

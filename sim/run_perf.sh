@@ -19,7 +19,7 @@ shift || true
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
-for p in sdram_perf sdram_stress sim_unused_io; do
+for p in sdram_perf sdram_stress sim_unused_io sim_blockdev_io; do
     "$PROJECT_ROOT/tools/z80asm.sh" -o "$WORKDIR/$p" "sim/$p.asm" > /dev/null
     cp "$WORKDIR/$p.bin" "sim/$p.bin"
 done
@@ -41,6 +41,8 @@ FILES=(
     sim/behav_display.vhd
     sim/bufferedUART_sim.vhd
     sim/sd_controller_sim.vhd
+    Components/SDCARD/hps_blockdev.vhd
+    Components/RTC/ds12887.vhd
     Components/FRONTPANEL/Transparent_Capture_Chain.vhd
     Components/FRONTPANEL/FP_RAM_Store.vhd
     Components/FRONTPANEL/FrontPanel_Subsystem.vhd
@@ -67,5 +69,9 @@ ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN="$WORKDIR/sdramstress_sim.bin" -g
     | sed -n 's/.*(report \(note\|warning\|error\)): //p'
 echo "---- sim_unused_io.asm (unclaimed I/O ports read 0FFh, RESULT = error count) ----"
 ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN=sim/sim_unused_io.bin -gEXPECT_SUM=0 "$@" \
+    --ieee-asserts=disable --stop-time=25ms 2>&1 \
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p'
+echo "---- sim_blockdev_io.asm (HPS block device ports 90-97 via the top level, RESULT = error count) ----"
+ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN=sim/sim_blockdev_io.bin -gEXPECT_SUM=0 "$@" \
     --ieee-asserts=disable --stop-time=25ms 2>&1 \
     | sed -n 's/.*(report \(note\|warning\|error\)): //p'
