@@ -122,9 +122,10 @@
 ;                                       MultiComp.sv) is the common root cause;
 ;                                       see the analysis in HISTORY.md.
 ;
-; SERIAL CONSOLE (6850-compatible ACIA, "io2")
-;         0x82 = status (read) / control (write); bit1 (0x02) = TX ready (TDRE)
-;         0x83 = data (read = RX, write = TX)
+; CONSOLES (both 6850-compatible ACIA) - output goes to BOTH
+;         video terminal: 0x80 = status (read) / control (write); 0x81 = data
+;         serial console: 0x82 = status (read) / control (write); 0x83 = data
+;         bit1 (0x02) = TX ready (TDRE) on both
 ;
 ; BUILD
 ;   with Makefile
@@ -163,10 +164,12 @@ WORK_BASE       equ     2400h          ; frame 0 / block RAM LDIR destination
 ; Phase C (CPIR sentinel search): region-relative offset of the last byte.
 LASTOFF         equ     REGION-1       ; = 1023 (0x3FF) for REGION=1024
 
-; ---- serial / MMU ports ----------------------------------------------------
-SERSTAT         equ     082h           ; ACIA status(read)/control(write)
-SERDATA         equ     083h           ; ACIA data
-TDRE            equ     002h           ; status bit1 = transmit ready
+; ---- console / MMU ports ---------------------------------------------------
+CONSTAT         equ     080h           ; video terminal status(read)/control(write)
+CONDATA         equ     081h           ; video terminal data
+SERSTAT         equ     082h           ; serial ACIA status(read)/control(write)
+SERDATA         equ     083h           ; serial ACIA data
+TDRE            equ     002h           ; status bit1 = transmit ready (both)
 
 MAP1LO          equ     0B1h           ; frame-1 map reg low byte  (page 7:0)
 MAP1HI          equ     0B5h           ; frame-1 map reg high byte (page 15:8)
@@ -994,16 +997,24 @@ report_fail:
                 ret
 
 ; ============================================================================
-; Serial output helpers (identical to sdramtest.asm / sdramexec.asm)
+; Console output helpers (identical to sdramtest.asm / sdramexec.asm) -
+; send each char to BOTH the video terminal and the serial console
 ; ============================================================================
 putc:
                 push    af
-pc_wait:
+pc_w1:
+                in      a,(CONSTAT)
+                and     TDRE
+                jr      z,pc_w1
+                pop     af
+                out     (CONDATA),a
+                push    af
+pc_w2:
                 in      a,(SERSTAT)
                 and     TDRE
-                jr      z,pc_wait
+                jr      z,pc_w2
                 pop     af
-                out      (SERDATA),a
+                out     (SERDATA),a
                 ret
 
 puts:

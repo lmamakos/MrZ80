@@ -25,7 +25,8 @@
 ;     5. Repeats the execute step several times to catch non-deterministic /
 ;        intermittent fetch failures (the hallmark of the boot bug).
 ;
-;   Each stage prints PASS/FAIL over the serial console. If the copy+verify
+;   Each stage prints PASS/FAIL on both the video terminal and the serial
+;   console. If the copy+verify
 ;   passes but the EXECUTE step fails (or is flaky), the fault is specifically
 ;   in the SDRAM instruction-fetch / wait-state path -- the same path a boot
 ;   image depends on and the prime suspect for the boot failure.
@@ -38,9 +39,10 @@
 ;   Frame 1 is used (not frame 3) so that the test's own stack/scratch in
 ;   frame 0 and code in frames 0..2 are untouched; only 0x4000.. is remapped.
 ;
-; SERIAL CONSOLE (6850-compatible ACIA, "io2")
-;       0x82 = status(read)/control(write); bit1 (0x02) = TX ready (TDRE)
-;       0x83 = data
+; CONSOLES (both 6850-compatible ACIA) - output goes to BOTH
+;       video terminal: 0x80 = status(read)/control(write); 0x81 = data
+;       serial console: 0x82 = status(read)/control(write); 0x83 = data
+;       bit1 (0x02) = TX ready (TDRE) on both
 ;
 ; BUILD
 ;   with Makefile rules
@@ -63,9 +65,11 @@ EXEC_RUNS       equ     16              ; how many times to re-run the routine
 ; table and adds a constant; EXPECT must match what srctn computes.
 EXPECT          equ     0C3h
 
-; ---- serial / MMU ports ----------------------------------------------------
-SERSTAT         equ     082h
-SERDATA         equ     083h
+; ---- console / MMU ports ---------------------------------------------------
+CONSTAT         equ     080h            ; video terminal status(read)/control(write)
+CONDATA         equ     081h            ; video terminal data
+SERSTAT         equ     082h            ; serial ACIA status(read)/control(write)
+SERDATA         equ     083h            ; serial ACIA data
 TDRE            equ     002h
 
 MAP1LO          equ     0B1h            ; frame-1 map reg low byte (page 7:0)
@@ -240,14 +244,21 @@ srctn_end:
 srctn_len       equ     srctn_end - srctn_start
 
 ; ============================================================================
-; Serial output helpers
+; Console output helpers
 ; ============================================================================
 putc:
                 push    af
-pc_wait:
+pc_w1:
+                in      a,(CONSTAT)
+                and     TDRE
+                jr      z,pc_w1
+                pop     af
+                out     (CONDATA),a
+                push    af
+pc_w2:
                 in      a,(SERSTAT)
                 and     TDRE
-                jr      z,pc_wait
+                jr      z,pc_w2
                 pop     af
                 out     (SERDATA),a
                 ret

@@ -8,7 +8,8 @@
 ;   download / boot / CPU machinery is sound, so the fault is in the SDRAM
 ;   data path. This program is a standalone diagnostic: assemble it to a flat
 ;   .BIN, load it via the OSD into BLOCK RAM (the known-good path), and it
-;   exercises the SDRAM two ways and reports results over the serial console.
+;   exercises the SDRAM two ways and reports results on both the video
+;   terminal and the serial console.
 ;
 ;   PHASE 1 - direct-access port:
 ;     Touches a small SDRAM region through the MMU direct-access data port
@@ -49,9 +50,10 @@
 ;                    pointer, then the pointer POST-INCREMENTS by 1.
 ;   The CPU is automatically wait-stated until each access completes.
 ;
-; SERIAL CONSOLE (6850-compatible ACIA, "io2")
-;       0x82 = status (read) / control (write); bit1 (0x02) = TX ready (TDRE)
-;       0x83 = data (read = RX, write = TX)
+; CONSOLES (both 6850-compatible ACIA) - output goes to BOTH
+;       video terminal: 0x80 = status (read) / control (write); 0x81 = data
+;       serial console: 0x82 = status (read) / control (write); 0x83 = data
+;       bit1 (0x02) = TX ready (TDRE) on both
 ;
 ; PHASE 1 REGION
 ;   Exhaustively tests a SMALL region: the first TEST_PAGES 256-byte pages
@@ -101,10 +103,12 @@ PAGE_LAST       equ     8191            ; last 16 KB page (top of 128 MB)
 WIN_BASE        equ     0C000h          ; logical 0xC000..0xFFFF (16 KB)
 WIN_SIZE        equ     4000h           ; 16384 bytes
 
-; ---- serial / MMU ports ----------------------------------------------------
-SERSTAT         equ     082h            ; ACIA status(read)/control(write)
-SERDATA         equ     083h            ; ACIA data
-TDRE            equ     002h            ; status bit1 = transmit ready
+; ---- console / MMU ports ---------------------------------------------------
+CONSTAT         equ     080h            ; video terminal status(read)/control(write)
+CONDATA         equ     081h            ; video terminal data
+SERSTAT         equ     082h            ; serial ACIA status(read)/control(write)
+SERDATA         equ     083h            ; serial ACIA data
+TDRE            equ     002h            ; status bit1 = transmit ready (both)
 
 PTR0            equ     0B8h            ; direct-access pointer byte 7:0
 PTR1            equ     0B9h            ; direct-access pointer byte 15:8
@@ -775,15 +779,22 @@ pgf_done:
                 ret
 
 ; ============================================================================
-; Serial output helpers
+; Console output helpers
 ; ============================================================================
-; putc - send char in A
+; putc - send char in A to both the video terminal and the serial console
 putc:
                 push    af
-pc_wait:
+pc_w1:
+                in      a,(CONSTAT)
+                and     TDRE
+                jr      z,pc_w1
+                pop     af
+                out     (CONDATA),a
+                push    af
+pc_w2:
                 in      a,(SERSTAT)
                 and     TDRE
-                jr      z,pc_wait
+                jr      z,pc_w2
                 pop     af
                 out     (SERDATA),a
                 ret

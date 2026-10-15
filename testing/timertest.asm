@@ -20,15 +20,18 @@
 ;   5. Snapshot ch0 at program start and end: prints total run time.
 ;
 ; Run from block RAM (Boot Load Target = Block RAM) or SDRAM.
-; SERIAL CONSOLE (6850-compatible ACIA)  0x82 status/control, 0x83 data
+; CONSOLES (both 6850-compatible ACIA): video terminal 0x80/0x81, serial
+; console 0x82/0x83; output goes to BOTH
 ; BUILD: make -C testing timertest.bin   (or tools/z80asm.sh)
 ; ============================================================================
 
 	.z80
                 org     0000h
 
-SERSTAT         equ     082h
-SERDATA         equ     083h
+CONSTAT         equ     080h            ; video terminal status/control
+CONDATA         equ     081h            ; video terminal data
+SERSTAT         equ     082h            ; serial ACIA status/control
+SERDATA         equ     083h            ; serial ACIA data
 TDRE            equ     002h
 
 TMS0            equ     0C0h            ; channel 0, ms
@@ -380,13 +383,20 @@ d10_next:
                 djnz    d10_loop
                 ret
 
-; ---- serial ----------------------------------------------------------------
+; ---- console (output to BOTH the video terminal and the serial port) -------
 putc:
                 push    af
-pc_wait:
+pc_w1:
+                in      a,(CONSTAT)
+                and     TDRE
+                jr      z,pc_w1
+                pop     af
+                out     (CONDATA),a
+                push    af
+pc_w2:
                 in      a,(SERSTAT)
                 and     TDRE
-                jr      z,pc_wait
+                jr      z,pc_w2
                 pop     af
                 out     (SERDATA),a
                 ret

@@ -40,9 +40,10 @@
 ;   zero (each rotated by the pass number).
 ;
 ; USAGE
-;   Load the .BIN via the OSD with Boot Load Target = Block RAM. Output on
-;   the serial console (io2, 6850 ACIA at 82h/83h). Press any key to stop
-;   after the current pass and print the totals.
+;   Load the .BIN via the OSD with Boot Load Target = Block RAM. Output goes
+;   to BOTH the video terminal (80h/81h) and the serial console (82h/83h),
+;   both 6850 ACIA. Press any key on either console to stop after the
+;   current pass and print the totals.
 ;
 ; BUILD
 ;   make -C testing sdramstress.bin   (or tools/z80asm.sh testing/sdramstress.asm)
@@ -75,8 +76,10 @@ RECDEPTH        equ     64              ; test 3 recursion depth
 NPORT           equ     64              ; test 7 bytes through port +12
 
 ; ---- ports -------------------------------------------------------------------
-SERSTAT         equ     082h
-SERDATA         equ     083h
+CONSTAT         equ     080h            ; video terminal status/control
+CONDATA         equ     081h            ; video terminal data
+SERSTAT         equ     082h            ; serial ACIA status/control
+SERDATA         equ     083h            ; serial ACIA data
 TDRE            equ     002h
 RDRF            equ     001h
 MAP1LO          equ     0B1h            ; frame-1 mapping, bits 7:0
@@ -236,11 +239,16 @@ pass:
 sim_end:        jr      sim_end
                 ENDIF
 
-                in      a,(SERSTAT)             ; key pressed -> stop
+                in      a,(CONSTAT)             ; key on either console -> stop
+                and     RDRF
+                jr      nz,ks_con
+                in      a,(SERSTAT)
                 and     RDRF
                 jp      z,pass
                 in      a,(SERDATA)             ; discard the key
-
+                jp      ks_done
+ks_con:         in      a,(CONDATA)             ; discard the key
+ks_done:
                 ld      hl,msg_stop
                 call    puts
                 ld      hl,PASSN
@@ -690,16 +698,22 @@ d10_n:          djnz    d10_l
                 ret
 
 ; ============================================================================
-; serial
+; console: output to the video terminal AND the serial port
 ; ============================================================================
 putc:
                 IFDEF   SIM
-                ret                             ; no serial output in GHDL
+                ret                             ; no console output in GHDL
                 ENDIF
                 push    af
-pc_wait:        in      a,(SERSTAT)
+pc_w1:          in      a,(CONSTAT)
                 and     TDRE
-                jr      z,pc_wait
+                jr      z,pc_w1
+                pop     af
+                out     (CONDATA),a
+                push    af
+pc_w2:          in      a,(SERSTAT)
+                and     TDRE
+                jr      z,pc_w2
                 pop     af
                 out     (SERDATA),a
                 ret

@@ -20,15 +20,18 @@
 ;        SDRAM holds whatever followed the image there. A crashed image may
 ;        also have scribbled on its own data/stack area.)
 ;
-; SERIAL CONSOLE (6850-compatible ACIA)  0x82 status/control, 0x83 data
+; CONSOLES (both 6850-compatible ACIA): video terminal 0x80/0x81, serial
+; console 0x82/0x83; output goes to BOTH
 ; BUILD: make -C testing sdramsum.bin
 ; ============================================================================
 
 	.z80
                 org     0000h
 
-SERSTAT         equ     082h
-SERDATA         equ     083h
+CONSTAT         equ     080h            ; video terminal status/control
+CONDATA         equ     081h            ; video terminal data
+SERSTAT         equ     082h            ; serial ACIA status/control
+SERDATA         equ     083h            ; serial ACIA data
 TDRE            equ     002h
 
 MAP1LO          equ     0B1h            ; frame-1 map reg low byte (page 7:0)
@@ -217,14 +220,21 @@ bs_nc:
                 ret
 
 ; ============================================================================
-; Serial output helpers (all preserve BC, DE, HL)
+; Console output helpers - output to BOTH (all preserve BC, DE, HL)
 ; ============================================================================
 putc:
                 push    af
-pc_wait:
+pc_w1:
+                in      a,(CONSTAT)
+                and     TDRE
+                jr      z,pc_w1
+                pop     af
+                out     (CONDATA),a
+                push    af
+pc_w2:
                 in      a,(SERSTAT)
                 and     TDRE
-                jr      z,pc_wait
+                jr      z,pc_w2
                 pop     af
                 out     (SERDATA),a
                 ret
