@@ -3236,3 +3236,87 @@ a 128 MiB image (262144 blocks), including the wait-for-mount path when the
 program is started before an image is mounted. The T4 mismatches seen with the
 `CLK_50M`-clocked `hps_io` are gone, consistent with the crossing being their
 cause.
+
+## SPI SD card controller: review, init retry, diagnostics
+
+Prompted by `testing/sdcardtest.asm` reporting STATUS `90h` (init busy) forever,
+with or without a card in the secondary SD socket.
+
+**Review of `Components/SDCARD/sd_controller.vhd`.** New `sim/tb_sd_controller.vhd`
+(`sim/run_sd_controller.sh`) runs the controller against a bit-level SPI SD
+card model (CMD0/8/55/ACMD41/58/17/24, data tokens, write response and busy)
+in 7 configurations (SDHC, slow/fast card, 200 ACMD41 polls, SDSC v1 card
+without CMD8, late card insertion, no card). The init protocol, command
+bytes/CRCs, response sampling, read and write block transfers are correct:
+with a responding card the controller reaches idle (STATUS `80h`), reads and
+writes blocks, and a block written reads back. So a stuck `90h` is not a
+protocol error in the init FSM; it means the FSM never saw a response on
+`SD_MISO` (no card, card not seen by the framework, wiring/pins), see below.
+
+Defects found and fixed:
+- `clkCount` was 6 bits but `CLKEDGE_DIVIDER` is 100, so the init clock was
+  not the documented 250 kHz (the counter wrapped at 64 for 390 kHz, or at 36
+  = 694 kHz in some libraries; both ends of the SD 400 kHz limit). It is now 7
+  bits, with a power-up value, and measures 250 kHz in simulation.
+- No recovery: after sending CMD0 the FSM waited forever for a response, so a
+  card inserted after the core was loaded, or a card left in an odd state, was
+  never initialised until a full reset. A response not seen within ~65 ms now
+  restarts the init sequence (`rsp_to`, only while init busy).
+
+Not changed (noted): a read or write past the end of the card still hangs the
+controller until reset; the controller switches to 25 MHz (sample at the end of
+the low phase) after init, which is tight with long wiring.
+
+**Diagnostics.** Registers 5-7 of the SPI controller (they read 0 before) now
+return the FSM state, the next step (which command a response is awaited for)
+and a pin/status byte: live `SD_MISO`, `SD_CS`, `SD_SCK`, SDHC flag, the
+framework's `SD_CD`, and the number of init restarts. `SD_CD` is a new
+`sdCD` port on `sd_controller` and `MicrocomputerZ80CPM`, connected to `SD_CD`
+in `MrZ80.sv`. `testing/sdcardtest.asm` prints them when init does not finish.
+Simulation copies resynchronised; `run_perf.sh` results unchanged.
+Not yet synthesised or tested on hardware.
+
+### Hardware result and CD-ignore experiment
+
+First hardware run of the diagnostics (micro SD card inserted in the IO board's
+SD slot): `FSM state 10h next step 03h` (waiting for the CMD0 response),
+`MISO=1 CS=0 SCLK=0 SDHC=0 CD=1`, 7 init restarts. So the controller sends CMD0
+repeatedly and gets nothing, and the framework's card detect (`SD_CD`) reads 1
+(no card): `sys/sys_top.v` then forces `SD_MISO` high and tri-states
+`SD_SPI_CS/CLK/MOSI`. This is not a controller bug.
+
+Experiment: `sys/sys_top.v` now takes the card-detect gating from `sd_cd_g`,
+which is 0 when `MRZ80_SD_IGNORE_CD` is defined (set in `MrZ80.qsf`), so the SPI
+pins are driven and MISO is not forced high whatever `SD_CD` says. The core still
+receives the real `SD_CD` (register `8Fh` bit 3). With an IO board that has no
+MCP23009 the SD signals are only routed to the SDIO pins when `SDCD_SPDIF` is low
+or DE10-Nano `SW[2]` is on (line 136, unchanged), so `SW[2]` must be on there.
+Remove the macro line from `MrZ80.qsf` to restore the stock framework behaviour.
+
+### CD not wired; second experiment (MRZ80_SD_FORCE)
+
+Schematic check of the I/O board: the micro SD socket's card-detect pin (9) is
+not connected, so with no MCP23009 `SD_CD` is `SDCD_SPDIF`, which only has the
+FPGA weak pull-up and always reads 1. Ignoring `SD_CD` (MRZ80_SD_IGNORE_CD) was
+not enough: with `SW[2]` flipped (wired to W21 per the schematic) the diagnostics
+were unchanged (MISO=1, init restarts=7). Remaining gates for the no-MCP routing
+in `sys/sys_top.v` are `SW[3]` (`io_dig`), `VGA_EN` (pin AH27, weak pull-up only)
+and `SW[2]`. `MRZ80_SD_FORCE` (MrZ80.qsf) bypasses all of them: with `mcp_en`=0
+`{SDIO_CLK,SDIO_CMD,SDIO_DAT}` always carry `{SD_SCK,SD_MOSI,SD_CS,Z,Z,Z}` and
+`SD_MISO` is `SDIO_DAT[0]`. Analog video on the shared pins is lost.
+
+### SPI SD card: init works, reads corrupt at 25 MHz; data-phase clock now 6.25 MHz
+
+With `MRZ80_SD_FORCE` the card initialised on the QMTech DE10 clone and its I/O
+board (STATUS `80h`, SDHC detected, 0 init restarts) but `testing/sdcardtest.asm`
+read garbage: block 0 had no MBR signature and read back differently each time
+(T7), INIR and polled reads differed. The controller switched to a 25 MHz SPI
+clock after init. It samples `SD_MISO` just before the rising edge of `SD_SCK`,
+so the SCLK output path, the card's output delay (up to 14 ns) and the MISO
+return path through the pins and the two boards must fit in half a clock period
+(20 ns at 25 MHz); the data then arrives right at the sampling instant, which
+the zero-delay simulation cannot show. New generic `HS_DIVIDER` (default 4):
+SPI clock after init = 50 MHz / (2 * HS_DIVIDER) = 6.25 MHz (1 = 25 MHz,
+2 = 12.5 MHz). The init clock is unchanged (250 kHz). `sim/tb_sd_controller.vhd`
+checks the data-phase clock period and has `HS_DIV` and `MISO_NS` (card/board
+output delay) generics; 7 of 7 configurations pass. Not yet tested on hardware.

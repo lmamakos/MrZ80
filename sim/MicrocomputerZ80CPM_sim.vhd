@@ -52,6 +52,7 @@ entity MicrocomputerZ80CPM is
 		sdMOSI			: out std_logic;
 		sdMISO			: in std_logic;
 		sdSCLK			: out std_logic;
+		sdCD			: in std_logic := '0';
 		driveLED		: out std_logic :='1';
 
 		-- usbCS			: out std_logic;
@@ -507,6 +508,7 @@ port map(
         sdMOSI => sdMOSI,
         sdMISO => sdMISO,
         sdSCLK => sdSCLK,
+        sdCD => sdCD,
         n_wr => n_sdCardCS or n_ioWR,
         n_rd => n_sdCardCS or n_ioRD,
         n_reset => N_RESET,

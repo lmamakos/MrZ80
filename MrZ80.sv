@@ -942,6 +942,7 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
 	.sdMOSI		(sdmosi),
 	.sdMISO		(sdmiso),
 	.sdSCLK		(sdclk),
+	.sdCD		(SD_CD),
     .driveLED(driveLED),
     .rxd1(serial_rx),
     .txd1(serial_tx),

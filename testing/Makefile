@@ -1,4 +1,4 @@
-PROGS=	backtoback.bin	sdramexec.bin  sdramtest.bin  sdramsum.bin  sdramret.bin  timertest.bin  sdramstress.bin  blockdevtest.bin
+PROGS=	backtoback.bin	sdramexec.bin  sdramtest.bin  sdramsum.bin  sdramret.bin  timertest.bin  sdramstress.bin  blockdevtest.bin  sdcardtest.bin
 MISTER=	mister:/media/fat/games/MrZ80//
 
 all:	${PROGS}

@@ -112,7 +112,27 @@ physical card inserted `sd_controller` stays in its initialisation state
 | 6 | SIZE1 | - | bits 15:8 |
 | 7 | SIZE2 | - | bits 23:16 |
 
-The SPI controller has no registers 5-7 (they read 0).
+The SPI controller has no size registers. Its registers 5-7 are read-only
+diagnostics that show where an initialisation that does not finish is stuck:
+
+| Offset | Read (SPI SD card only) |
+|--------|-------------------------|
+| 5 | current FSM state number (`state_code` in `sd_controller.vhd`; `09h` = idle, `10h` = waiting for a response) |
+| 6 | the step that follows the current command/response: while waiting for a response this names the command (`03h` = response to CMD0, `04h` = CMD8, `05h` = CMD55, `06h` = ACMD41, `07h` = CMD58 response) |
+| 7 | b7 `SD_MISO` (live level), b6 `SD_CS`, b5 `SD_SCK`, b4 card is SDHC, b3 `SD_CD` (the MiSTer framework's card detect, 1 = **no card seen**), b2:0 number of init restarts since reset (saturates at 7) |
+
+FPGA builds from before the diagnostics read 0 in registers 5-7.
+
+The card is initialised at about 250 kHz SPI clock after reset (80 clocks with
+CS high, CMD0, CMD8, CMD55/ACMD41 until ready, CMD58), then the controller runs
+at 6.25 MHz (`HS_DIVIDER` = 4 in `sd_controller.vhd`: SPI clock = 50 MHz / (2 * HS_DIVIDER);
+1 = 25 MHz, 2 = 12.5 MHz). 25 MHz returned corrupt data on a MiSTer I/O board, see HISTORY.md. While initialising, a response that does not arrive within about
+65 ms restarts the sequence from the beginning (init restarts, register 7), so a
+card that is inserted after the core was loaded, or that was left in an odd
+state, is picked up without a reset. STATUS bit 4 stays set until the card is
+ready. Note that the MiSTer framework (`sys/sys_top.v`) forces `SD_MISO` high
+and tri-states the SPI pins when it believes there is no card in the secondary
+SD socket (`SD_CD` high); that looks exactly like a card that never answers.
 
 STATUS bits:
 
@@ -185,6 +205,94 @@ command wait for `0xE0`/`0xA0` *or* for bit 2 to get set; do not wait for
   are backed up and restored; verified on hardware with a 128 MiB image).
   Simulated end to end in GHDL by `sim/run_blockdev_prog.sh`; unit testbench `sim/tb_hps_blockdev.vhd`
   (`sim/run_blockdev.sh`).
+
+### FPGA build options for the SPI SD card socket (board configuration)
+
+Whether the SPI SD controller (`0x88`-`0x8F`) can reach a card depends on how
+the board's SD socket is wired and on how the MiSTer framework (`sys/sys_top.v`)
+routes it, which differs between I/O boards. The options below are set when the
+FPGA image is built (`MrZ80.qsf`, `sys/sys_top.v`, `Components/SDCARD/sd_controller.vhd`);
+rebuild with `tools/build.sh` after changing them. `testing/sdcardtest.asm` prints
+the controller's diagnostics (`MISO`, `CS`, `SCLK`, `SDHC`, `CD`, init restarts)
+and is the way to check a configuration.
+
+#### Which configuration do I need?
+
+The framework looks for an **MCP23009** I2C I/O-expander chip (address `0x20`) on
+the I/O board at power-up. When it is present the I/O board's buttons, LEDs,
+digital/analog mode and the SD socket's card-detect all go through that chip and
+the SD socket is wired to the `SD_SPI_*` pins. When it is absent the framework
+uses the older scheme: card detect is the `SDCD_SPDIF` pin (a bare FPGA pin with
+a weak pull-up), the SD signals share the `SDIO_*` pins with the analog video,
+and the four DE10-Nano slide switches select modes (see below).
+
+| Your hardware | `MRZ80_SD_IGNORE_CD` | `MRZ80_SD_FORCE` | Notes |
+|---------------|----------------------|------------------|-------|
+| I/O board **with** an MCP23009 and a working card-detect switch | off | off (no effect) | Stock framework behaviour. |
+| I/O board **with** an MCP23009 but the socket's card-detect pin not wired or not working | **on** | off (no effect) | `SD_CD` reads 1 (no card), which makes the framework tri-state the SPI pins and force `SD_MISO` high. |
+| I/O board **without** an MCP23009, socket card-detect not connected | **on** | **on** | The configuration tested on a QMTech DE10-Nano clone and its I/O board (micro SD socket pin 9 unconnected, no MCP23009). The slide switches do not affect the SD socket. Analog video on the shared `SDIO` pins is lost. |
+| I/O board **without** an MCP23009, card-detect wired so it pulls `SDCD_SPDIF` low with a card, and the analog video is wanted | off | off | Stock framework: needs `SW[3]` = 0, the `VGA_EN` pin low (the analog I/O board pulls it low), and either the card-detect pin low or `SW[2]` = 1. |
+
+How to tell which case you are in: with the diagnostics, register `8Fh` bit 3
+(`CD`) reads 1 and the controller never leaves init (`STATUS` stays `90h`, init
+restarts count up to 7) when the framework hides the card. `CD` reading 1 with a
+card inserted means the card-detect is not wired, or no MCP23009 exists and
+`SDCD_SPDIF` is floating high. `CD` is the framework's own signal; with
+`MRZ80_SD_IGNORE_CD` set it is still reported but no longer used for gating, so
+`CD=1` is normal on a board without a working card-detect.
+
+#### Build parameters
+
+| Parameter | Where | Default | Meaning |
+|-----------|-------|---------|---------|
+| `MRZ80_SD_IGNORE_CD` | `MrZ80.qsf`, `VERILOG_MACRO` | defined | The card detect no longer gates `SD_MISO` and the `SD_SPI_CS/CLK/MOSI` pins in `sys/sys_top.v` (`sd_cd_g` forced to 0). The core still receives the real `SD_CD`. For boards whose card-detect is not connected. Delete the line to restore the stock behaviour. |
+| `MRZ80_SD_FORCE` | `MrZ80.qsf`, `VERILOG_MACRO` | defined | Only affects boards without an MCP23009. Always routes `SD_SCK`, `SD_MOSI` and `SD_CS` to `SDIO_CLK`, `SDIO_CMD` and `SDIO_DAT[3]`, and reads `SD_MISO` from `SDIO_DAT[0]`, ignoring `SW[2]`, `SW[3]`, `VGA_EN` and the card detect. The analog video outputs that share these pins stop working. Delete the line for the stock routing. |
+| `HS_DIVIDER` | generic of `sd_controller` (`Components/SDCARD/sd_controller.vhd`) | 4 | SPI clock after init = 50 MHz / (2 * `HS_DIVIDER`): 1 = 25 MHz, 2 = 12.5 MHz, 4 = 6.25 MHz, 8 = 3.1 MHz. 25 MHz returned corrupt data on the QMTech clone (see below); 6.25 MHz passed all read and write tests. Raise it if reads are unreliable, lower it (2) to try for speed on short, clean wiring. Change the default in the entity, or add a `generic map` on the `sd1` instance in `MicrocomputerZ80CPM.vhd`, then run `sim/check_sync.sh` and refresh the `sim/*_sim.vhd` copies (see `sim/STATUS.md`). |
+| `CLKEDGE_DIVIDER` | generic of `sd_controller` | 100 | Clock divider during card initialisation: 50 MHz / (2 * 100) = 250 kHz (the SD specification allows up to 400 kHz). Leave unchanged. |
+
+Why the data-phase clock is slow: the controller samples `SD_MISO` just before
+the rising edge of `SD_SCK`. The clock leaving the FPGA, the card's output delay
+(up to 14 ns) and the data coming back through the pins and boards have to fit in
+half a clock period, 20 ns at 25 MHz. Reads were then corrupt and unrepeatable
+(a block read differently each time); initialisation, which runs at 250 kHz, was
+fine. At 6.25 MHz (80 ns) there is plenty of margin.
+
+Other build macros that exist but are not SD socket settings: `SDRAM_CLK_100` in
+`MrZ80.sv` (selects the PLL output that clocks the SDRAM controller). The
+framework macro `MISTER_DUAL_SDRAM` is not defined; if it were, `sys/sys_top.v`
+would use a different SD wiring (`SD_SPI_*` pins only, MCP23009 card-detect
+required) and the options above would not apply.
+
+#### The slide switches (boards without an MCP23009)
+
+The framework reads the four DE10-Nano slide switches as plain FPGA inputs
+(`SW[0]`..`SW[3]`, pins Y24, W24, W21 and W20 as assigned in `sys/sys.tcl`); a
+switch is "on" when its input is at 3.3 V (logic 1). Which way the lever moves
+for 3.3 V, and which silkscreen label is which pin, depend on the board: check the
+schematic (on the QMTech DE10-Nano clone, `SW[2]` was traced to W21) or measure
+the pin with a multimeter. When an MCP23009 is present the framework ignores
+most of them (the chip supplies the mode and buttons).
+
+| Switch | Function in the framework (no MCP23009) | Setting for this core |
+|--------|------------------------------------------|-----------------------|
+| `SW[0]` | Audio output pins on the I/O board (`AUDIO_L`, `AUDIO_R`, `AUDIO_SPDIF`): on = digital audio (HDMI I2S/SCLK/LRCLK), off = analog audio and S/PDIF. | Not used by the SD card or the serial ports. Leave off. |
+| `SW[1]` | User port (USB 3.0 connector) pins `USER_IO[2]`, `[4]`, `[5]`: on = they carry HDMI I2S digital audio (for an I2S DAC on the user port) and the core's `USER_IN[2]`, `[4]`, `[5]` read 1; off = normal user I/O. | This core's user-port serial uses `USER_IO[0]`, `[1]` and `[3]`, which are not affected. Leave off. |
+| `SW[2]` | SD socket routing: when the card-detect pin (`SDCD_SPDIF`) is high (no card seen), on forces the SD signals onto the `SDIO_*` pins (otherwise those pins carry analog video). A manual override for boards whose card-detect does not work. | **Ignored** with `MRZ80_SD_FORCE`. Without it, turn on if the card-detect is not wired. |
+| `SW[3]` | I/O board type: off = analog I/O board (its analog video, audio and LED pins are driven and its `BTN_RESET`/`BTN_OSD`/`BTN_USER` buttons are used); on = digital I/O board (analog pins tri-stated, buttons expected from the MCP23009, so none work on a board without it). | Leave **off** on an I/O board without an MCP23009. With `MRZ80_SD_FORCE` it does not affect the SD socket. |
+
+The five small DIP switches on the QMTech clone are not read by the framework or
+by this core; consult the board documentation (they are normally FPGA/HPS
+configuration or boot-select switches) before changing them.
+
+#### Verified configuration
+
+QMTech DE10-Nano clone with 128 MB SDRAM and its I/O board (no MCP23009,
+micro SD socket card-detect pin not connected, socket wired to `SDIO_CLK`
+(AH26), `SDIO_CMD` (AF27), `SDIO_DAT[3]` (AF28) and `SDIO_DAT[0]` (AF25)):
+`MRZ80_SD_IGNORE_CD` and `MRZ80_SD_FORCE` defined, `HS_DIVIDER` = 4. A micro SD
+card (SDHC) initialised with `STATUS` `80h`, and `testing/sdcardtest.asm`
+passed the read tests and the write tests (backup, two write patterns, restore)
+on two consecutive runs.
 
 ### Serial-like devices
 

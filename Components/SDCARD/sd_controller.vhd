@@ -101,14 +101,22 @@ use ieee.std_logic_unsigned.all;
 
 entity sd_controller is
 generic (
-        constant CLKEDGE_DIVIDER : integer := 100	-- 50MHz / 100 gives edges at 500kHz ie output
+        constant CLKEDGE_DIVIDER : integer := 100;	-- 50MHz / 100 gives edges at 500kHz ie output
 																	-- or sdSCLK of 250kHz to be used during init phase
+        -- Divider after initialisation: sdSCLK = clk / (2 * HS_DIVIDER), so 1 =
+        -- 25 MHz, 2 = 12.5 MHz, 4 = 6.25 MHz.  Data is sampled just before the
+        -- rising edge of sdSCLK, so the card output delay plus the round trip
+        -- through the FPGA pins and the board wiring (clock out, data back)
+        -- has to fit in half a clock period.  At 25 MHz (20 ns) that does not
+        -- work on a MiSTer I/O board: reads returned corrupt data.
+        constant HS_DIVIDER : integer := 4
 );
 port (
 	sdCS : out std_logic;
 	sdMOSI : out std_logic;
 	sdMISO : in std_logic;
 	sdSCLK : out std_logic;
+	sdCD : in std_logic := '0';	-- card detect from the framework ('1' = no card); diagnostic only
 	n_reset : in std_logic;
 	n_rd : in std_logic;
 	n_wr : in std_logic;
@@ -159,9 +167,12 @@ signal cmd_out : std_logic_vector(55 downto 0);
 -- at different times holds 8-bit data, 8-bit R1 response or 40-bit R7 response
 signal recv_data : std_logic_vector(39 downto 0);
 
-signal clkCount : std_logic_vector(5 downto 0);
+-- 7 bits: CLKEDGE_DIVIDER (100) does not fit in the 6 bit counter this used
+-- to be, which wrapped at 64 and so never produced the intended divide-by-100
+signal clkCount : std_logic_vector(6 downto 0) := (others => '0');
+signal hsCount : integer range 0 to HS_DIVIDER - 1 := 0;
 signal clkEn : std_logic;
-signal HighSpeed : std_logic := '0';		-- flag to switch to 25 MHz operation and back
+signal HighSpeed : std_logic := '0';		-- flag to switch to the HS_DIVIDER clock after init and back
 signal status : std_logic_vector(7 downto 0) := x"00";
 
 signal block_read : std_logic := '0';
@@ -187,6 +198,52 @@ signal block_busy : std_logic := '0';
 
 signal address: std_logic_vector(31 downto 0) :=x"00000000";
 
+signal cs_sig : std_logic := '1';
+
+-- Init response timeout: while the card is being initialised, a response
+-- that never arrives (no card, card not yet inserted, card left in a odd
+-- state by earlier software) restarts the init sequence rather than waiting
+-- forever.  rsp_to counts FSM steps (one per clkEn, 2 us at 250 kHz SPI).
+signal rsp_to : std_logic_vector(14 downto 0) := (others => '0');	-- ~65 ms
+-- Number of init restarts since reset (saturates at 7), readable in reg 7.
+signal retries : std_logic_vector(2 downto 0) := (others => '0');
+
+signal dbg_state : std_logic_vector(7 downto 0);
+signal dbg_step : std_logic_vector(7 downto 0);
+signal dbg_pins : std_logic_vector(7 downto 0);
+
+-- FSM state number, readable in reg 5 (and the state of an init step in
+-- reg 6) to see where a stuck initialisation is waiting.
+function state_code(s : states) return std_logic_vector is
+begin
+	case s is
+		when rst => return x"00";
+		when init => return x"01";
+		when cmd0 => return x"02";
+		when cmd8 => return x"03";
+		when cmd55 => return x"04";
+		when acmd41 => return x"05";
+		when poll_cmd => return x"06";
+		when cmd58 => return x"07";
+		when cardsel => return x"08";
+		when idle => return x"09";
+		when read_block_cmd => return x"0A";
+		when read_block_wait => return x"0B";
+		when read_block_data => return x"0C";
+		when send_cmd => return x"0D";
+		when send_regreq => return x"0E";
+		when receive_ocr_wait => return x"0F";
+		when receive_byte_wait => return x"10";
+		when receive_byte => return x"11";
+		when write_block_cmd => return x"12";
+		when write_block_init => return x"13";
+		when write_block_data => return x"14";
+		when write_block_byte => return x"15";
+		when write_block_wait => return x"16";
+		when others => return x"FF";
+	end case;
+end function;
+
 signal led_on_count : integer range 0 to 200;
 
 begin
@@ -198,10 +255,15 @@ begin
 			else
 				clkCount <= (others=>'0');
 			end if;
+			if hsCount < HS_DIVIDER - 1 then
+				hsCount <= hsCount + 1;
+			else
+				hsCount <= 0;
+			end if;
 		end if;
 	end process;
 
-	clkEn <= '1' when ( clkCount = 0 ) or ( HighSpeed = '1' ) else '0';
+	clkEn <= '1' when ( HighSpeed = '0' and clkCount = 0 ) or ( HighSpeed = '1' and hsCount = 0 ) else '0';
 
 	wr_adrs_reg: process(n_wr)
 	begin
@@ -230,9 +292,26 @@ begin
 
         -- output data is MUXed externally based on CS so only need to
         -- drive 0 by default if dataOut is being ORed externally
-	dataOut <= dout   when regAddr = "000" else
-		   status when regAddr = "001" else
+	dataOut <= dout      when regAddr = "000" else
+		   status    when regAddr = "001" else
+		   dbg_state when regAddr = "101" else
+		   dbg_step  when regAddr = "110" else
+		   dbg_pins  when regAddr = "111" else
 		   x"00";
+
+	-- Diagnostics (read only), for working out why an initialisation does
+	-- not finish:
+	--   reg 5: current FSM state number (see state_code)
+	--   reg 6: state that follows the current command/response step; while
+	--          the FSM waits for a response this identifies the command
+	--          (cmd8 = waiting for the CMD0 response, cmd55 = CMD8, ...)
+	--   reg 7: b7 sdMISO (live), b6 sdCS, b5 sdSCLK, b4 SDHC card,
+	--          b3 sdCD (framework card detect, 1 = no card),
+	--          b2:0 init restarts since reset (saturating)
+	dbg_state <= state_code(state);
+	dbg_step  <= state_code(return_state);
+	dbg_pins  <= sdMISO & cs_sig & sclk_sig & sdhc & sdCD & retries;
+	sdCS <= cs_sig;
 
 	wr_dat_reg: process(n_wr)
 	begin
@@ -275,9 +354,18 @@ begin
 		if (n_reset='0') then
 			state <= rst;
 			sclk_sig <= '0';
-			sdCS <= '1';
+			cs_sig <= '1';
 			HighSpeed <= '0';
+			rsp_to <= (others => '0');
+			retries <= (others => '0');
 		elsif rising_edge(clk) and clkEn = '1' then
+
+			-- time how long a response takes while initialising
+			if (state = receive_byte_wait or state = receive_ocr_wait) and init_busy = '1' then
+				rsp_to <= rsp_to + 1;
+			else
+				rsp_to <= (others => '0');
+			end if;
 
 			case state is
 
@@ -291,14 +379,14 @@ begin
 					cmd_mode <= '1';	-- 0=data, 1=command
 					response_mode <= '1';	-- 0=data, 1=command
 					bit_counter := 160;
-					sdCS <= '1';
+					cs_sig <= '1';
 					state <= init;
 					init_busy <= '1';
 					block_start_ack <= '0';
 
 				when init =>		-- cs=1, send 80 clocks, cs=0
 					if (bit_counter = 0) then
-						sdCS <= '0';
+						cs_sig <= '0';
 						state <= cmd0;
 					else
 						bit_counter := bit_counter - 1;
@@ -540,6 +628,15 @@ begin
 				when others =>
 					state <= idle;
 			end case;
+
+			-- no response while initialising: start the init sequence over
+			if (state = receive_byte_wait or state = receive_ocr_wait)
+			   and init_busy = '1' and rsp_to = "111111111111111" then
+				state <= rst;
+				if retries /= "111" then
+					retries <= retries + 1;
+				end if;
+			end if;
 		end if;
 	end process;
 

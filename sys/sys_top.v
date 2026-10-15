@@ -129,11 +129,30 @@ wire SD_CS, SD_CLK, SD_MOSI, SD_MISO, SD_CD;
 
 `ifndef MISTER_DUAL_SDRAM
 	assign SD_CD       = mcp_en ? mcp_sdcd : SDCD_SPDIF;
-	assign SD_MISO     = SD_CD | (mcp_en ? SD_SPI_MISO : (VGA_EN | SDIO_DAT[0]));
-	assign SD_SPI_CS   = mcp_en ?  (mcp_sdcd  ? 1'bZ : SD_CS) : (sog & ~cs1 & ~VGA_EN) ? 1'b1 : 1'bZ;
-	assign SD_SPI_CLK  = (~mcp_en | mcp_sdcd) ? 1'bZ : SD_CLK;
-	assign SD_SPI_MOSI = (~mcp_en | mcp_sdcd) ? 1'bZ : SD_MOSI;
+	// MRZ80_SD_IGNORE_CD (local change, see MrZ80.qsf): do not let the card
+	// detect gate the secondary SD pins. The core still sees the real SD_CD.
+`ifdef MRZ80_SD_IGNORE_CD
+	wire sd_cd_g       = 1'b0;
+`else
+	wire sd_cd_g       = SD_CD;
+`endif
+`ifdef MRZ80_SD_FORCE
+	// MRZ80_SD_FORCE (local change): with no MCP23009 (mcp_en = 0) always put the
+	// SD signals on the SDIO pins and read MISO from SDIO_DAT[0], ignoring
+	// SW[2], SW[3], VGA_EN and the card detect. The analog video outputs that
+	// share these pins are lost.
+	assign SD_MISO     = sd_cd_g | (mcp_en ? SD_SPI_MISO : SDIO_DAT[0]);
+`else
+	assign SD_MISO     = sd_cd_g | (mcp_en ? SD_SPI_MISO : (VGA_EN | SDIO_DAT[0]));
+`endif
+	assign SD_SPI_CS   = mcp_en ?  (sd_cd_g  ? 1'bZ : SD_CS) : (sog & ~cs1 & ~VGA_EN) ? 1'b1 : 1'bZ;
+	assign SD_SPI_CLK  = (~mcp_en | sd_cd_g) ? 1'bZ : SD_CLK;
+	assign SD_SPI_MOSI = (~mcp_en | sd_cd_g) ? 1'bZ : SD_MOSI;
+`ifdef MRZ80_SD_FORCE
+	assign {SDIO_CLK,SDIO_CMD,SDIO_DAT} = mcp_en ? (av_dis ? 6'bZZZZZZ : {vga_g,vga_r,vga_b}) : {SD_CLK,SD_MOSI,SD_CS,3'bZZZ};
+`else
 	assign {SDIO_CLK,SDIO_CMD,SDIO_DAT} = av_dis ? 6'bZZZZZZ : (mcp_en | (SDCD_SPDIF & ~SW[2])) ? {vga_g,vga_r,vga_b} : {SD_CLK,SD_MOSI,SD_CS,3'bZZZ};
+`endif
 `else
 	assign SD_CD       = mcp_sdcd;
 	assign SD_MISO     = mcp_sdcd | SD_SPI_MISO;
