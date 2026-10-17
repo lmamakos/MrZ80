@@ -710,7 +710,7 @@ fpChainEnd :  entity work.Universal_Capture_Chain
 fpSubsys : entity work.FrontPanel_Subsystem
 	generic map (
 		NUM_LEDS   => 256,
-		CHAIN_BITS => 256,	-- total capture-chain bits (1..1024); LED maps can address any of them
+		CHAIN_BITS => 384,	-- total capture-chain bits (1..1024); LED maps can address any of them
 		SYS_CLK    => 50000000
 	)
 	port map (
