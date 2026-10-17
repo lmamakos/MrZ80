@@ -67,6 +67,18 @@ entity MicrocomputerZ80CPM is
 		-- string.
 		fpLED_serial	: out std_logic;
 
+		-- Front-panel profile file download (MiSTer OSD "FC5" file).
+		-- fp_dl_active is high for the whole download, fp_dl_we pulses
+		-- once per byte (byte on fp_dl_data). fp_profile_clear is a
+		-- one-clk pulse on a hard reset that discards the loaded file.
+		fp_dl_active	: in  std_logic := '0';
+		fp_dl_we		: in  std_logic := '0';
+		fp_dl_data		: in  std_logic_vector(7 downto 0) := (others => '0');
+		fp_profile_clear	: in  std_logic := '0';
+		-- OSD front-panel profile override: 0..7 = force that profile,
+		-- "1xxx" = none (Z-80 port $A7 selects). See FrontPanel_Subsystem.
+		fp_osd_profile	: in  std_logic_vector(3 downto 0) := "1111";
+
 		-- SDRAM client interface. The Z-80's logical address is
 		-- translated by the on-core MMU; any physical address that
 		-- does not fall inside the low 64 KB block-RAM region exits
@@ -134,6 +146,38 @@ architecture struct of MicrocomputerZ80CPM is
 	signal cpuDataOut				: std_logic_vector(7 downto 0);
 	signal cpuDataIn				: std_logic_vector(7 downto 0);
 	signal cpuDbgRegisters			: std_logic_vector(211 downto 0);
+
+	-- Symbolic names for the CPU debug register vector (REG of T80s).
+	-- Layout of cpuDbgRegisters (see T80.vhd), MSB first:
+	--   [211] IFF2  [210] IFF1  [209:208] interrupt mode
+	--   [207:192] IY   [191:176] HL'  [175:160] DE'  [159:144] BC'
+	--   [143:128] IX   [127:112] HL   [111:96]  DE   [95:80]   BC
+	--   [79:64]   PC   [63:48]   SP   [47:40] R  [39:32] I
+	--   [31:24] F'  [23:16] A'  [15:8] F  [7:0] A
+	-- (Primed = alternate register set; HL/DE/BC are always the CURRENT
+	-- set, T80 swaps the slots when EXX is executed.)
+	signal dbgReg_A					: std_logic_vector(7 downto 0);
+	signal dbgReg_F					: std_logic_vector(7 downto 0);
+	signal dbgReg_A_alt				: std_logic_vector(7 downto 0);
+	signal dbgReg_F_alt				: std_logic_vector(7 downto 0);
+	signal dbgReg_B					: std_logic_vector(7 downto 0);
+	signal dbgReg_C					: std_logic_vector(7 downto 0);
+	signal dbgReg_B_alt				: std_logic_vector(7 downto 0);
+	signal dbgReg_C_alt				: std_logic_vector(7 downto 0);
+	signal dbgReg_D					: std_logic_vector(7 downto 0);
+	signal dbgReg_E					: std_logic_vector(7 downto 0);
+	signal dbgReg_D_alt				: std_logic_vector(7 downto 0);
+	signal dbgReg_E_alt				: std_logic_vector(7 downto 0);
+	signal dbgReg_H					: std_logic_vector(7 downto 0);
+	signal dbgReg_L					: std_logic_vector(7 downto 0);
+	signal dbgReg_H_alt				: std_logic_vector(7 downto 0);
+	signal dbgReg_L_alt				: std_logic_vector(7 downto 0);
+	signal dbgReg_IX				: std_logic_vector(15 downto 0);
+	signal dbgReg_IY				: std_logic_vector(15 downto 0);
+	signal dbgReg_PC				: std_logic_vector(15 downto 0);
+	signal dbgReg_SP				: std_logic_vector(15 downto 0);
+
+	signal fpChainRegsOut			: std_logic;
 
 	signal basRomData				: std_logic_vector(7 downto 0);
 	signal internalRam1DataOut		: std_logic_vector(7 downto 0);
@@ -583,6 +627,29 @@ begin
 	end if;
 end process;
 
+-- CPU debug registers, split out of the T80s REG vector (see the layout
+-- at the cpuDbgRegisters declaration).
+dbgReg_A      <= cpuDbgRegisters(7 downto 0);
+dbgReg_F      <= cpuDbgRegisters(15 downto 8);
+dbgReg_A_alt  <= cpuDbgRegisters(23 downto 16);
+dbgReg_F_alt  <= cpuDbgRegisters(31 downto 24);
+dbgReg_B      <= cpuDbgRegisters(95 downto 88);
+dbgReg_C      <= cpuDbgRegisters(87 downto 80);
+dbgReg_B_alt  <= cpuDbgRegisters(159 downto 152);
+dbgReg_C_alt  <= cpuDbgRegisters(151 downto 144);
+dbgReg_D      <= cpuDbgRegisters(111 downto 104);
+dbgReg_E      <= cpuDbgRegisters(103 downto 96);
+dbgReg_D_alt  <= cpuDbgRegisters(175 downto 168);
+dbgReg_E_alt  <= cpuDbgRegisters(167 downto 160);
+dbgReg_H      <= cpuDbgRegisters(127 downto 120);
+dbgReg_L      <= cpuDbgRegisters(119 downto 112);
+dbgReg_H_alt  <= cpuDbgRegisters(191 downto 184);
+dbgReg_L_alt  <= cpuDbgRegisters(183 downto 176);
+dbgReg_IX     <= cpuDbgRegisters(143 downto 128);
+dbgReg_IY     <= cpuDbgRegisters(207 downto 192);
+dbgReg_PC     <= cpuDbgRegisters(79 downto 64);
+dbgReg_SP     <= cpuDbgRegisters(63 downto 48);
+
 -- **** LED 0 - 7
 -- 8-bit transparent capture chain sourced from the fpLatch register.
 fpChain : entity work.Transparent_Capture_Chain
@@ -594,9 +661,11 @@ fpChain : entity work.Transparent_Capture_Chain
 		reset         => not N_RESET,
 		latch         => fpChainLatch,
 		shift_en      => fpChainShiftEn,
+
 		combined_data => fpLatch,
+
 		chain_in      => fpChainStatic,
-		chain_out     => fpChainSerial
+		chain_out     => fpChainSerial    -- final output to FrontPanel_Subsystem
 	);
 
 -- **** LED 8 - 31
@@ -609,12 +678,43 @@ fpChainStaticTest : entity work.Transparent_Capture_Chain
 		reset         => not N_RESET,
 		latch         => fpChainLatch,
 		shift_en      => fpChainShiftEn,
+
 		combined_data => cpuAddress & cpuDataIn,
-		chain_in      => fpChainEndOut,
+
+		chain_in      => fpChainRegsOut,
 		chain_out     => fpChainStatic
 	);
 
--- **** LED 32 - 63
+-- **** LED 32 - 223
+-- All CPU registers, in LED order: A F A' F' B C B' C' D E D' E' H L H' L'
+-- IX IY PC SP (8-bit registers first, then the 16-bit ones; the first
+-- listed is the MSB, i.e. the first LED). Last link of the chain.
+fpChainRegs : entity work.Transparent_Capture_Chain
+	generic map (
+		TOTAL_WIDTH => 192
+	)
+	port map (
+		clk           => clk,
+		reset         => not N_RESET,
+		latch         => fpChainLatch,
+		shift_en      => fpChainShiftEn,
+
+		combined_data => dbgReg_A & dbgReg_F & dbgReg_A_alt & dbgReg_F_alt &
+			--       [32-39]    [40-47]    [48-55]        [56-63]
+		                 dbgReg_B & dbgReg_C & dbgReg_B_alt & dbgReg_C_alt &
+			--       [64-71]    [72-79]    [80-87]        [88-95]
+		                 dbgReg_D & dbgReg_E & dbgReg_D_alt & dbgReg_E_alt &
+			--       [96-103]   [104-111]  [112-119]      [120-127]
+		                 dbgReg_H & dbgReg_L & dbgReg_H_alt & dbgReg_L_alt &
+			--       [128-135]  [136-143]  [144-151]      [152-159]
+		                 dbgReg_IX & dbgReg_IY & dbgReg_PC & dbgReg_SP,
+			--       [160-175]  [176-191]  [192-207]      [208-223]
+
+		chain_in      => fpChainEndOut,
+		chain_out     => fpChainRegsOut
+	);
+  
+-- **** LED 224 - 255
 fpChainEnd :  entity work.Transparent_Capture_Chain
 	generic map (
 		TOTAL_WIDTH => 32
@@ -624,11 +724,13 @@ fpChainEnd :  entity work.Transparent_Capture_Chain
 		reset         => not N_RESET,
 		latch         => fpChainLatch,
 		shift_en      => fpChainShiftEn,
+
 		combined_data => x"000000" & fpLatch,
+
 		chain_in      => '0',
 		chain_out     => fpChainEndOut
 	);
-  
+
 -- Front-panel controller. The 8-port window lives at $A0..$A7 in the
 -- Z-80 I/O space (n_fpSubsysCS). NUM_LEDS is set to 64 for the initial
 -- bring-up so the entire string is reachable by the default identity
@@ -655,6 +757,12 @@ fpSubsys : entity work.FrontPanel_Subsystem
 		latch        => fpChainLatch,
 		shift_en     => fpChainShiftEn,
 		chain_in     => fpChainSerial,
+
+		fp_dl_active  => fp_dl_active,
+		fp_dl_we      => fp_dl_we,
+		fp_dl_data    => fp_dl_data,
+		profile_clear => fp_profile_clear,
+		osd_profile   => fp_osd_profile,
 
 		led_serial   => fpLED_serial
 	);

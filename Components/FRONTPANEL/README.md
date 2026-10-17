@@ -125,6 +125,12 @@
 >    capturing begins. No change to the 64-cycle `SHADOW_SHIFT` loop
 >    bound was needed.
 >
+> **Profiles (new):** 8 profiles of per-LED map and ON/OFF colours, a
+> profile-select register at `+7`, and a profile file loaded from the OSD
+> (`FC5`). See the Profiles section below. Verified with the GHDL testbench
+> `sim/tb_frontpanel.vhd` (`sim/run_frontpanel.sh`), which decodes the
+> WS2812 output and checks every LED. Not yet tested on hardware.
+>
 > All four VHDL files (`FP_RAM_Store`, `Transparent_Capture_Chain`,
 > `Universal_Capture_Chain`, `FrontPanel_Subsystem`) continue to analyze
 > and elaborate cleanly under GHDL VHDL-2008, and a full Quartus 17.0
@@ -208,9 +214,218 @@ three low address bits are a clean offset into the window.
 | +4     | R/W | Mode register (bit 0: 0 = mirror capture chain, 1 = framebuffer). |
 | +5     | R/W | Mapping-table entry at the global pointer. Both reads and writes auto-advance the pointer by 1. |
 | +6     | R/W | Framebuffer bit at the global pointer. Both reads and writes auto-advance the pointer. |
-| +7     | --  | Reserved (reads 0, writes ignored).                            |
+| +7     | R/W | Active profile number (low 3 bits, reads back 0..7, 0 at reset). See Profiles below. |
 
 The `+3`/`+5`/`+6` pointer auto-advance wraps at `NUM_LEDS` back to 0 rather than growing past it, so streaming exactly `NUM_LEDS` (or a multiple of it) accesses through any of those ports is always well-defined.
+
+## Profiles
+
+The subsystem holds **8 profiles**. A profile gives, for each of the 256
+physical LEDs:
+
+- the **map**: which capture-chain position drives the LED. Chain position
+  0 is the first bit shifted out of the capture chain (the MSB of the
+  first chain segment). This lets a different physical LED arrangement be
+  used without rearranging the capture chain.
+- the **ON** and **OFF** RGB colours.
+
+Brightness (`+0`), the mode register (`+4`) and the framebuffer (`+6`) are
+global, not per profile.
+
+- **Selecting:** write the profile number to port `+7`. It is 0 after every
+  reset. The profile is latched at the start of each refresh frame, so a
+  switch never produces a frame that mixes two profiles.
+- **OSD selection:** the OSD item **Front Panel Profile** (`Software`, `0`..`7`)
+  forces a profile onto the LEDs on the fly. It does not reset or stall the
+  CPU and software never sees it: port `+7` still reads back what the Z-80
+  wrote, and `+3`/`+5` writes still go to the Z-80's own selected profile
+  (so a program configuring a profile is unaffected by what the OSD is
+  displaying). `Software` (the default) means no override: the profile the
+  Z-80 selected through `+7` is displayed. The OSD value is sampled once
+  per refresh frame, so a change takes effect on the next frame (at worst
+  one frame still shows the old profile). The setting is part of the OSD
+  status, so it is saved by MiSTer and is not changed by resets.
+- **Defaults:** with no profile file, all 8 profiles are initialised to the
+  identity map (LED *n* shows chain position *n*), ON = `#FF0001` and
+  OFF = `#000009`. Profile 0 is therefore the same as before profiles
+  existed.
+- **Z-80 modification:** with a profile selected, the colour stream (`+3`)
+  and mapping (`+5`) ports read/write that profile. The changes stay in
+  that profile when another one is selected, and selecting it again shows
+  them. **Any reset** (including OSD Reset) re-initialises all 8 profiles
+  from the profile file, or from the defaults if none is loaded, so Z-80
+  modifications do not survive a reset.
+- **Profile file:** the OSD item **Front Panel Profiles** (config-string
+  `FC5`, extension `.FPP`) loads a file that initialises all 8 profiles. The
+  core is reset after the download, so the new profiles take effect
+  immediately. The loaded file stays in effect across OSD Resets and is
+  forgotten on a hard reset (the RESET button), like the boot ROM `.BIN`.
+  A file with a bad header or the wrong length is ignored (defaults used).
+  File indices 3 and 4 are reserved for future RAM-disk images; the profile
+  file is never written to SDRAM.
+- **Storage:** `FP_RAM_Store` keeps the working copy (`color_ram`,
+  `map_ram`: 2048 entries addressed by `{profile, led}`) plus a pristine
+  copy of the file (`pri_ram`) that is used to re-initialise the working
+  copy on every reset (about 2050 `clk` cycles; the first refresh waits for
+  it).
+
+### Profile file format
+
+All values are bytes; the file is exactly **14352 bytes**.
+
+| Offset | Size | Content |
+|--------|------|---------|
+| 0      | 4    | Magic `FPPF` (`46 50 50 46`) |
+| 4      | 1    | Version, `01` |
+| 5      | 1    | Number of profiles, `08` |
+| 6      | 2    | LEDs per profile, little endian, `00 01` (256) |
+| 8      | 8    | Reserved (ignored; the tool writes zeros) |
+| 16     | 8 x 256 x 7 | Profile 0 LED 0 ... LED 255, then profile 1, ... profile 7. Each record is `map, onR, onG, onB, offR, offG, offB`. |
+
+### Building a profile file: `tools/fpprofile.py`
+
+    python3 Components/FRONTPANEL/tools/fpprofile.py my.toml -o profiles.fpp
+    python3 Components/FRONTPANEL/tools/fpprofile.py --dump profiles.fpp
+
+The input is TOML (Python 3.11+). Profiles that are not mentioned get the
+defaults, as do LEDs that a profile does not override, so a file may
+describe any subset of the 8 profiles. `tools/example_profiles.toml` is an
+annotated example. Unknown keys, bad values and out-of-range numbers are
+reported as errors rather than ignored.
+
+Command line:
+
+| Argument | Meaning |
+|----------|---------|
+| `config` | TOML file to read. Omit it to produce an all-defaults file. |
+| `-o FILE`, `--output FILE` | Profile file to write (required when building). |
+| `--force` | Pad/truncate profiles that do not produce exactly 256 LEDs instead of failing. |
+| `--strict` | Treat warnings as errors (nothing is written). |
+| `--dump FILE` | Decode and summarise an existing profile file instead of building. |
+
+#### Configuration file reference
+
+Values written as *a* | *b* are the complete list of accepted choices.
+Values in the Default column apply when the key is omitted.
+
+**Colour values** (used by every `on`/`off` key): a string `"#RRGGBB"` or
+`"RRGGBB"` (hex, either case), or an array `[r, g, b]` of three integers
+0..255. Colours are R,G,B as you see them; the GRB reordering the LEDs need
+is done in hardware. Examples: `"#FF8000"`, `"FF8000"`, `[255, 128, 0]`.
+
+**`[defaults]`** (optional table): colours for every profile and LED that
+does not set its own.
+
+| Key | Values | Default |
+|-----|--------|---------|
+| `on` | colour | `#FF0001` (red) |
+| `off` | colour | `#000009` (dim blue) |
+
+**`[profile.N]`** (optional; `N` is 0, 1, 2, 3, 4, 5, 6 or 7; any other
+number is an error). All keys are optional.
+
+| Key | Values | Default |
+|-----|--------|---------|
+| `on` | colour for every LED of this profile when its chain bit is 1 | `[defaults]` `on` |
+| `off` | colour for every LED of this profile when its chain bit is 0 | `[defaults]` `off` |
+| `map` | array of exactly 256 integers, each 0..255. Entry *n* (counting from 0) is the chain position shown by physical LED *n*. | identity (LED *n* shows chain position *n*) |
+| `matrix` | sub-table, see below. Cannot be combined with `map`. | none |
+| `led` | array of per-LED override tables (`[[profile.N.led]]`), see below. Applied after `map`/`matrix`. | none |
+
+**`[profile.N.matrix]`**: computes `map` for an X by Y matrix. The chain
+order (how the capture chain enumerates the cells) and the strip order (how
+the string of LEDs is wired through the cells) are described separately;
+the resulting map sends each physical LED to the chain position of the cell
+it sits at. Rows are counted from the top, columns from the left.
+
+| Key | Values | Default |
+|-----|--------|---------|
+| `cols` | integer >= 1 (X: number of columns). **Required.** | |
+| `rows` | integer >= 1 (Y: number of rows). **Required.** | |
+| `chain_origin` | `"top-left"` \| `"top-right"` \| `"bottom-left"` \| `"bottom-right"`: the corner where the chain order starts | `"top-left"` |
+| `chain_major` | `"row"` \| `"column"`: `"row"` runs along a row first, then steps to the next row; `"column"` runs down a column first, then steps to the next column | `"row"` |
+| `chain_serpentine` | `true` \| `false`: `true` reverses direction on every second row/column (zig-zag), `false` restarts each from the same edge | `false` |
+| `strip_origin` | same choices as `chain_origin`: the corner where the LED string starts | `"top-left"` |
+| `strip_major` | same choices as `chain_major`: direction the LED string runs first | `"row"` |
+| `strip_serpentine` | `true` \| `false`, as `chain_serpentine`, for the LED string | `false` |
+
+**`chain_*` versus `strip_*`.** Both groups take the same three settings
+(origin corner, major direction, serpentine), but each describes a different
+walk across the cells of the matrix:
+
+- `chain_*` is the order of the *signals*. Cell *k* of the chain walk is the
+  cell that shows capture-chain bit *k*. It is how the displayed bits are
+  laid out on the panel (for example a register drawn in left-to-right rows
+  from the top-left), and has nothing to do with how the LEDs are wired.
+- `strip_*` is the order of the *wiring*. Cell *n* of the strip walk is
+  where the *n*-th LED of the string is mounted, i.e. how the data wire
+  snakes through the board.
+
+The tool puts physical LED *n* at cell *n* of the strip walk; that cell is
+cell *k* of the chain walk, so `map[n] = k`. Change `chain_*` to rearrange
+which signal appears where on the panel, and `strip_*` to match the board
+wiring. Identical settings give the identity map.
+
+Example, 4 columns x 3 rows, chain walk left default (chain bit shown in
+each cell):
+
+    chain bit            strip_origin="top-left", strip_major="row",
+     0  1  2  3          strip_serpentine=true: LED number in each cell
+     4  5  6  7           0  1  2  3      map = 0,1,2,3, 7,6,5,4, 8,9,10,11
+     8  9 10 11           7  6  5  4
+                          8  9 10 11
+
+                         strip_origin="bottom-left", strip_major="column",
+                         strip_serpentine=true:
+                          2  3  8  9      map = 8,4,0, 1,5,9, 10,6,2, 3,7,11
+                          1  4  7 10
+                          0  5  6 11
+
+Either way the panel still shows chain bit 0 at the top-left and bit 11 at
+the bottom-right; only the LED wiring differs.
+
+`cols` x `rows` should be 256. Any other size is an error (see `--force`
+below). If the chain and strip settings are identical the map is the
+identity. Origins and directions are always taken relative to the top-left
+of the picture, so `"bottom-left"` with `"column"` means "start at the
+bottom-left cell and run up the first column".
+
+**`[[profile.N.led]]`**: one table per LED to override; any number may be
+given.
+
+| Key | Values | Default |
+|-----|--------|---------|
+| `index` | integer 0..255: the physical LED to change | the table's position in the list (first = 0, second = 1, ...) |
+| `map` | integer 0..255: chain position this LED shows | unchanged |
+| `on` | colour | unchanged |
+| `off` | colour | unchanged |
+
+Colour precedence, highest first: `[[profile.N.led]]` `on`/`off`, then
+`[profile.N]` `on`/`off`, then `[defaults]`, then the built-in colours.
+Map precedence: `[[profile.N.led]]` `map`, then `matrix` or `map`, then the
+identity map.
+
+A profile whose geometry does not produce exactly 256 LEDs is an error and
+nothing is written, unless `--force` is given (the profile is then padded
+with identity-map LEDs, or truncated). Out-of-range map values are errors;
+chain positions used by more than one LED are warnings (`--strict` makes
+warnings errors). Unit tests: `cd Components/FRONTPANEL/tools && python3 -m unittest -v test_fpprofile`.
+
+## Current chain assignment (`MicrocomputerZ80CPM.vhd`)
+
+The 256 chain positions (identity-mapped LED numbers in profile 0) are:
+
+| Chain positions | Source |
+|-----------------|--------|
+| 0-7     | `fpLatch` (I/O port `$FF` style latch), MSB first |
+| 8-23    | Z-80 address bus A15..A0 |
+| 24-31   | Z-80 data bus (`cpuDataIn`) |
+| 32-63   | `fpLatch` again (zero-extended to 32 bits; test data) |
+| 64-255  | CPU registers from the T80s `REG` debug vector, MSB first, in this order: A, F, A', F', B, C, B', C', D, E, D', E', H, L, H', L' (8 bits each, positions 64-191), then IX, IY, PC, SP (16 bits each, positions 192-255) |
+
+The register vector is split into symbolic `dbgReg_*` signals in the
+architecture. B/C, D/E, H/L are always the *current* register set (the T80
+swaps them on EXX); the primed registers are the alternate set.
 
 ## Capture-chain variants
 

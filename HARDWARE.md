@@ -56,6 +56,11 @@ This matches the download path in `MultiComp.sv`:
 `DSK_IMAGE_SIZE = 0x0800000`, so the first RAM disk (slot 0) lands in the
 top 8 MB at `0x7800000`.
 
+OSD file indices (`ioctl_index[5:0]`): 1 = `.BIN` boot image (SDRAM at 0, or
+block RAM), 2 = `.DSK` RAM disk, 3 and 4 = reserved for larger RAM-disk
+images (SDRAM, same slot/base scheme as index 2), 5 = front-panel profile
+file (`FC5`; goes to `FrontPanel_Subsystem`, never to SDRAM).
+
 ## I/O port map (reference)
 
 A consolidated list of all I/O ports identified for use by this
@@ -514,7 +519,7 @@ shift accordingly.
 | `0xA4`| R/W | Mode register. Bit 0: 0 = mirror capture chain, 1 = framebuffer.                          |
 | `0xA5`| R/W | Mapping-table entry at the global pointer. Both reads and writes auto-advance the pointer.|
 | `0xA6`| R/W | Framebuffer bit at the global pointer. Both reads and writes auto-advance the pointer.    |
-| `0xA7`| --  | Reserved (reads 0, writes ignored).                                                       |
+| `0xA7`| R/W | Active profile number (low 3 bits, 0 at reset). Selects the profile whose map/colours `0xA3`/`0xA5` access and that drives the LEDs (latched per refresh frame). The OSD item "Front Panel Profile" can override the displayed profile without affecting this register. See `Components/FRONTPANEL/README.md`. |
 
 
 ## Custom CPU instructions

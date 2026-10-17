@@ -3320,3 +3320,54 @@ SPI clock after init = 50 MHz / (2 * HS_DIVIDER) = 6.25 MHz (1 = 25 MHz,
 2 = 12.5 MHz). The init clock is unchanged (250 kHz). `sim/tb_sd_controller.vhd`
 checks the data-phase clock period and has `HS_DIV` and `MISO_NS` (card/board
 output delay) generics; 7 of 7 configurations pass. Not yet tested on hardware.
+
+### Front-panel profiles (8 profiles, OSD profile file, port +7)
+
+`FrontPanel_Subsystem` now has 8 profiles, each holding a per-LED capture-chain
+map and ON/OFF colour (see `Components/FRONTPANEL/FEATURE.md` for the request and
+`Components/FRONTPANEL/README.md` for the user-facing description). Port `+7`
+selects the profile (0 at reset); the selection is latched at the start of each
+refresh frame. `FP_RAM_Store` widened `color_ram`/`map_ram` to 2048 entries
+(`{profile, led}`, all M10K) and gained a pristine copy `pri_ram` of the loaded
+profile file; every reset copies it (or the built-in defaults when no valid file is
+loaded) into the working RAMs, so Z-80 modifications are discarded on reset but
+persist across profile switches. The framebuffer, brightness and mode register
+stay global.
+
+New OSD item `FC5,FPP,Front Panel Profiles` (`MrZ80.sv`). The SDRAM download FSM
+used to run for every download regardless of index, which would have written a
+profile file over the boot image at SDRAM address 0; it now runs only for indices
+1-4 (`dl_to_sdram`). Indices 3 and 4 are reserved for future larger RAM-disk images
+and use the DSK-style top-of-SDRAM slot mapping. The profile file bytes go straight
+into `FrontPanel_Subsystem` (`fp_dl_*` ports), which validates the 16-byte header and
+the exact file length and sets a sticky `profile_loaded` flag; it survives OSD Reset
+and is cleared on the rising edge of a hard reset (`fp_profile_clear`), with a
+completing download taking priority, like `bin_loaded`.
+
+`Components/FRONTPANEL/tools/fpprofile.py` builds the file from a TOML description
+(per-LED map, or an X by Y matrix with row/column-major, serpentine or uniform
+chain order and strip wiring; refuses to write unless every profile has 256 LEDs,
+or `--force`). `sim/tb_frontpanel.vhd` (run with `sim/run_frontpanel.sh`) decodes the
+WS2812 output of the real subsystem and checks all 256 LEDs against a model for
+defaults, Z-80 modification persistence, mid-frame profile switch, file load, soft
+reset reload, hard reset, and invalid files (bad magic, truncated, too long, wrong
+profile count). Not yet tested on hardware.
+
+### Front-panel profile selectable from the OSD
+
+New OSD item `OGJ,Front Panel Profile,Software,0..7` (`status[19:16]`). It drives a new
+`osd_profile` input on `FrontPanel_Subsystem`; values 0..7 override the displayed profile,
+"Software" (default) leaves port `+7` in control. The value is sampled together with the
+profile latch at the start of each refresh frame, so there is no CPU reset, no stall and no
+handshake with the Z-80 (`status` is already on `clk_sys`). Port `+7` readback and the
+destination of `+3`/`+5` writes still follow the Z-80's own selection. `tb_frontpanel` T7
+covers override, retarget, interaction with Z-80 selects/edits, and return to software control.
+
+### CPU registers on the front-panel capture chain
+
+A new 192-bit `Transparent_Capture_Chain` (`fpChainRegs`, chain positions 64-255) is
+appended after `fpChainEnd` in `MicrocomputerZ80CPM.vhd`. It captures the T80s `REG` debug
+vector via symbolic `dbgReg_*` signals in the order A F A' F' B C B' C' D E D' E' H L H' L'
+IX IY PC SP, which fills the 256-LED string exactly. Bit offsets were checked against the
+concatenation in `T80.vhd`; whole-core GHDL sim and Quartus synthesis pass. Not yet tested
+on hardware.

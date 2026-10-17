@@ -28,13 +28,35 @@
 -- reorder happens only right before the PHY (see SCALE_BRIGHT below),
 -- so software never has to deal with the LEDs' GRB quirk.
 --
+-- Profiles: there are 8 profiles (selected through port +7). Each
+-- holds, for every physical LED, an ON colour, an OFF colour and the
+-- capture-chain bit index that drives it (the "map"). Brightness (+0),
+-- mode (+4) and the framebuffer (+6) are global, not per-profile. The
+-- Z-80 can modify the active profile's colours/map through +3/+5; the
+-- changes stay in that profile when another one is selected, and are
+-- discarded by the next reset (see below).
+--
+-- OSD override: the osd_profile input can force the displayed profile
+-- independently of the Z-80 (see its port comment); the Z-80's own
+-- selection (+7) and its colour/map edits are unaffected.
+--
+-- Profile file: a file chosen from the MiSTer OSD (see the fp_dl_*
+-- ports) holds the initial content of all 8 profiles; its format is
+-- documented in README.md (16-byte header "FPPF" ... then 8 x 256
+-- records of 7 bytes: map, onR, onG, onB, offR, offG, offB). A file
+-- with a bad header or wrong length is ignored. With no valid file,
+-- every profile is initialised to the defaults (identity map, red ON,
+-- dim blue OFF). profile_loaded is sticky across Z-80 resets and is
+-- cleared only by the profile_clear pulse (hard reset) or by the start
+-- of another download.
+--
 -- Reset behaviour: FP_RAM_Store re-initializes color_ram/map_ram/
--- fb_ram to known defaults (identity mapping, a visible default on/off
--- colour, framebuffer all off) every time reset is asserted, not just
+-- fb_ram (all 8 profiles, from the profile file or the defaults;
+-- framebuffer all off) every time reset is asserted, not just
 -- once at FPGA power-up, so the front panel comes up in a reproducible
--- state after every Z-80 reset. This takes NUM_LEDS clk cycles; the
--- Master Controller (see IDLE state below) waits for it to finish
--- before starting the first refresh.
+-- state after every Z-80 reset, with profile 0 selected. This takes
+-- ~2050 clk cycles; the Master Controller (see IDLE state below) waits
+-- for it to finish before starting the first refresh.
 --
 -- I/O register map (8 consecutive ports, aligned on a multiple-of-8
 -- boundary, decoded relative to the io_cs chip-select input that the
@@ -51,7 +73,10 @@
 --              auto-advances the pointer).
 --   +6   R/W  framebuffer bit at global_ptr (read or write
 --              auto-advances the pointer).
---   +7   --   reserved (reads 0, writes ignored)
+--   +7   R/W  active profile number (low 3 bits; reads back 0..7; resets
+--              to 0). Selects which profile's colours/map +3/+5 access
+--              and (latched at the start of each refresh frame) which
+--              profile drives the LEDs.
 --
 -- The pointer auto-advance on +3/+5/+6 wraps at NUM_LEDS back to 0
 -- (rather than growing past it), so streaming exactly NUM_LEDS (or an
@@ -95,6 +120,28 @@ entity FrontPanel_Subsystem is
         shift_en     : out std_logic;
         chain_in     : in  std_logic;
 
+        -- Profile file download (from the MiSTer OSD "FC5" file).
+        -- fp_dl_active is high for the whole download; fp_dl_we pulses
+        -- for each byte, with the byte on fp_dl_data (same cycle).
+        -- These are independent of `reset` (the core is held in reset
+        -- while a download runs).
+        fp_dl_active : in  std_logic := '0';
+        fp_dl_we     : in  std_logic := '0';
+        fp_dl_data   : in  std_logic_vector(7 downto 0) := (others => '0');
+        -- One-clk pulse on a hard reset: forget the loaded profile file
+        -- (revert to the built-in defaults). Not part of `reset`, so an
+        -- ordinary Z-80 reset keeps the loaded profiles.
+        profile_clear : in std_logic := '0';
+
+        -- OSD profile override. Values 0..7 force that profile onto the
+        -- LEDs; any value with bit 3 set ("1xxx", default) means "no
+        -- override": the Z-80's port +7 selection is displayed. Sampled
+        -- once per refresh frame, so changing it on the fly never stalls
+        -- or resets anything (at worst one frame is shown with the old
+        -- profile). It does not alter port +7 or where Z-80 colour/map
+        -- writes land (those always use the Z-80's own selection).
+        osd_profile  : in  std_logic_vector(3 downto 0) := "1111";
+
         -- Physical LED Output (WS2812/SK6812 single-wire)
         led_serial   : out std_logic
     );
@@ -128,6 +175,10 @@ architecture rtl of FrontPanel_Subsystem is
     signal global_bright : unsigned(7 downto 0) := x"80";
     signal fade_rate     : unsigned(7 downto 0) := x"08";
     signal mode_reg      : std_logic := '0';
+    -- Profile selected by the Z-80 (port +7) and the profile latched
+    -- for the refresh frame currently being sent to the LEDs.
+    signal profile_sel   : unsigned(2 downto 0) := (others => '0');
+    signal ctrl_profile  : unsigned(2 downto 0) := (others => '0');
     signal color_buf     : std_logic_vector(47 downto 0);
 
     -- Edge detection for the Z-80 bus strobes. `clk` runs far faster
@@ -157,6 +208,19 @@ architecture rtl of FrontPanel_Subsystem is
     -- is still running; the Master Controller waits for this before
     -- starting the first refresh (see IDLE state below).
     signal ram_init_done : std_logic;
+
+    -- Profile file download state (see download process below).
+    signal profile_loaded : std_logic := '0';
+    signal dl_active_d    : std_logic := '0';
+    signal dl_cnt         : integer range 0 to 16 := 0;   -- header bytes seen (saturates at 16)
+    signal dl_k           : integer range 0 to 6 := 0;    -- byte within the 7-byte record
+    signal dl_entry       : integer range 0 to 2048 := 0; -- records completed
+    signal dl_shift       : std_logic_vector(47 downto 0) := (others => '0');
+    signal dl_hdr_ok      : std_logic := '1';
+    signal dl_over        : std_logic := '0';
+    signal pri_we         : std_logic := '0';
+    signal pri_addr       : unsigned(10 downto 0) := (others => '0');
+    signal pri_data       : std_logic_vector(55 downto 0) := (others => '0');
 
     -- Master Controller State Machine
     type state_t is (IDLE, LATCH_ST, LATCH_WAIT, SHADOW_SHIFT, FETCH_MEM, WAIT_MEM, WAIT_MEM2, SCALE_BRIGHT, SEND_PHY);
@@ -189,10 +253,14 @@ begin
             clk => clk,
             reset => reset,
             init_done => ram_init_done,
+            profile_loaded => profile_loaded,
+            pri_we => pri_we, pri_addr => pri_addr, pri_data => pri_data,
+            profile_a => profile_sel,
             addr_a => global_ptr,
             we_color => we_col, we_map => we_map, we_fb => we_fb,
             din_color => color_buf, din_map => unsigned(din), din_fb => din(0),
             dout_map => dout_map, dout_fb => dout_fb,
+            profile_b => ctrl_profile,
             addr_b => ctrl_idx,
             dout_color_b => r_col_b, dout_map_b => r_map_b, dout_fb_b => r_fb_b
         );
@@ -243,6 +311,7 @@ begin
             global_bright <= x"40"; -- need to revisit this with real hardware
             fade_rate <= x"08";
             mode_reg <= '0';
+            profile_sel <= (others => '0');
             color_buf <= (others => '0');
             we_col <= '0';
             we_map <= '0';
@@ -299,7 +368,7 @@ begin
                     when "100" => mode_reg <= din(0);
                     when "101" => we_map <= '1'; pending_incr <= '1';
                     when "110" => we_fb  <= '1'; pending_incr <= '1';
-                    when others => null; -- +7 reserved
+                    when others => profile_sel <= unsigned(din(2 downto 0)); -- +7
                 end case;
             end if;
 
@@ -314,7 +383,8 @@ begin
                     when "100" => dout <= (0 => mode_reg, others => '0');
                     when "101" => dout <= std_logic_vector(dout_map);
                     when "110" => dout <= (0 => dout_fb, others => '0');
-                    when others => null; -- +3 (write-only) and +7 (reserved) read 0
+                    when "111" => dout <= "00000" & std_logic_vector(profile_sel);
+                    when others => null; -- +3 (write-only) reads 0
                 end case;
             end if;
 
@@ -332,6 +402,76 @@ begin
         end if;
     end process;
 
+    -- 2b. Profile file download. Collects the 7-byte records of the
+    -- profile file into 56-bit words for FP_RAM_Store's pristine RAM
+    -- and validates the file. Deliberately has NO reset: the core is
+    -- held in reset while a download runs, and profile_loaded must
+    -- survive ordinary (soft) resets.
+    --
+    -- File: 16-byte header, then 2048 records (8 profiles x 256 LEDs)
+    -- of 7 bytes each: map, onR, onG, onB, offR, offG, offB.
+    --   header bytes 0..7 = 'F','P','P','F', 0x01 (version),
+    --   0x08 (profiles), 0x00,0x01 (LEDs per profile = 256, little
+    --   endian); bytes 8..15 reserved (ignored). The file is accepted
+    --   (profile_loaded <= '1') at the end of the download only if the
+    --   header matches and exactly 16 + 2048*7 bytes were received.
+    process(clk)
+        variable hdr_expect : std_logic_vector(7 downto 0);
+        variable rec        : std_logic_vector(55 downto 0);
+    begin
+        if rising_edge(clk) then
+            pri_we      <= '0';
+            dl_active_d <= fp_dl_active;
+
+            if fp_dl_active = '1' and dl_active_d = '0' then
+                -- Start of a download: forget any previously loaded file.
+                dl_cnt <= 0; dl_k <= 0; dl_entry <= 0;
+                dl_hdr_ok <= '1'; dl_over <= '0';
+                profile_loaded <= '0';
+            elsif fp_dl_active = '1' then
+                if fp_dl_we = '1' then
+                    if dl_cnt < 16 then
+                        case dl_cnt is
+                            when 0 | 3  => hdr_expect := x"46"; -- 'F'
+                            when 1 | 2  => hdr_expect := x"50"; -- 'P'
+                            when 4      => hdr_expect := x"01"; -- version
+                            when 5      => hdr_expect := x"08"; -- profiles
+                            when 6      => hdr_expect := x"00"; -- LEDs lo
+                            when 7      => hdr_expect := x"01"; -- LEDs hi
+                            when others => hdr_expect := fp_dl_data; -- reserved
+                        end case;
+                        if fp_dl_data /= hdr_expect then dl_hdr_ok <= '0'; end if;
+                        dl_cnt <= dl_cnt + 1;
+                    elsif dl_entry >= 2048 then
+                        dl_over <= '1';
+                    else
+                        rec := dl_shift & fp_dl_data;
+                        dl_shift <= rec(47 downto 0);
+                        if dl_k = 6 then
+                            pri_we   <= '1';
+                            pri_addr <= to_unsigned(dl_entry, 11);
+                            pri_data <= rec;
+                            dl_k     <= 0;
+                            dl_entry <= dl_entry + 1;
+                        else
+                            dl_k <= dl_k + 1;
+                        end if;
+                    end if;
+                end if;
+            elsif dl_active_d = '1' then
+                -- End of download: accept only a complete, valid file.
+                if dl_hdr_ok = '1' and dl_over = '0' and dl_cnt = 16
+                   and dl_k = 0 and dl_entry = 2048 then
+                    profile_loaded <= '1';
+                else
+                    profile_loaded <= '0';
+                end if;
+            elsif profile_clear = '1' then
+                profile_loaded <= '0';
+            end if;
+        end if;
+    end process;
+
     -- 3. Master Controller
     process(clk, reset)
         -- Mirror-chain vs framebuffer select, computed locally so it's
@@ -345,6 +485,7 @@ begin
             state       <= IDLE;
             bit_counter <= 0;
             ctrl_idx    <= (others => '0');
+            ctrl_profile <= (others => '0');
             shadow_reg  <= (others => '0');
             final_rgb   <= (others => '0');
             latch       <= '0';
@@ -360,6 +501,13 @@ begin
                     -- the very first refresh after reset only ever
                     -- sees fully-initialized RAM content.
                     if refresh_tick = '1' and ram_init_done = '1' then
+                        -- Freeze the profile for this whole frame so a
+                        -- Z-80 profile switch can't mix two profiles.
+                        if osd_profile(3) = '0' then
+                            ctrl_profile <= unsigned(osd_profile(2 downto 0));
+                        else
+                            ctrl_profile <= profile_sel;
+                        end if;
                         state <= LATCH_ST; bit_counter <= 0;
                     end if;
 

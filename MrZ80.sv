@@ -377,6 +377,9 @@ parameter CONF_STR = {
 	"MrZ80;;",
 	"FC1,BINROM,Boot Rom Image;",                     // index 1: boot ROM image -> SDRAM @ 0x000000 (or block RAM if OD set)
 	"FC2,DSK,8MB Disk Image;",                        // index 2: RAM-disk image -> SDRAM, top 8 MB first
+	                                                  // indices 3,4: reserved for larger RAM-disk images (SDRAM, DSK-style slots)
+	"FC5,FPP,Front Panel Profiles;",                  // index 5: front-panel LED profiles -> FrontPanel_Subsystem (not SDRAM)
+	"OGJ,Front Panel Profile,Software,0,1,2,3,4,5,6,7;", // status[19:16]: 0=Z-80 selects (port $A7), 1..8 = force profile 0..7 on the fly
 	"OD,Boot Load Target,SDRAM,Block RAM;",          // status[13]: 0=BIN->SDRAM (default), 1=BIN->block RAM (debug, manual load only; NOT valid with "FC" auto-load)
 	"-;",
 	"S,IMG,SD card image;",
@@ -396,6 +399,7 @@ parameter CONF_STR = {
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
 // X     XXXXXXX XX     (bit 0 = Reset via "R0"; bit 14 = Flow Control only)
+// bits 16-19 = Front Panel Profile ("OGJ"): 0 = Software, 1..8 = profile 0..7
    
 //////////////////   HPS I/O   ///////////////////
 wire  [1:0] buttons;
@@ -795,8 +799,24 @@ localparam [26:0] DSK_IMAGE_SIZE = 27'h0800000;          //   8 MB
 //        ioctl_index[5:0] = index(explicit or auto)
 //        ioctl_index[7:6] = extension index   
 
+//
+// File index map:
+//   1       .BIN boot image               -> SDRAM @ 0 (or block RAM)
+//   2,3,4   RAM-disk style images         -> SDRAM, top-of-memory slots
+//           (2 = "FC2" DSK; 3 and 4 are RESERVED for the contemplated
+//           larger RAM-disk work. They use the same slot-from-
+//           ioctl_index[15:6] base as index 2, so they never touch the
+//           boot image; that work must choose its own slot/base so it
+//           does not collide with a DSK loaded at index 2, and will
+//           probably need to revisit DSK_IMAGE_SIZE.)
+//   5       front-panel profile file      -> FrontPanel_Subsystem; NEVER
+//           written to SDRAM (the SDRAM download FSM below ignores it)
 wire        dl_is_bin  = (ioctl_index[5:0] == 6'd1);
-wire        dl_is_dsk  = (ioctl_index[5:0] == 6'd2);
+wire        dl_is_dsk  = (ioctl_index[5:0] >= 6'd2) && (ioctl_index[5:0] <= 6'd4);
+wire        dl_is_fpp  = (ioctl_index[5:0] == 6'd5);
+// Downloads that are written to SDRAM (BIN + DSK-style); everything else
+// (e.g. the profile file) must leave the SDRAM download FSM idle.
+wire        dl_to_sdram = ioctl_download & (dl_is_bin | dl_is_dsk);
 wire [9:0]  dl_dsk_slot = ioctl_index[15:6];             // 0 = first DSK
 // base = 128MB - (slot+1)*8MB  -> first DSK at 0x7800000 (top 8 MB)
 wire [26:0] dl_dsk_base = SDRAM_TOP - ((dl_dsk_slot + 1'b1) * DSK_IMAGE_SIZE);
@@ -865,8 +885,10 @@ reg  [7:0]  dl_din_r   = 8'h00;
 reg         dl_busy    = 1'b0;
 reg  [3:0]  dl_cool    = 4'd0;
 always @(posedge clk_sys) begin
-	if (!ioctl_download || dl_to_bram) begin
-		// Idle the SDRAM download FSM during block-RAM-targeted loads.
+	if (!dl_to_sdram || dl_to_bram) begin
+		// Idle the SDRAM download FSM during block-RAM-targeted loads
+		// and during downloads that don't target SDRAM at all (profile
+		// file): dl_we/dl_busy stay low, so ioctl_wait is never asserted.
 		dl_we   <= 1'b0;
 		dl_busy <= 1'b0;
 		dl_cool <= 4'd0;
@@ -923,6 +945,21 @@ assign sdram_we_mux    = ioctl_download ? dl_we     : z80_sdram_we;
 assign sdram_rd_mux    = ioctl_download ? 1'b0      : z80_sdram_rd;
 
 
+// Front-panel profile file (index 5). The bytes go straight into
+// FrontPanel_Subsystem (single-cycle writes, so no ioctl_wait needed).
+// fp_profile_clear: one clk_sys pulse on the rising edge of a HARD reset
+// (RESET / user button, not OSD Reset) discards the loaded profile file,
+// like bin_loaded; a download completing in the same window wins (that
+// priority is implemented inside FrontPanel_Subsystem).
+wire        fp_dl_active     = ioctl_download & dl_is_fpp;
+wire        fp_dl_we         = ioctl_wr & dl_is_fpp;
+wire        fp_profile_clear = hard_reset_req & ~hard_reset_d;
+// OSD profile override (status[19:16]): 0 = "Software" -> no override
+// (4'hF); 1..8 -> profile 0..7. Takes effect at the next LED refresh frame;
+// no CPU reset, no handshake with the Z-80. Anything else = no override.
+wire  [3:0] fp_osd_profile = (status[19:16] >= 4'd1 && status[19:16] <= 4'd8)
+                             ? (status[19:16] - 4'd1) : 4'hF;
+
 MicrocomputerZ80CPM MicrocomputerZ80CPM
 (
     .N_RESET(~reset),
@@ -949,6 +986,11 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
     .rts1(serial_rts),
     .cts1(serial_cts),
     .fpLED_serial(fpLED_serial),
+    .fp_dl_active(fp_dl_active),
+    .fp_dl_we(fp_dl_we),
+    .fp_dl_data(ioctl_dout),
+    .fp_profile_clear(fp_profile_clear),
+    .fp_osd_profile(fp_osd_profile),
     .sdram_addr (z80_sdram_addr),
     .sdram_din  (z80_sdram_din),
     .sdram_we   (z80_sdram_we),

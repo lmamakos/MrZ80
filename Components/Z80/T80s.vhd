@@ -160,7 +160,8 @@ begin
 			DO => DO,
 			MC => MCycle,
 			TS => TState,
-			IntCycle_n => IntCycle_n);
+			IntCycle_n => IntCycle_n,
+			REG => REG);
 
 	process (RESET_n, CLK_n)
 	begin
