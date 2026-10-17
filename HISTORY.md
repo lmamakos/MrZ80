@@ -3394,3 +3394,16 @@ so choosing among bootable images needs no special case compiled into the core.
   `behav_ram_rom.vhd`.
 - The `ROMS/Z80/` files and the monitor sources are left in the repository, unused.
 - Known: `MrZ80.qsf` references `output_files/status13-stp1.stp`, which is not present.
+
+### Capture chain longer than 256 bits (CHAIN_BITS up to 1024)
+
+`FrontPanel_Subsystem` gained a `CHAIN_BITS` generic (1..1024, default 256). The LED string
+stays 256 LEDs, but profile maps may now select any chain bit, so profiles can show different
+parts of a long chain. `shadow_reg`/the capture loop are `CHAIN_BITS` long; map RAM entries are
+8/9/10 bits wide as needed (`MAP_W`); a map value beyond the chain shows OFF. The Z-80 reaches
+map bits 9:8 via port `+1`, which replaces the inert fade-rate register (write = high bits for
+`+5` writes, read = high bits of the entry at the pointer). The profile file is now version 2
+with 8-byte records (16-bit map; 16400 bytes); the hardware rejects version 1 files, and
+`fpprofile.py` writes version 2 (and can still `--dump` v1), adds `chain_offset` for matrices
+and `--chain-bits`. `tb_frontpanel` takes a `CB` generic (`sim/run_frontpanel.sh [dir] [chain_bits]`)
+and was run at 256 and 600 bits. Framebuffer mode remains 256 bits.

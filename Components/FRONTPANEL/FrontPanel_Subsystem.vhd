@@ -10,9 +10,8 @@
 -- colour or "off" colour, scaled by the global brightness register,
 -- selected by the mapped chain bit (or framebuffer bit) for that LED
 -- -- an instant on/off switch, with no gradual fade *between* the two
--- colours (the fade-rate (+1) register is stored/readable for
--- software compatibility but has no effect; it is reserved for
--- reintroduction once basic output is confirmed on hardware). The
+-- colours (the former fade-rate register at +1 has been repurposed as
+-- the map-high register, so there is currently no fade). The
 -- mapping table (+5) and framebuffer (+4/+6) are unchanged and fully
 -- functional, and the global-brightness (+0) register is fully active
 -- (see the SCALE_BRIGHT state below). See REQUIREMENTS.md / HISTORY.md
@@ -36,6 +35,19 @@
 -- changes stay in that profile when another one is selected, and are
 -- discarded by the next reset (see below).
 --
+-- Capture chain length: CHAIN_BITS (1..1024, default 256) is the total
+-- number of bits in the capture chain. Only NUM_LEDS (256) LEDs exist,
+-- so a profile's per-LED map selects which of the CHAIN_BITS chain bits
+-- each LED displays; different profiles can show different parts of a
+-- chain longer than the LED string. A map value >= CHAIN_BITS shows the
+-- LED's OFF colour. Chain position 0 is the first bit shifted out of the
+-- chain. The framebuffer mode (+4 bit 0 = 1) is still one bit per LED
+-- (max NUM_LEDS).
+--
+-- Map entries are 8 bits for CHAIN_BITS <= 256 and up to 10 bits above
+-- that. Port +5 carries the low 8 bits; the Z-80 reaches bits 9:8 through
+-- port +1 (see the register map).
+--
 -- OSD override: the osd_profile input can force the displayed profile
 -- independently of the Z-80 (see its port comment); the Z-80's own
 -- selection (+7) and its colour/map edits are unaffected.
@@ -43,7 +55,7 @@
 -- Profile file: a file chosen from the MiSTer OSD (see the fp_dl_*
 -- ports) holds the initial content of all 8 profiles; its format is
 -- documented in README.md (16-byte header "FPPF" ... then 8 x 256
--- records of 7 bytes: map, onR, onG, onB, offR, offG, offB). A file
+-- records of 8 bytes: map lo, map hi, onR, onG, onB, offR, offG, offB). A file
 -- with a bad header or wrong length is ignored. With no valid file,
 -- every profile is initialised to the defaults (identity map, red ON,
 -- dim blue OFF). profile_loaded is sticky across Z-80 resets and is
@@ -64,7 +76,11 @@
 --   +0   R/W  global brightness (0..255, 8-bit linear scale applied to
 --              every channel of whichever colour -- on or off -- is
 --              selected for display; see SCALE_BRIGHT below).
---   +1   R/W  fade rate -- stored, currently unused (reserved)
+--   +1   R/W  write: "map high" -- bits 1:0 are map bits 9:8 for
+--              subsequent +5 writes (sticky; reset to 0; ignored if
+--              CHAIN_BITS <= 256). read: map bits 9:8 of the entry at
+--              global_ptr (read it BEFORE the +5 read, which advances
+--              the pointer). Replaces the old, inert fade-rate register.
 --   +2   R/W  global pointer (LED index for +3, +5, +6)
 --   +3   W    colour stream: 6 bytes per LED (on-R, on-G, on-B,
 --                    off-R, off-G, off-B); auto-advances pointer.
@@ -95,8 +111,9 @@ use ieee.numeric_std.all;
 
 entity FrontPanel_Subsystem is
     generic (
-        NUM_LEDS : integer := 256;
-        SYS_CLK  : integer := 50000000 -- 50MHz default
+        NUM_LEDS   : integer := 256;
+        CHAIN_BITS : integer range 1 to 1024 := 256;  -- capture chain length
+        SYS_CLK    : integer := 50000000 -- 50MHz default
     );
     port (
         clk          : in  std_logic;
@@ -148,6 +165,16 @@ entity FrontPanel_Subsystem is
 end entity;
 
 architecture rtl of FrontPanel_Subsystem is
+    -- Width of a map entry: 8 bits up to a 256-bit chain, else 9/10.
+    function map_width(n : integer) return integer is
+    begin
+        if n <= 256 then return 8;
+        elsif n <= 512 then return 9;
+        else return 10;
+        end if;
+    end function;
+    constant MAP_W : integer := map_width(CHAIN_BITS);
+
     -- -----------------------------------------------------------------
     -- PHY timing constants derived from SYS_CLK. WS2812/SK6812 use a
     -- 1.25 us bit period (800 kHz); within each bit period the line is
@@ -173,7 +200,9 @@ architecture rtl of FrontPanel_Subsystem is
     signal global_ptr_next : unsigned(7 downto 0);
     signal sub_ptr       : integer range 0 to 5 := 0;
     signal global_bright : unsigned(7 downto 0) := x"80";
-    signal fade_rate     : unsigned(7 downto 0) := x"08";
+    signal map_hi_wr     : unsigned(1 downto 0) := (others => '0');
+    signal map_wr10      : unsigned(9 downto 0);
+    signal dout_map_pad  : unsigned(9 downto 0);
     signal mode_reg      : std_logic := '0';
     -- Profile selected by the Z-80 (port +7) and the profile latched
     -- for the refresh frame currently being sent to the LEDs.
@@ -198,11 +227,11 @@ architecture rtl of FrontPanel_Subsystem is
     -- statement below for why this can't just do
     -- "global_ptr <= global_ptr_next" directly).
     signal pending_incr : std_logic := '0';
-    signal dout_map : unsigned(7 downto 0);
+    signal dout_map : unsigned(MAP_W-1 downto 0);
     signal dout_fb  : std_logic;
     signal ctrl_idx : unsigned(7 downto 0) := (others => '0');
     signal r_col_b  : std_logic_vector(47 downto 0);
-    signal r_map_b  : unsigned(7 downto 0);
+    signal r_map_b  : unsigned(MAP_W-1 downto 0);
     signal r_fb_b   : std_logic;
     -- '0' while FP_RAM_Store's post-reset RAM initialization sequence
     -- is still running; the Master Controller waits for this before
@@ -213,21 +242,21 @@ architecture rtl of FrontPanel_Subsystem is
     signal profile_loaded : std_logic := '0';
     signal dl_active_d    : std_logic := '0';
     signal dl_cnt         : integer range 0 to 16 := 0;   -- header bytes seen (saturates at 16)
-    signal dl_k           : integer range 0 to 6 := 0;    -- byte within the 7-byte record
+    signal dl_k           : integer range 0 to 7 := 0;    -- byte within the 8-byte record
     signal dl_entry       : integer range 0 to 2048 := 0; -- records completed
-    signal dl_shift       : std_logic_vector(47 downto 0) := (others => '0');
+    signal dl_shift       : std_logic_vector(55 downto 0) := (others => '0');
     signal dl_hdr_ok      : std_logic := '1';
     signal dl_over        : std_logic := '0';
     signal pri_we         : std_logic := '0';
     signal pri_addr       : unsigned(10 downto 0) := (others => '0');
-    signal pri_data       : std_logic_vector(55 downto 0) := (others => '0');
+    signal pri_data       : std_logic_vector(63 downto 0) := (others => '0');
 
     -- Master Controller State Machine
     type state_t is (IDLE, LATCH_ST, LATCH_WAIT, SHADOW_SHIFT, FETCH_MEM, WAIT_MEM, WAIT_MEM2, SCALE_BRIGHT, SEND_PHY);
     signal state : state_t := IDLE;
 
-    signal bit_counter : integer range 0 to NUM_LEDS-1 := 0;
-    signal shadow_reg  : std_logic_vector(NUM_LEDS-1 downto 0);
+    signal bit_counter : integer range 0 to CHAIN_BITS-1 := 0;
+    signal shadow_reg  : std_logic_vector(CHAIN_BITS-1 downto 0);
 
     -- Colour selected for the LED currently at ctrl_idx: r_col_b's
     -- "on" half or "off" half, verbatim, in the R,G,B byte order it's
@@ -248,7 +277,7 @@ architecture rtl of FrontPanel_Subsystem is
 begin
     -- 1. RAM Store Instance
     U_RAM : entity work.FP_RAM_Store
-        generic map (NUM_LEDS => NUM_LEDS)
+        generic map (NUM_LEDS => NUM_LEDS, MAP_W => MAP_W)
         port map (
             clk => clk,
             reset => reset,
@@ -258,7 +287,7 @@ begin
             profile_a => profile_sel,
             addr_a => global_ptr,
             we_color => we_col, we_map => we_map, we_fb => we_fb,
-            din_color => color_buf, din_map => unsigned(din), din_fb => din(0),
+            din_color => color_buf, din_map => map_wr10(MAP_W-1 downto 0), din_fb => din(0),
             dout_map => dout_map, dout_fb => dout_fb,
             profile_b => ctrl_profile,
             addr_b => ctrl_idx,
@@ -268,6 +297,11 @@ begin
     -- Bus-cycle-active levels, sampled combinationally every clk edge.
     write_active <= '1' when (io_cs = '1' and iorq_n = '0' and wr_n = '0') else '0';
     read_active  <= '1' when (io_cs = '1' and iorq_n = '0' and rd_n = '0') else '0';
+
+    -- Map entry being written through +5: {map_hi_wr, din}, truncated to
+    -- MAP_W bits at the RAM. Map entry read back as 10 bits (zero padded).
+    map_wr10     <= map_hi_wr & unsigned(din);
+    dout_map_pad <= resize(dout_map, 10);
 
     -- global_ptr's auto-increment target, wrapped at NUM_LEDS (see
     -- signal declaration above for why).
@@ -309,7 +343,7 @@ begin
             global_ptr <= (others => '0');
             sub_ptr <= 0;
             global_bright <= x"40"; -- need to revisit this with real hardware
-            fade_rate <= x"08";
+            map_hi_wr <= (others => '0');
             mode_reg <= '0';
             profile_sel <= (others => '0');
             color_buf <= (others => '0');
@@ -358,7 +392,7 @@ begin
             if wr_pulse = '1' then
                 case addr(2 downto 0) is
                     when "000" => global_bright <= unsigned(din);
-                    when "001" => fade_rate <= unsigned(din);
+                    when "001" => map_hi_wr <= unsigned(din(1 downto 0));
                     when "010" => global_ptr <= unsigned(din); sub_ptr <= 0;
                     when "011" =>
                         color_buf <= color_buf(39 downto 0) & din;
@@ -378,10 +412,10 @@ begin
             if read_active = '1' then
                 case addr(2 downto 0) is
                     when "000" => dout <= std_logic_vector(global_bright);
-                    when "001" => dout <= std_logic_vector(fade_rate);
+                    when "001" => dout <= "000000" & std_logic_vector(dout_map_pad(9 downto 8));
                     when "010" => dout <= std_logic_vector(global_ptr);
                     when "100" => dout <= (0 => mode_reg, others => '0');
-                    when "101" => dout <= std_logic_vector(dout_map);
+                    when "101" => dout <= std_logic_vector(dout_map_pad(7 downto 0));
                     when "110" => dout <= (0 => dout_fb, others => '0');
                     when "111" => dout <= "00000" & std_logic_vector(profile_sel);
                     when others => null; -- +3 (write-only) reads 0
@@ -402,22 +436,22 @@ begin
         end if;
     end process;
 
-    -- 2b. Profile file download. Collects the 7-byte records of the
-    -- profile file into 56-bit words for FP_RAM_Store's pristine RAM
+    -- 2b. Profile file download. Collects the 8-byte records of the
+    -- profile file into 64-bit words for FP_RAM_Store's pristine RAM
     -- and validates the file. Deliberately has NO reset: the core is
     -- held in reset while a download runs, and profile_loaded must
     -- survive ordinary (soft) resets.
     --
     -- File: 16-byte header, then 2048 records (8 profiles x 256 LEDs)
-    -- of 7 bytes each: map, onR, onG, onB, offR, offG, offB.
-    --   header bytes 0..7 = 'F','P','P','F', 0x01 (version),
+    -- of 8 bytes each: map lo, map hi, onR, onG, onB, offR, offG, offB.
+    --   header bytes 0..7 = 'F','P','P','F', 0x02 (version),
     --   0x08 (profiles), 0x00,0x01 (LEDs per profile = 256, little
     --   endian); bytes 8..15 reserved (ignored). The file is accepted
     --   (profile_loaded <= '1') at the end of the download only if the
-    --   header matches and exactly 16 + 2048*7 bytes were received.
+    --   header matches and exactly 16 + 2048*8 bytes were received.
     process(clk)
         variable hdr_expect : std_logic_vector(7 downto 0);
-        variable rec        : std_logic_vector(55 downto 0);
+        variable rec        : std_logic_vector(63 downto 0);
     begin
         if rising_edge(clk) then
             pri_we      <= '0';
@@ -434,7 +468,7 @@ begin
                         case dl_cnt is
                             when 0 | 3  => hdr_expect := x"46"; -- 'F'
                             when 1 | 2  => hdr_expect := x"50"; -- 'P'
-                            when 4      => hdr_expect := x"01"; -- version
+                            when 4      => hdr_expect := x"02"; -- version
                             when 5      => hdr_expect := x"08"; -- profiles
                             when 6      => hdr_expect := x"00"; -- LEDs lo
                             when 7      => hdr_expect := x"01"; -- LEDs hi
@@ -446,8 +480,8 @@ begin
                         dl_over <= '1';
                     else
                         rec := dl_shift & fp_dl_data;
-                        dl_shift <= rec(47 downto 0);
-                        if dl_k = 6 then
+                        dl_shift <= rec(55 downto 0);
+                        if dl_k = 7 then
                             pri_we   <= '1';
                             pri_addr <= to_unsigned(dl_entry, 11);
                             pri_data <= rec;
@@ -544,8 +578,8 @@ begin
 
                 when SHADOW_SHIFT =>
                     shift_en <= '1';
-                    shadow_reg <= chain_in & shadow_reg(NUM_LEDS-1 downto 1);
-                    if bit_counter = NUM_LEDS-1 then
+                    shadow_reg <= chain_in & shadow_reg(CHAIN_BITS-1 downto 1);
+                    if bit_counter = CHAIN_BITS-1 then
                         ctrl_idx <= (others => '0'); state <= FETCH_MEM;
                     else bit_counter <= bit_counter + 1; end if;
 
@@ -568,7 +602,12 @@ begin
                     -- scaling and GRB reordering in SCALE_BRIGHT below.
                     -- No fade ramp/interpolation between on and off.
                     if mode_reg = '0' then
-                      want_on := shadow_reg(to_integer(r_map_b));
+                      -- A map value beyond the chain shows OFF.
+                      if to_integer(r_map_b) < CHAIN_BITS then
+                        want_on := shadow_reg(to_integer(r_map_b));
+                      else
+                        want_on := '0';
+                      end if;
                     else
                       want_on := r_fb_b;
                     end if;

@@ -81,13 +81,13 @@ class Build(unittest.TestCase):
     def test_file_size_and_header(self):
         profiles, _, _ = build({})
         data = fp.encode(profiles)
-        self.assertEqual(len(data), 14352)
-        self.assertEqual(data[:16], b"FPPF\x01\x08\x00\x01" + bytes(8))
+        self.assertEqual(len(data), 16400)
+        self.assertEqual(data[:16], b"FPPF\x02\x08\x00\x01" + bytes(8))
         # record 0: identity map, on FF0001, off 000009
-        self.assertEqual(data[16:23], bytes([0, 0xFF, 0x00, 0x01, 0x00, 0x00, 0x09]))
+        self.assertEqual(data[16:24], bytes([0, 0, 0xFF, 0x00, 0x01, 0x00, 0x00, 0x09]))
         # record 255 of profile 7
-        o = 16 + (7 * 256 + 255) * 7
-        self.assertEqual(data[o:o + 7], bytes([255, 0xFF, 0x00, 0x01, 0x00, 0x00, 0x09]))
+        o = 16 + (7 * 256 + 255) * 8
+        self.assertEqual(data[o:o + 8], bytes([255, 0, 0xFF, 0x00, 0x01, 0x00, 0x00, 0x09]))
 
     def test_roundtrip(self):
         profiles, _, _ = build({"profile": {"3": {"on": "#102030", "map": list(reversed(range(256)))}}})
@@ -124,7 +124,7 @@ class Build(unittest.TestCase):
         cfg = {"profile": {"0": {"matrix": {"cols": 20, "rows": 20}}}}
         profiles, w, e = build(cfg, force=True)
         self.assertEqual(e, [])
-        self.assertTrue(all(0 <= v < 256 for v in profiles[0]["map"]))
+        self.assertTrue(all(0 <= v < 1024 for v in profiles[0]["map"]))
 
     def test_map_list_wrong_length(self):
         _, _, e = build({"profile": {"0": {"map": [0, 1, 2]}}})
@@ -134,7 +134,7 @@ class Build(unittest.TestCase):
 
     def test_map_out_of_range(self):
         m = list(range(256))
-        m[10] = 300
+        m[10] = 5000
         _, _, e = build({"profile": {"0": {"map": m}}})
         self.assertTrue(any("out of range" in x for x in e))
 
@@ -176,6 +176,51 @@ class Build(unittest.TestCase):
                 with self.assertRaises(fp.ConfigError):
                     build(cfg)
 
+    def test_large_map_values_roundtrip(self):
+        m = list(range(256))
+        m[0], m[1], m[2] = 1023, 256, 511
+        profiles, w, e = build({"profile": {"1": {"map": m}}})
+        self.assertEqual(e, [])
+        again = fp.decode(fp.encode(profiles))
+        self.assertEqual(again[1]["map"][:3], [1023, 256, 511])
+        data = fp.encode(profiles)
+        o = 16 + 256 * 8
+        self.assertEqual(data[o:o + 2], bytes([0xFF, 0x03]))   # little endian
+
+    def test_map_above_1023_is_error(self):
+        m = list(range(256))
+        m[5] = 1024
+        _, _, e = build({"profile": {"0": {"map": m}}})
+        self.assertTrue(any("out of range" in x for x in e))
+
+    def test_chain_bits_warning(self):
+        m = list(range(256))
+        m[5] = 300
+        _, w, e = fp.build_profiles({"profile": {"0": {"map": m}}}, False, 256)
+        self.assertEqual(e, [])
+        self.assertTrue(any("beyond the 256-bit chain" in x for x in w))
+        _, w, _ = fp.build_profiles({"profile": {"0": {"map": m}}}, False, 512)
+        self.assertFalse(any("beyond" in x for x in w))
+
+    def test_matrix_chain_offset(self):
+        cfg = {"profile": {"1": {"matrix": {"cols": 16, "rows": 16, "chain_offset": 300}}}}
+        profiles, w, e = build(cfg)
+        self.assertEqual(e, [])
+        self.assertEqual(profiles[1]["map"], [300 + i for i in range(256)])
+        _, _, e = build({"profile": {"1": {"matrix": {"cols": 16, "rows": 16, "chain_offset": 900}}}})
+        self.assertTrue(e)
+        with self.assertRaises(fp.ConfigError):
+            build({"profile": {"1": {"matrix": {"cols": 16, "rows": 16, "chain_offset": 2000}}}})
+
+    def test_decode_legacy_v1(self):
+        v1 = bytearray(b"FPPF\x01\x08\x00\x01" + bytes(8))
+        for p in range(8):
+            for i in range(256):
+                v1 += bytes([i, 1, 2, 3, 4, 5, 6])
+        profiles = fp.decode(bytes(v1))
+        self.assertEqual(profiles[3]["map"], list(range(256)))
+        self.assertEqual(profiles[3]["on"][9], (1, 2, 3))
+
     def test_decode_rejects_bad_files(self):
         profiles, _, _ = build({})
         good = fp.encode(profiles)
@@ -195,7 +240,7 @@ class Cli(unittest.TestCase):
             self.assertEqual(fp.main([cfg, "-o", out]), 1)
             self.assertFalse(os.path.exists(out))
             self.assertEqual(fp.main([cfg, "-o", out, "--force"]), 0)
-            self.assertEqual(os.path.getsize(out), 14352)
+            self.assertEqual(os.path.getsize(out), 16400)
             self.assertEqual(fp.main([cfg, "-o", out, "--force", "--strict"]), 1)
             self.assertEqual(fp.main(["--dump", out]), 0)
 

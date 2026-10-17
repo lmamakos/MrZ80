@@ -27,6 +27,8 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 entity tb_frontpanel is
+    -- CB = capture-chain length (1..1024); the LED string is always 256.
+    generic (CB : integer := 256);
 end tb_frontpanel;
 
 architecture sim of tb_frontpanel is
@@ -54,16 +56,16 @@ architecture sim of tb_frontpanel is
     signal done         : boolean := false;
 
     function mkpat return std_logic_vector is
-        variable v : std_logic_vector(NL-1 downto 0);
+        variable v : std_logic_vector(CB-1 downto 0);
         variable x : unsigned(31 downto 0) := x"1234ABCD";
     begin
-        for i in 0 to NL-1 loop
+        for i in 0 to CB-1 loop
             x := x(30 downto 0) & (x(31) xor x(21) xor x(1) xor x(0));
             v(i) := x(0);
         end loop;
         return v;
     end function;
-    constant PAT : std_logic_vector(NL-1 downto 0) := mkpat;
+    constant PAT : std_logic_vector(CB-1 downto 0) := mkpat;
 
     type frame_t is array (0 to NL-1) of std_logic_vector(23 downto 0); -- R,G,B
     signal last_frame    : frame_t;
@@ -72,13 +74,13 @@ architecture sim of tb_frontpanel is
 
     type int_arr_t is array (0 to 8*NL-1) of integer;
     type rgb_arr_t is array (0 to 8*NL-1) of std_logic_vector(47 downto 0);
-    type file_t    is array (0 to 16 + 8*NL*7) of integer;
+    type file_t    is array (0 to 16 + 8*NL*8) of integer;
 
 begin
     clk <= not clk after 10 ns when not done else clk;   -- 50 MHz
 
     dut : entity work.FrontPanel_Subsystem
-        generic map (NUM_LEDS => NL, SYS_CLK => 50000000)
+        generic map (NUM_LEDS => NL, CHAIN_BITS => CB, SYS_CLK => 50000000)
         port map (
             clk => clk, reset => reset, refresh_tick => refresh_tick,
             iorq_n => iorq_n, wr_n => wr_n, rd_n => rd_n, io_cs => io_cs,
@@ -90,7 +92,7 @@ begin
             led_serial => led_serial);
 
     chain : entity work.Transparent_Capture_Chain
-        generic map (TOTAL_WIDTH => NL)
+        generic map (TOTAL_WIDTH => CB)
         port map (
             clk => clk, reset => reset, latch => latch, shift_en => shift_en,
             combined_data => PAT, chain_in => '0', chain_out => chain_in);
@@ -256,7 +258,8 @@ begin
         procedure set_map(p, led, m : integer) is
         begin
             io_wr(2, led);
-            io_wr(5, m);
+            if CB > 256 then io_wr(1, m / 256); end if;
+            io_wr(5, m mod 256);
             m_map(p*NL+led) := m;
         end procedure;
 
@@ -280,7 +283,11 @@ begin
             variable e : std_logic_vector(23 downto 0);
         begin
             for i in 0 to NL-1 loop
-                want_on := PAT(NL-1 - m_map(p*NL+i));
+                if m_map(p*NL+i) < CB then
+                    want_on := PAT(CB-1 - m_map(p*NL+i));
+                else
+                    want_on := '0';
+                end if;
                 if want_on = '1' then c := m_col(p*NL+i)(47 downto 24);
                 else c := m_col(p*NL+i)(23 downto 0); end if;
                 e := std_logic_vector(to_unsigned(sc(to_integer(unsigned(c(23 downto 16)))), 8))
@@ -311,25 +318,26 @@ begin
             variable r, g, b, orr, og, ob, mp : integer;
         begin
             bytes(0) := 16#46#; bytes(1) := 16#50#; bytes(2) := 16#50#; bytes(3) := 16#46#;
-            bytes(4) := 1; bytes(5) := 8; bytes(6) := 0; bytes(7) := 1;
+            bytes(4) := 2; bytes(5) := 8; bytes(6) := 0; bytes(7) := 1;
             for k in 8 to 15 loop bytes(k) := 0; end loop;
             for p in 0 to 7 loop
                 for i in 0 to NL-1 loop
-                    mp  := (i*7 + p*13) mod 256;
+                    mp  := (i*7 + p*13 + p*p*97 + (i/3)*251) mod (CB + 3);  -- includes a few >= CB
                     r   := (p*30 + i) mod 256;
                     g   := (i*3) mod 256;
                     b   := 255 - i;
                     orr := (i/2 + p) mod 256;
                     og  := p*5;
                     ob  := 9 + (i mod 4);
-                    o := 16 + (p*NL+i)*7;
-                    bytes(o) := mp; bytes(o+1) := r; bytes(o+2) := g; bytes(o+3) := b;
-                    bytes(o+4) := orr; bytes(o+5) := og; bytes(o+6) := ob;
+                    o := 16 + (p*NL+i)*8;
+                    bytes(o) := mp mod 256; bytes(o+1) := mp / 256;
+                    bytes(o+2) := r; bytes(o+3) := g; bytes(o+4) := b;
+                    bytes(o+5) := orr; bytes(o+6) := og; bytes(o+7) := ob;
                     f_map(p*NL+i) := mp;
                     f_col(p*NL+i) := rgb(r, g, b) & rgb(orr, og, ob);
                 end loop;
             end loop;
-            nbytes := 16 + 8*NL*7;
+            nbytes := 16 + 8*NL*8;
         end procedure;
 
         -- Stream bytes(0..n-1) into the DUT like hps_io: download active,
@@ -377,6 +385,30 @@ begin
         check_profile(1, "T1 p1 untouched");
         check_profile(0, "T1 p0 persisted");
         check_profile(3, "T1 p3 persisted");
+
+        ---------------------------------------------------------------
+        if CB > 256 then
+            report "T1b: map entries above 255 (chain longer than the LED string)";
+            select_profile(4);
+            set_map(4, 10, CB - 1);               -- last chain bit
+            set_map(4, 11, 256);                  -- first bit above 8-bit range
+            set_map(4, 12, CB);                   -- beyond the chain: OFF
+            set_map(4, 13, 3);                    -- low value after high ones
+            io_wr(1, 3);                          -- leave map_hi_wr non-zero ...
+            io_wr(2, 20); io_wr(1, 0);            -- ... then clear it
+            io_wr(5, 77); m_map(4*NL+20) := 77;
+            -- read back the entry at LED 11 (high bits via +1 BEFORE +5)
+            io_wr(2, 11); io_rd(1, d);
+            if d /= 1 then fail("T1b map-high readback " & integer'image(d)); end if;
+            io_rd(5, d);
+            if d /= 0 then fail("T1b map-low readback " & integer'image(d)); end if;
+            io_wr(2, 10); io_rd(1, d);
+            if d /= (CB - 1) / 256 then fail("T1b map-high readback LED10 " & integer'image(d)); end if;
+            io_rd(5, d);
+            if d /= (CB - 1) mod 256 then fail("T1b map-low readback LED10 " & integer'image(d)); end if;
+            check_profile(4, "T1b high map");
+            check_profile(0, "T1b p0 unaffected");
+        end if;
 
         ---------------------------------------------------------------
         report "T2: profile switch mid-frame does not tear the frame";
@@ -438,7 +470,7 @@ begin
         check_profile(0, "T6 bad magic");
 
         build_file;
-        download(nbytes - 7);                     -- truncated
+        download(nbytes - 8);                     -- truncated
         do_reset;
         check_profile(0, "T6 truncated");
 

@@ -8,14 +8,15 @@
 # (identity map, ON = #FF0001, OFF = #000009). Unknown keys and bad values
 # are errors. Command line options: -o FILE (output, required), --force
 # (pad/truncate a profile that doesn't have exactly 256 LEDs instead of
-# failing), --strict (warnings are errors), --dump FILE.
+# failing), --strict (warnings are errors), --chain-bits N (warn about maps
+# beyond an N-bit chain), --dump FILE.
 #
 # COLOURS (every "on"/"off" key below) accept:
 #     "#RRGGBB"   "RRGGBB"   (hex, upper or lower case)   or   [r, g, b]
 #     where r, g, b are integers 0..255.   "#FF8000" == "FF8000" == [255, 128, 0]
 #
 # CHAIN POSITION: the "map" of a physical LED is the position in the capture
-# chain whose bit it displays, 0..255. Position 0 is the first bit shifted
+# chain whose bit it displays, 0..1023 (the chain can be up to 1024 bits). Position 0 is the first bit shifted
 # out of the chain. The default is identity (LED n shows position n).
 
 # ---------------------------------------------------------------------
@@ -34,7 +35,7 @@
 #                         (default: [defaults] on)
 #   off    = colour       colour of all LEDs when the bit is 0
 #                         (default: [defaults] off)
-#   map    = [ ... ]      exactly 256 integers, each 0..255; entry n is the
+#   map    = [ ... ]      exactly 256 integers, each 0..1023; entry n is the
 #                         chain position shown by physical LED n
 #                         (default: identity). Cannot be used together with
 #                         [profile.N.matrix].
@@ -55,6 +56,9 @@
 #   rows = integer >= 1        Y, number of rows.           REQUIRED
 #                              cols * rows must be 256 (otherwise error,
 #                              unless --force pads/truncates).
+#   chain_offset = integer 0..1023   added to every chain position, to show
+#                              a different 256-bit window of a longer chain
+#                              (e.g. 256 = chain bits 256..511). Default 0
 #
 #   How the CHAIN enumerates the cells:
 #   chain_origin = "top-left" | "top-right" | "bottom-left" | "bottom-right"
@@ -114,7 +118,7 @@ strip_serpentine = true
 # [[profile.N.led]] keys (one table per LED to change, any number):
 #   index = integer 0..255     physical LED to change. Default: the table's
 #                              position in the list (first = 0, second = 1, ...)
-#   map   = integer 0..255     chain position this LED shows   (default: unchanged)
+#   map   = integer 0..1023    chain position this LED shows   (default: unchanged)
 #   on    = colour                                             (default: unchanged)
 #   off   = colour                                             (default: unchanged)
 #

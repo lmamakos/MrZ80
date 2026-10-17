@@ -17,8 +17,11 @@ File layout (README.md has the authoritative description):
   16-byte header:  'F' 'P' 'P' 'F', version (1), profile count (8),
                    LEDs per profile little-endian (256 -> 00 01),
                    8 reserved zero bytes
-  then 8 profiles x 256 LEDs x 7 bytes:  map, onR, onG, onB, offR, offG, offB
-  = 16 + 8*256*7 = 14352 bytes.
+  then 8 profiles x 256 LEDs x 8 bytes:
+        map low, map high, onR, onG, onB, offR, offG, offB
+  = 16 + 8*256*8 = 16400 bytes. (File version 2. Version 1 files, with a
+  one-byte map and 14352 bytes, are no longer accepted by the hardware;
+  --dump can still read them.)
 
 Profiles that are not mentioned in the configuration, and LEDs that a
 profile does not override, get the built-in defaults (identity map, ON =
@@ -33,12 +36,14 @@ Configuration (TOML; see example_profiles.toml):
   [profile.N]                 # N = 0..7; all keys optional
   on  = "#00FF00"             # colours for every LED of this profile
   off = "#001000"
-  map = [0, 1, 2, ...]        # per-LED map, exactly 256 entries
+  map = [0, 1, 2, ...]        # per-LED map, exactly 256 entries, each 0..1023
                               #   (index = physical LED, value = chain position)
 
   [profile.N.matrix]          # shorthand for an X by Y LED matrix
   cols = 16                   # X
   rows = 16                   # Y
+  chain_offset = 0            # added to every chain position (0..1023), to
+                              # show a different 256-bit window of a longer chain
   # How the *chain* enumerates the matrix cells (default: row-major from
   # the top-left, not serpentine):
   chain_origin = "top-left"   # top-left|top-right|bottom-left|bottom-right
@@ -124,10 +129,11 @@ except ImportError:  # Python < 3.11
     tomllib = None
 
 NUM_LEDS = 256
+MAX_CHAIN = 1024      # longest capture chain the hardware supports
 NUM_PROFILES = 8
-RECORD = 7
+RECORD = 8
 MAGIC = b"FPPF"
-VERSION = 1
+VERSION = 2
 HEADER_SIZE = 16
 FILE_SIZE = HEADER_SIZE + NUM_PROFILES * NUM_LEDS * RECORD
 
@@ -227,7 +233,7 @@ def _fit(lst, fill, count_where, warnings, errors, force):
     return lst[:NUM_LEDS] + [fill(i) for i in range(n, NUM_LEDS)]
 
 
-def build_profile(num, cfg, base_on, base_off, warnings, errors, force):
+def build_profile(num, cfg, base_on, base_off, warnings, errors, force, chain_bits=None):
     where = f"profile {num}"
     known = {"on", "off", "map", "matrix", "led"}
     for k in cfg:
@@ -252,7 +258,7 @@ def build_profile(num, cfg, base_on, base_off, warnings, errors, force):
     if "matrix" in cfg:
         mx = cfg["matrix"]
         mwhere = where + ".matrix"
-        mknown = {"cols", "rows", "chain_origin", "chain_major", "chain_serpentine",
+        mknown = {"cols", "rows", "chain_offset", "chain_origin", "chain_major", "chain_serpentine",
                   "strip_origin", "strip_major", "strip_serpentine"}
         for k in mx:
             if k not in mknown:
@@ -261,6 +267,9 @@ def build_profile(num, cfg, base_on, base_off, warnings, errors, force):
             if k not in mx or not isinstance(mx[k], int) or isinstance(mx[k], bool) or mx[k] < 1:
                 raise ConfigError(f"{mwhere}: '{k}' is required and must be a positive integer")
         cols, rows = mx["cols"], mx["rows"]
+        offset = mx.get("chain_offset", 0)
+        if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset < MAX_CHAIN:
+            raise ConfigError(f"{mwhere}: chain_offset must be an integer 0..{MAX_CHAIN - 1}")
         chain = (mx.get("chain_origin", "top-left"), mx.get("chain_major", "row"),
                  bool(mx.get("chain_serpentine", False)))
         strip = (mx.get("strip_origin", "top-left"), mx.get("strip_major", "row"),
@@ -275,10 +284,10 @@ def build_profile(num, cfg, base_on, base_off, warnings, errors, force):
                 warnings.append(msg + "; padded/truncated (--force)")
             else:
                 errors.append(msg + " (use --force to pad/truncate)")
-        # Pad (identity) or truncate to 256 LEDs; chain positions >= 256
-        # can't exist, so such LEDs fall back to the identity map.
-        m = m[:NUM_LEDS] + list(range(len(m), NUM_LEDS))
-        m = [v if v < NUM_LEDS else i for i, v in enumerate(m)]
+        # Pad (identity) or truncate to 256 LEDs; apply the chain offset.
+        # Chain positions that would exceed the 1024-bit maximum chain are
+        # an error (reported below by the range check).
+        m = [v + offset for v in m[:NUM_LEDS]] + list(range(len(m), NUM_LEDS))
         prof["map"] = m
 
     if "led" in cfg:
@@ -302,9 +311,12 @@ def build_profile(num, cfg, base_on, base_off, warnings, errors, force):
 
     # Map validation.
     for i, v in enumerate(prof["map"]):
-        if not isinstance(v, int) or isinstance(v, bool) or not 0 <= v < NUM_LEDS:
-            errors.append(f"{where}: LED {i} map value {v!r} out of range 0..{NUM_LEDS - 1}")
-    good = [v for v in prof["map"] if isinstance(v, int) and 0 <= v < NUM_LEDS]
+        if not isinstance(v, int) or isinstance(v, bool) or not 0 <= v < MAX_CHAIN:
+            errors.append(f"{where}: LED {i} map value {v!r} out of range 0..{MAX_CHAIN - 1}")
+        elif chain_bits is not None and v >= chain_bits:
+            warnings.append(f"{where}: LED {i} map value {v} is beyond the "
+                            f"{chain_bits}-bit chain (it will always show OFF)")
+    good = [v for v in prof["map"] if isinstance(v, int) and 0 <= v < MAX_CHAIN]
     dups = sorted({v for v in good if good.count(v) > 1})
     if dups:
         shown = ", ".join(map(str, dups[:8])) + (" ..." if len(dups) > 8 else "")
@@ -312,7 +324,7 @@ def build_profile(num, cfg, base_on, base_off, warnings, errors, force):
     return prof
 
 
-def build_profiles(config, force=False):
+def build_profiles(config, force=False, chain_bits=None):
     """config dict -> (list of 8 profiles, warnings, errors)."""
     warnings, errors = [], []
     for k in config:
@@ -337,7 +349,7 @@ def build_profiles(config, force=False):
     for n in range(NUM_PROFILES):
         if str(n) in pcfg:
             profiles.append(build_profile(n, pcfg[str(n)], base_on, base_off,
-                                          warnings, errors, force))
+                                          warnings, errors, force, chain_bits))
         else:
             profiles.append(default_profile(base_on, base_off))
     return profiles, warnings, errors
@@ -351,7 +363,7 @@ def encode(profiles):
     out += bytes([VERSION, NUM_PROFILES]) + struct.pack("<H", NUM_LEDS) + bytes(8)
     for p in profiles:
         for i in range(NUM_LEDS):
-            out.append(p["map"][i])
+            out += struct.pack("<H", p["map"][i])
             out += bytes(p["on"][i])
             out += bytes(p["off"][i])
     assert len(out) == FILE_SIZE
@@ -359,23 +371,33 @@ def encode(profiles):
 
 
 def decode(data):
-    if len(data) != FILE_SIZE:
-        raise ConfigError(f"file is {len(data)} bytes, expected {FILE_SIZE}")
+    """Decode a version 2 file (or, for --dump, a legacy version 1 file)."""
     if data[:4] != MAGIC:
         raise ConfigError("bad magic (not a front-panel profile file)")
+    if len(data) < HEADER_SIZE:
+        raise ConfigError("file too short")
     ver, nprof = data[4], data[5]
     nleds = struct.unpack("<H", data[6:8])[0]
-    if (ver, nprof, nleds) != (VERSION, NUM_PROFILES, NUM_LEDS):
+    if ver not in (1, 2) or (nprof, nleds) != (NUM_PROFILES, NUM_LEDS):
         raise ConfigError(f"unsupported version/profiles/LEDs: {ver}/{nprof}/{nleds}")
+    rec = 7 if ver == 1 else RECORD
+    want = HEADER_SIZE + NUM_PROFILES * NUM_LEDS * rec
+    if len(data) != want:
+        raise ConfigError(f"file is {len(data)} bytes, expected {want} for version {ver}")
     profiles = []
     o = HEADER_SIZE
     for _ in range(NUM_PROFILES):
         p = {"map": [], "on": [], "off": []}
         for _ in range(NUM_LEDS):
-            p["map"].append(data[o])
-            p["on"].append(tuple(data[o + 1:o + 4]))
-            p["off"].append(tuple(data[o + 4:o + 7]))
-            o += RECORD
+            if ver == 1:
+                p["map"].append(data[o])
+                c = o + 1
+            else:
+                p["map"].append(struct.unpack("<H", data[o:o + 2])[0])
+                c = o + 2
+            p["on"].append(tuple(data[c:c + 3]))
+            p["off"].append(tuple(data[c + 3:c + 6]))
+            o += rec
         profiles.append(p)
     return profiles
 
@@ -410,9 +432,14 @@ def main(argv=None):
     ap.add_argument("--force", action="store_true",
                     help="pad/truncate profiles whose LED count is not 256 instead of failing")
     ap.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    ap.add_argument("--chain-bits", type=int, metavar="N",
+                    help="length of the capture chain (1..1024); warn about map entries "
+                         "that fall beyond it (they would always show OFF)")
     ap.add_argument("--dump", metavar="FILE", help="decode and summarise an existing profile file")
     args = ap.parse_args(argv)
 
+    if args.chain_bits is not None and not 1 <= args.chain_bits <= MAX_CHAIN:
+        ap.error(f"--chain-bits must be 1..{MAX_CHAIN}")
     try:
         if args.dump:
             with open(args.dump, "rb") as f:
@@ -428,7 +455,7 @@ def main(argv=None):
                     config = tomllib.load(f)
                 except tomllib.TOMLDecodeError as e:
                     raise ConfigError(f"{args.config}: {e}")
-        profiles, warnings, errors = build_profiles(config, args.force)
+        profiles, warnings, errors = build_profiles(config, args.force, args.chain_bits)
     except ConfigError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

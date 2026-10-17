@@ -610,7 +610,7 @@ shift accordingly.
 | Port  | R/W | Function                                                                                  |
 |-------|-----|-------------------------------------------------------------------------------------------|
 | `0xA0`| R/W | Global brightness (0..255, "scale8" style: 0xFF ~= full brightness, 0x00 = fully off). Applied to every channel of the selected colour -- see `Components/FRONTPANEL/README.md`. |
-| `0xA1`| R/W | Fade rate (step per refresh tick). Stored/readable but currently has no effect (fade-ramp math removed for bring-up — see `Components/FRONTPANEL/README.md`). |
+| `0xA1`| R/W | Map high: write sets map bits 9:8 for later `0xA5` writes (chain longer than 256 bits); read returns map bits 9:8 of the entry at the global pointer (read before `0xA5`). Replaces the former inert fade-rate register -- see `Components/FRONTPANEL/README.md`. |
 | `0xA2`| R/W | Global pointer (LED index used by `0xA3`, `0xA5`, `0xA6`). Auto-advance on `0xA3`/`0xA5`/`0xA6` wraps at `NUM_LEDS` back to 0. |
 | `0xA3`| W   | Colour stream, R,G,B order (not the LEDs' native GRB -- reordered internally, hidden from software). Six bytes per LED: on-R, on-G, on-B, off-R, off-G, off-B. The sixth byte auto-advances the global pointer.|
 | `0xA4`| R/W | Mode register. Bit 0: 0 = mirror capture chain, 1 = framebuffer.                          |

@@ -208,7 +208,7 @@ three low address bits are a clean offset into the window.
 | Offset | R/W | Function                                                       |
 |--------|-----|----------------------------------------------------------------|
 | +0     | R/W | Global brightness (0..255, "scale8" style: 0xFF ~= full brightness, 0x00 = fully off). Applied to every channel of whichever colour is selected for display; see Status above. |
-| +1     | R/W | Fade rate (step per refresh tick). Stored/readable but **currently has no effect** — the fade-ramp stage was removed for bring-up (see Status above). |
+| +1     | R/W | **Map high** (replaces the former, inert fade-rate register). Write: bits 1:0 are map bits 9:8 for later `+5` writes (sticky, 0 at reset). Read: map bits 9:8 of the entry at the global pointer (read it *before* the `+5` read, which advances the pointer). Only meaningful for a chain longer than 256 bits; see Long capture chains. |
 | +2     | R/W | Global pointer (LED index used by +3, +5, +6).                 |
 | +3     | W   | Colour stream, R,G,B order (matches the LEDs' own on-wire GRB order internally, but never exposed to software -- see Status above). Six bytes per LED: on-R, on-G, on-B, off-R, off-G, off-B. On the sixth byte the global pointer advances by 1. |
 | +4     | R/W | Mode register (bit 0: 0 = mirror capture chain, 1 = framebuffer). |
@@ -269,18 +269,37 @@ global, not per profile.
   copy on every reset (about 2050 `clk` cycles; the first refresh waits for
   it).
 
+### Long capture chains (up to 1024 bits)
+
+`FrontPanel_Subsystem` has a generic `CHAIN_BITS` (1..1024, default 256): the
+total length of the capture chain. The LED string is still 256 LEDs, but a
+profile's per-LED map can now select any of the `CHAIN_BITS` chain bits, so
+different profiles can show different parts of the chain (for example one
+profile for the registers, another for bus signals). Chain position 0 is the
+first bit shifted out of the chain. A map value at or beyond `CHAIN_BITS` shows
+that LED's OFF colour. A longer chain costs one `shadow_reg` flop per bit,
+a wider map RAM (9 or 10 bits instead of 8), a longer capture phase
+(`CHAIN_BITS` clocks per frame) and a bigger selection mux. Framebuffer mode is
+unchanged: one bit per LED, at most 256.
+
+Z-80 access to map entries above 255: write the high bits (map bits 9:8) to
+port `+1`, then write the low byte to `+5`; the high bits stay set for later
+`+5` writes, so clear `+1` when done (software that never touches `+1` sees
+and writes maps 0..255 as before). To read an entry back, set the pointer, read
+`+1` (high bits) and then `+5` (low byte, advances the pointer).
+
 ### Profile file format
 
-All values are bytes; the file is exactly **14352 bytes**.
+All values are bytes; the file (version 2) is exactly **16400 bytes**. Version 1 files (one-byte map, 14352 bytes) are no longer accepted by the hardware; regenerate them with `fpprofile.py`, which can still `--dump` a version 1 file.
 
 | Offset | Size | Content |
 |--------|------|---------|
 | 0      | 4    | Magic `FPPF` (`46 50 50 46`) |
-| 4      | 1    | Version, `01` |
+| 4      | 1    | Version, `02` |
 | 5      | 1    | Number of profiles, `08` |
 | 6      | 2    | LEDs per profile, little endian, `00 01` (256) |
 | 8      | 8    | Reserved (ignored; the tool writes zeros) |
-| 16     | 8 x 256 x 7 | Profile 0 LED 0 ... LED 255, then profile 1, ... profile 7. Each record is `map, onR, onG, onB, offR, offG, offB`. |
+| 16     | 8 x 256 x 8 | Profile 0 LED 0 ... LED 255, then profile 1, ... profile 7. Each record is `map low, map high, onR, onG, onB, offR, offG, offB` (map is a 16-bit little-endian value, 0..1023 used). |
 
 ### Building a profile file: `tools/fpprofile.py`
 
@@ -301,6 +320,7 @@ Command line:
 | `-o FILE`, `--output FILE` | Profile file to write (required when building). |
 | `--force` | Pad/truncate profiles that do not produce exactly 256 LEDs instead of failing. |
 | `--strict` | Treat warnings as errors (nothing is written). |
+| `--chain-bits N` | Length of the capture chain (1..1024). Warn about map entries at or beyond it (they would always show OFF). Without it, any value up to 1023 is accepted silently. |
 | `--dump FILE` | Decode and summarise an existing profile file instead of building. |
 
 #### Configuration file reference
@@ -328,7 +348,7 @@ number is an error). All keys are optional.
 |-----|--------|---------|
 | `on` | colour for every LED of this profile when its chain bit is 1 | `[defaults]` `on` |
 | `off` | colour for every LED of this profile when its chain bit is 0 | `[defaults]` `off` |
-| `map` | array of exactly 256 integers, each 0..255. Entry *n* (counting from 0) is the chain position shown by physical LED *n*. | identity (LED *n* shows chain position *n*) |
+| `map` | array of exactly 256 integers, each 0..1023 (a value at or beyond the hardware's `CHAIN_BITS` shows OFF). Entry *n* (counting from 0) is the chain position shown by physical LED *n*. | identity (LED *n* shows chain position *n*) |
 | `matrix` | sub-table, see below. Cannot be combined with `map`. | none |
 | `led` | array of per-LED override tables (`[[profile.N.led]]`), see below. Applied after `map`/`matrix`. | none |
 
@@ -342,6 +362,7 @@ it sits at. Rows are counted from the top, columns from the left.
 |-----|--------|---------|
 | `cols` | integer >= 1 (X: number of columns). **Required.** | |
 | `rows` | integer >= 1 (Y: number of rows). **Required.** | |
+| `chain_offset` | integer 0..1023: added to every chain position, so a 256-cell matrix can show a different window of a chain longer than 256 bits | `0` |
 | `chain_origin` | `"top-left"` \| `"top-right"` \| `"bottom-left"` \| `"bottom-right"`: the corner where the chain order starts | `"top-left"` |
 | `chain_major` | `"row"` \| `"column"`: `"row"` runs along a row first, then steps to the next row; `"column"` runs down a column first, then steps to the next column | `"row"` |
 | `chain_serpentine` | `true` \| `false`: `true` reverses direction on every second row/column (zig-zag), `false` restarts each from the same edge | `false` |
@@ -396,7 +417,7 @@ given.
 | Key | Values | Default |
 |-----|--------|---------|
 | `index` | integer 0..255: the physical LED to change | the table's position in the list (first = 0, second = 1, ...) |
-| `map` | integer 0..255: chain position this LED shows | unchanged |
+| `map` | integer 0..1023: chain position this LED shows | unchanged |
 | `on` | colour | unchanged |
 | `off` | colour | unchanged |
 

@@ -683,9 +683,10 @@ fpChainRegs : entity work.Transparent_Capture_Chain
 	);
   
 -- **** LED 224 - 255
-fpChainEnd :  entity work.Transparent_Capture_Chain
+fpChainEnd :  entity work.Universal_Capture_Chain
 	generic map (
-		TOTAL_WIDTH => 32
+		TOTAL_WIDTH => 32,
+                STRETCH_MASK => x"0000_0F00"
 	)
 	port map (
 		clk           => clk,
@@ -708,8 +709,9 @@ fpChainEnd :  entity work.Transparent_Capture_Chain
 -- mode through ports +5/+6.
 fpSubsys : entity work.FrontPanel_Subsystem
 	generic map (
-		NUM_LEDS => 256,
-		SYS_CLK  => 50000000
+		NUM_LEDS   => 256,
+		CHAIN_BITS => 384,	-- total capture-chain bits (1..1024); LED maps can address any of them
+		SYS_CLK    => 50000000
 	)
 	port map (
 		clk          => clk,

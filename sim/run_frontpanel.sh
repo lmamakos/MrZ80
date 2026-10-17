@@ -1,6 +1,7 @@
 #!/bin/bash
 # run_frontpanel.sh - compile and run tb_frontpanel (FrontPanel_Subsystem
 # profile feature) with GHDL. Standalone: needs no T80/MMU/etc.
+#   sim/run_frontpanel.sh [workdir] [chain_bits]    (chain_bits 1..1024, default 256)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -8,6 +9,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
 WORKDIR="${1:-/tmp/sim_frontpanel_build}"
+CB="${2:-256}"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
@@ -24,5 +26,5 @@ done
 echo "-- elaborating tb_frontpanel"
 ghdl -e "${GHDL_FLAGS[@]}" tb_frontpanel
 
-echo "-- running tb_frontpanel"
-ghdl -r "${GHDL_FLAGS[@]}" tb_frontpanel --stop-time=2000ms
+echo "-- running tb_frontpanel (CB=$CB)"
+ghdl -r "${GHDL_FLAGS[@]}" tb_frontpanel -gCB="$CB" --stop-time=2000ms

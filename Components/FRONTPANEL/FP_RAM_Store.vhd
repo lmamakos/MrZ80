@@ -6,6 +6,8 @@
 --   * color_ram : 48 bits = ON colour (R,G,B) & OFF colour (R,G,B)
 --   * map_ram   : 8 bits  = capture-chain bit index feeding that LED
 -- plus one GLOBAL (not per-profile) framebuffer bit per LED (fb_ram).
+-- The map is MAP_W bits wide (8 for a <=256-bit capture chain, up to 10
+-- for a 1024-bit one); the colour RAM and everything else is unchanged.
 --
 -- color_ram/map_ram are addressed by {profile(3), led(8)} (2048
 -- entries); fb_ram by led(8) only.
@@ -30,8 +32,10 @@
 -- +3 colour-stream port); the GRB reorder needed for the WS2812/SK6812
 -- wire protocol happens in FrontPanel_Subsystem right before the PHY.
 --
--- pri_ram word layout (56 bits): map(55:48) & on RGB(47:24) & off RGB(23:0)
--- -- the same byte order as one 7-byte record of the profile file.
+-- pri_ram word layout (64 bits): map low byte(63:56) & map high byte(55:48)
+-- & on RGB(47:24) & off RGB(23:0) -- the same byte order as one 8-byte
+-- record of the profile file (version 2). Only the low MAP_W bits of the
+-- 16-bit map are kept in map_ram.
 -- =====================================================================
 
 library ieee;
@@ -39,7 +43,10 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 entity FP_RAM_Store is
-    generic ( NUM_LEDS : integer := 256 );  -- RAM is always 256 LEDs/profile deep
+    generic (
+        NUM_LEDS : integer := 256;  -- RAM is always 256 LEDs/profile deep
+        MAP_W    : integer := 8     -- width of a map entry (8..10)
+    );
     port (
         clk           : in  std_logic;
         -- Synchronous reset. Also (re-)triggers the init sequence.
@@ -54,7 +61,7 @@ entity FP_RAM_Store is
         -- Pristine (profile file) write port. Independent of reset.
         pri_we        : in  std_logic;
         pri_addr      : in  unsigned(10 downto 0);   -- {profile, led}
-        pri_data      : in  std_logic_vector(55 downto 0);
+        pri_data      : in  std_logic_vector(63 downto 0);
 
         -- Port A: Z80 Access (Read/Write)
         profile_a     : in  unsigned(2 downto 0);
@@ -63,16 +70,16 @@ entity FP_RAM_Store is
         we_map        : in  std_logic;
         we_fb         : in  std_logic;
         din_color     : in  std_logic_vector(47 downto 0);
-        din_map       : in  unsigned(7 downto 0);
+        din_map       : in  unsigned(MAP_W-1 downto 0);
         din_fb        : in  std_logic;
-        dout_map      : out unsigned(7 downto 0);
+        dout_map      : out unsigned(MAP_W-1 downto 0);
         dout_fb       : out std_logic;
 
         -- Port B: Controller Access (Read Only)
         profile_b     : in  unsigned(2 downto 0);
         addr_b        : in  unsigned(7 downto 0);
         dout_color_b  : out std_logic_vector(47 downto 0);
-        dout_map_b    : out unsigned(7 downto 0);
+        dout_map_b    : out unsigned(MAP_W-1 downto 0);
         dout_fb_b     : out std_logic
     );
 end entity;
@@ -91,7 +98,7 @@ architecture rtl of FP_RAM_Store is
     signal color_ram : color_mem_t;
     attribute ramstyle of color_ram : signal is "M10K";
 
-    type map_mem_t is array (0 to NUM_ENTRIES-1) of unsigned(7 downto 0);
+    type map_mem_t is array (0 to NUM_ENTRIES-1) of unsigned(MAP_W-1 downto 0);
     signal map_ram : map_mem_t;
     attribute ramstyle of map_ram : signal is "M10K";
 
@@ -99,10 +106,11 @@ architecture rtl of FP_RAM_Store is
     signal fb_ram : fb_mem_t;
     attribute ramstyle of fb_ram : signal is "MLAB";
 
-    type pri_mem_t is array (0 to NUM_ENTRIES-1) of std_logic_vector(55 downto 0);
+    type pri_mem_t is array (0 to NUM_ENTRIES-1) of std_logic_vector(63 downto 0);
     signal pri_ram : pri_mem_t;
     attribute ramstyle of pri_ram : signal is "M10K";
-    signal pri_q : std_logic_vector(55 downto 0);
+    signal pri_q : std_logic_vector(63 downto 0);
+    signal pri_map16 : unsigned(15 downto 0);
 
     -- Init sequencer. Issue stage steps init_addr over all entries
     -- (pri_ram read data appears one clk later in pri_q); the write
@@ -117,6 +125,7 @@ architecture rtl of FP_RAM_Store is
 begin
     init_done <= not init_active;
 
+    pri_map16 <= unsigned(pri_q(55 downto 48)) & unsigned(pri_q(63 downto 56));  -- hi & lo
     idx_a <= profile_a & addr_a;
     idx_b <= profile_b & addr_b;
 
@@ -168,10 +177,10 @@ begin
             if init_wr_v = '1' then
                 if profile_loaded = '1' then
                     color_ram(to_integer(init_wr_addr)) <= pri_q(47 downto 0);
-                    map_ram(to_integer(init_wr_addr))   <= unsigned(pri_q(55 downto 48));
+                    map_ram(to_integer(init_wr_addr))   <= pri_map16(MAP_W-1 downto 0);
                 else
                     color_ram(to_integer(init_wr_addr)) <= DEFAULT_COLOR;
-                    map_ram(to_integer(init_wr_addr))   <= init_wr_addr(7 downto 0);
+                    map_ram(to_integer(init_wr_addr))   <= resize(init_wr_addr(7 downto 0), MAP_W);
                 end if;
                 fb_ram(to_integer(init_wr_addr(7 downto 0))) <= '0';
             elsif init_active = '0' then
