@@ -128,6 +128,8 @@ constant CHARS_PER_SCREEN : integer := HORIZ_CHARS*VERT_CHARS;
 	signal 	cursAddr : integer range 0 to CHARS_PER_SCREEN;
 	  
 	signal 	dispAddr : integer range 0 to CHARS_PER_SCREEN;
+	signal 	dispSum  : integer range 0 to 2*CHARS_PER_SCREEN;  -- address before wrap
+	signal 	cursSum  : integer range 0 to 2*CHARS_PER_SCREEN;
 	signal 	charAddr : std_LOGIC_VECTOR(10 downto 0);
 
 	signal	dispCharData : std_LOGIC_VECTOR(7 downto 0);
@@ -398,8 +400,20 @@ end generate GEN_NO_ATTRAM;
 
 	charAddr <= dispCharData & charScanLine(VERT_PIXEL_SCANLINES+1 downto VERT_PIXEL_SCANLINES-1);
 
-	dispAddr <= (startAddr + charHoriz+(charVert * HORIZ_CHARS)) mod CHARS_PER_SCREEN;
-	cursAddr <= (startAddr + cursorHoriz+(cursorVert * HORIZ_CHARS)) mod CHARS_PER_SCREEN;
+	-- Screen-memory address = (startAddr + column + row*HORIZ_CHARS) mod
+	-- CHARS_PER_SCREEN, written as a single conditional subtract instead
+	-- of "mod". This is equivalent because startAddr only ever holds 0 or a
+	-- multiple of HORIZ_CHARS below CHARS_PER_SCREEN (max
+	-- CHARS_PER_SCREEN-HORIZ_CHARS) and the column/row are range-limited, so
+	-- the sum is at most (CHARS_PER_SCREEN-HORIZ_CHARS) +
+	-- (HORIZ_CHARS-1) + (VERT_CHARS-1)*HORIZ_CHARS < 2*CHARS_PER_SCREEN.
+	-- The synthesized "mod" was a ~30-level divider that failed setup
+	-- timing (startAddr is clocked on the falling edge, the display RAM on
+	-- the rising edge: only half a period).
+	dispSum <= startAddr + charHoriz + (charVert * HORIZ_CHARS);
+	cursSum <= startAddr + cursorHoriz + (cursorVert * HORIZ_CHARS);
+	dispAddr <= dispSum - CHARS_PER_SCREEN when dispSum >= CHARS_PER_SCREEN else dispSum;
+	cursAddr <= cursSum - CHARS_PER_SCREEN when cursSum >= CHARS_PER_SCREEN else cursSum;
 
 	sync <= vSync and hSync; -- composite sync for mono video out
 
