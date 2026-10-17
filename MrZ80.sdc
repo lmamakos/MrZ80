@@ -89,9 +89,9 @@ set_false_path -to [get_registers {emu:emu|ram_addr[*] emu:emu|ram_din[*] emu:em
 set_false_path -from $clk_ram -to [get_registers {emu:emu|done_sync[0]}]
 set_false_path -from [get_registers {emu:emu|ram_byte[*]}] -to $clk_sys
 
-# SDRAM controller init (sdram_init_reset = RESET | buttons[1] |
-# reset_from_mount) is an unsynchronised level into clk_ram. Each source is
-# held for many thousands of clk_ram cycles (reset_from_mount: 65536 clk_sys
-# cycles), so a one-cycle skew between controller registers on assertion or
-# release is harmless: the controller restarts its full init sequence.
-set_false_path -from [get_registers {emu:emu|reset_from_mount}] -to $clk_ram
+# SDRAM controller init: sdram_init_reset (the synchronised framework RESET)
+# is registered in clk_sys (sdram_init_reset_r) and crosses into clk_ram through
+# a 2-FF synchronizer (init_sync); only the first stage is a true asynchronous
+# capture. sys_top.sdc puts all PLL clocks in one group, so without this the
+# crossing would be analysed as a synchronous 0.688 ns path.
+set_false_path -to [get_registers {emu:emu|init_sync[0]}]

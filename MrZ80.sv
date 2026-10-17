@@ -263,6 +263,12 @@ wire        sdram_cpu_ack;
 wire        sdram_cpu_ready;     // controller: dout valid / accepted
 wire [15:0] sdram_dout16;        // controller 16-bit read data
 
+// SDRAM controller init, synchronized into clk_ram (driven further below,
+// next to sdram_init_reset). Declared here because the controller instance
+// uses it before that point.
+reg  [1:0]  init_sync = 2'b11;   // asserted at power-up, like the controller's own startup
+wire        sdram_init_ram = init_sync[1];
+
 // Request level from the 50 MHz domain, synchronized into clk_ram.
 reg  [1:0]  req_sync = 2'b00;    // 2-FF synchronizer for (we|rd)
 reg         req_seen = 1'b0;     // edge-detect: previous synced request
@@ -321,7 +327,7 @@ assign sdram_dout_mux  = ram_byte;
 
 sdram_32r8w sdram_inst
 (
-	.init        (sdram_init_reset),
+	.init        (sdram_init_ram),
 	.clk         (clk_ram),
 
 	.SDRAM_DQ    (SDRAM_DQ),
@@ -388,7 +394,7 @@ parameter CONF_STR = {
 	"OC,Serial Port,Console Port,User IO (SNAC) Port;",
 	"O9B,Baud Rate tty,115200,38400,19200,9600,4800,2400;",
 	"OE,Flow Control,None,RTS/CTS;",  // New flow control option
-	"-;",
+	"-,CPU Held in Reset until ROM image loaded;",
 	"R0,Reset;",                                     // status[0]: OSD Reset (CPU reset only; keeps loaded image)
 	"V,v",`BUILD_DATE
 };
@@ -556,8 +562,9 @@ end
 //
 // There is no built-in boot ROM. bin_loaded persists the "a boot image has
 // been loaded" decision: it is set when a .BIN download finishes and stays set
-// until a deliberate hard reset (rising edge of RESET / user button
-// buttons[1]). While bin_loaded is clear the CPU is held in reset (see
+// until a deliberate hard reset (rising edge of the
+// framework RESET; the user button, buttons[1], only resets the CPU like OSD
+// Reset). While bin_loaded is clear the CPU is held in reset (see
 // `reset` below). The OSD Reset item (status[0]) and the post-download
 // auto-reset only reset the CPU, so the loaded image is restarted rather
 // than discarded; its bytes are still in SDRAM because the SDRAM controller
@@ -572,7 +579,7 @@ reg        ioctl_download_d = 1'b0;
 reg        hard_reset_d = 1'b0;
 reg        dl_reset_stretch = 1'b0;
 reg [15:0] dl_reset_counter = 16'd0;
-wire       hard_reset_req = RESET_sync | buttons[1];   // NOT status[0]: OSD Reset restarts the loaded image
+wire       hard_reset_req = RESET_sync;   // NOT status[0]: OSD Reset restarts the loaded image
 always @(posedge clk_sys) begin
     ioctl_download_d <= ioctl_download;
     hard_reset_d     <= hard_reset_req;
@@ -603,6 +610,7 @@ end
 // CPU is held in reset during a download, for the post-download stretch, and
 // for as long as no boot image has been loaded (no built-in boot ROM).
 // ~bin_loaded is deliberately NOT part of sdram_init_reset below.
+// (buttons[1], the user button, resets the CPU only, like OSD Reset.)
 wire reset = RESET_sync | status[0] | buttons[1] | reset_from_mount
            | ioctl_download | dl_reset_stretch | ~bin_loaded;
 
@@ -616,8 +624,18 @@ wire reset = RESET_sync | status[0] | buttons[1] | reset_from_mount
 // first download byte would never complete, ioctl_wait would stay asserted
 // and the HPS would hang in its first transfer. The controller still
 // initializes itself at configuration (power-up) and on a genuine hard
-// RESET / user button / mount reset; an OSD Reset only resets the CPU.
-wire sdram_init_reset = RESET_sync | buttons[1] | reset_from_mount;
+// RESET (core reload); OSD Reset, the user button and Reset after Mount only
+// reset the CPU.
+wire sdram_init_reset = RESET_sync;
+
+// Cross sdram_init_reset into clk_ram properly: first register the OR in
+// clk_sys (so a glitch between its three sources can't reach clk_ram), then
+// a 2-FF synchronizer in clk_ram. Every controller register therefore sees
+// init change on the same clk_ram edge. Costs ~3-4 clk_ram cycles of latency
+// on assertion/release, negligible against the controller's init sequence.
+reg sdram_init_reset_r = 1'b1;
+always @(posedge clk_sys) sdram_init_reset_r <= sdram_init_reset;
+always @(posedge clk_ram) init_sync <= {init_sync[0], sdram_init_reset_r};
 
 /////////////////  SDCARD  ////////////////////////
 //

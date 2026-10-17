@@ -141,9 +141,9 @@ return to the "nothing loaded" state.
 | Case | How it happens | Z-80 | `bin_loaded` / loaded boot image | Files from HPS |
 |------|----------------|------|----------------------------------|----------------|
 | **Power-up / core (re)load** | FPGA configured, core loaded from the MiSTer menu | Held in reset until a `.BIN` has loaded | Starts clear | Every `FC` item with a saved file name is auto-loaded. A saved Boot Rom Image therefore boots by itself; with none saved, the CPU stays in reset |
-| **Hard reset** | Framework `RESET` from the HPS, or the user button (`buttons[1]`); rising edge | Reset | **Cleared**: the image is discarded and the CPU is held in reset | **Not reloaded.** You must pick the Boot Rom Image in the OSD again. The front-panel profile (`.FPP`) is also cleared |
+| **Hard reset** | Framework `RESET` from the HPS; rising edge (the user button, `buttons[1]`, only resets the CPU, like OSD Reset: image and SDRAM kept) | Reset | **Cleared**: the image is discarded and the CPU is held in reset | **Not reloaded.** You must pick the Boot Rom Image in the OSD again. The front-panel profile (`.FPP`) is also cleared |
 | **OSD Reset** | OSD item *Reset* (`R0`, `status[0]`) | Reset while asserted | **Kept**: the loaded image is restarted from `0x0000`. SDRAM is not re-initialised, so the image is intact | None |
-| **Reset after Mount** | OSD option *Reset after Mount = Yes*, then mounting an `*.IMG` | Reset for 65536 `clk_sys` cycles | Kept (image restarted) | None. The SDRAM controller is re-initialised in this case, like a hard reset; the image bytes are not rewritten and a hardware check that they survive has not been done |
+| **Reset after Mount** | OSD option *Reset after Mount = Yes*, then mounting an `*.IMG` | Reset for 65536 `clk_sys` cycles | Kept (image restarted) | None. CPU-only reset like OSD Reset: the SDRAM controller is not re-initialised and the image is untouched |
 | **Manual file load** | You pick a file in the OSD | Reset during the download and for a short stretch after | `.BIN` sets it, `.DSK`/`.FPP` leave it unchanged | The picked file only |
 | **Post-download restart** | Automatic, end of any download | Reset for 65536 `clk_sys` cycles | Unchanged (a `.BIN` sets it) | None |
 
@@ -152,8 +152,8 @@ Rules of thumb:
 - **OSD Reset restarts the software; hard reset removes it.** Use OSD Reset
   to restart a loaded image, and re-select the Boot Rom Image after a hard reset
   (or after a core reload with no saved Boot Rom Image).
-- The SDRAM controller is initialised at power-up and on a hard reset /
-  user button / mount reset, but never by OSD Reset or while a download is in
+- The SDRAM controller is initialised at power-up and on a hard reset
+  (core reload), but never by OSD Reset, the user button, Reset after Mount or while a download is in
   progress (that would stall the HPS in the middle of a transfer).
 - Because there is no ROM, any Z-80 write to port `0x38` (the old ROM-disable
   trigger) is ignored.

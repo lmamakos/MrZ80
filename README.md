@@ -167,7 +167,7 @@ This section describes the On-Screen Display menu configuration for the MultiCom
   from there. There is no built-in boot ROM: the Z-80 is held in reset until a
   boot image has been loaded. The last file chosen is remembered and
   loaded automatically when the core starts. OSD Reset restarts the loaded
-  image; a hard reset (reloading the core or the user button) discards it and
+  image; a hard reset (reloading the core) discards it; the user button only resets the CPU like OSD Reset, keeping it and
   holds the Z-80 in reset until a boot image is selected again from the OSD.
 - __Mount *.IMG__ (SD card image): mounts an image file as a block device at Z-80
   I/O ports `0x90`-`0x97` (see `HARDWARE.md`, "Storage"). It is independent of
