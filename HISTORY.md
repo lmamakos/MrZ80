@@ -3407,3 +3407,16 @@ with 8-byte records (16-bit map; 16400 bytes); the hardware rejects version 1 fi
 `fpprofile.py` writes version 2 (and can still `--dump` v1), adds `chain_offset` for matrices
 and `--chain-bits`. `tb_frontpanel` takes a `CB` generic (`sim/run_frontpanel.sh [dir] [chain_bits]`)
 and was run at 256 and 600 bits. Framebuffer mode remains 256 bits.
+
+### User button is now a CPU-only reset
+
+`buttons[1]` was removed from `hard_reset_req` and `sdram_init_reset` in `MrZ80.sv` (it stays in `reset`), so
+the user button behaves like OSD Reset: the CPU restarts the loaded image (e.g. the SDRAM memory test) with
+`bin_loaded`, the SDRAM contents and the front-panel profile file kept. Only the framework `RESET` (and mount
+reset for SDRAM) is a hard reset. Reason: with no built-in boot ROM, a hard reset held the CPU until the boot
+image was re-selected from the OSD.
+
+### Reset after Mount is now a CPU-only reset
+
+`reset_from_mount` was removed from `sdram_init_reset` in `MrZ80.sv` (it still resets the CPU for 65536
+`clk_sys` cycles). SDRAM is now re-initialised only at power-up and on the framework `RESET` (core reload).
