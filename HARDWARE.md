@@ -61,6 +61,103 @@ block RAM), 2 = `.DSK` RAM disk, 3 and 4 = reserved for larger RAM-disk
 images (SDRAM, same slot/base scheme as index 2), 5 = front-panel profile
 file (`FC5`; goes to `FrontPanel_Subsystem`, never to SDRAM).
 
+## Boot, reset and image loading
+
+### No ROM in the FPGA load
+
+The FPGA core contains **no boot ROM**. Everything the Z-80 runs at power-on
+comes from a boot image (`.BIN`) that the HPS (the ARM side of the MiSTer)
+streams into memory through the `ioctl` download path. Selecting which bootable
+software runs is therefore done entirely in the OSD with the
+**Boot Rom Image** item (`FC1`, file index 1); nothing about any particular
+image is compiled into the core.
+
+Until a boot image has been loaded, the internal flag `bin_loaded` (in
+`MrZ80.sv`) is clear and the Z-80 is **held in reset**. The core will then
+look dead: no video activity from the CPU, no serial output. This is expected;
+select a Boot Rom Image in the OSD.
+
+Once a `.BIN` download finishes, `bin_loaded` is set, the CPU is released
+after a short reset stretch (65536 `clk_sys` cycles), and the MMU reset map
+points logical frame 0 at SDRAM page 0 so the image starts at `0x0000`
+(see the memory map above). With the debug option
+**Boot Load Target = Block RAM** the image goes to the on-chip block RAM
+instead and frame 0 maps to the block RAM page; `bin_loaded` is still set so
+the CPU runs.
+
+### When the HPS loads a file
+
+The HPS writes to the core in exactly these situations:
+
+1. **You pick a file in the OSD** (any of Boot Rom Image, 8MB Disk Image,
+   Front Panel Profiles). The file is streamed in immediately. The HPS also
+   remembers the file name for that menu item (see "Sticky" below).
+2. **The core is started** (power-up, or the core is (re)loaded by the
+   MiSTer menu / FPGA reconfiguration). For each `FC` item that has a
+   remembered file name, the HPS loads that file automatically, before the
+   Z-80 runs. The HPS holds `status[0]` (OSD Reset) high while it does this
+   and restores the saved OSD settings only afterwards.
+
+The HPS does **not** reload files on any reset that happens while the core
+stays running (OSD Reset, the user button, mount reset, the framework `RESET`
+described below). Those only reset the CPU/state in the core; whether the
+image is still there afterwards is decided by the table below.
+
+Consequences of the "files are loaded before the settings are restored" ordering:
+
+- An auto-loaded Boot Rom Image **always goes to SDRAM**, even if
+  *Boot Load Target = Block RAM* is saved. Block RAM loading only works for a
+  file you pick manually in the OSD.
+- A `.DSK` image is written into the top of SDRAM (slot base as in the memory
+  map) and a `.FPP` profile into the front-panel subsystem; neither one starts
+  the CPU. Only a `.BIN` sets `bin_loaded`.
+- Any completed download (`.BIN`, `.DSK` or `.FPP`) resets the CPU for a short
+  stretch afterwards so it restarts cleanly into the new memory contents.
+  While a download is in progress the CPU is held in reset.
+
+### "Sticky" `FC` selections and how to clear one
+
+The `C` in `FC1`, `FC2`, `FC5` means the HPS stores the chosen file name per
+menu item in the core's configuration area on the SD card and re-selects it at
+every core start. That is what makes a Boot Rom Image "sticky": after you have
+chosen it once, the core boots into it at power-up with no further action.
+
+The stored name is not removed by any reset. **To delete a saved file specification,
+open the item's file picker in the OSD and press the Backspace key.** (This is
+a MiSTer OSD feature and is not advertised on screen.) After clearing:
+
+- Nothing is unloaded from the running core: a currently running image keeps
+  running, and its bytes stay in SDRAM.
+- At the next core start, or after the next hard reset, no file is loaded for
+  that item. With no Boot Rom Image saved the CPU stays held in reset until you
+  select one.
+
+Use Backspace to get out of a bad sticky boot image (for example one that
+hangs the system) if you cannot otherwise get a working one selected, or to
+return to the "nothing loaded" state.
+
+### The different (re)start cases
+
+| Case | How it happens | Z-80 | `bin_loaded` / loaded boot image | Files from HPS |
+|------|----------------|------|----------------------------------|----------------|
+| **Power-up / core (re)load** | FPGA configured, core loaded from the MiSTer menu | Held in reset until a `.BIN` has loaded | Starts clear | Every `FC` item with a saved file name is auto-loaded. A saved Boot Rom Image therefore boots by itself; with none saved, the CPU stays in reset |
+| **Hard reset** | Framework `RESET` from the HPS, or the user button (`buttons[1]`); rising edge | Reset | **Cleared**: the image is discarded and the CPU is held in reset | **Not reloaded.** You must pick the Boot Rom Image in the OSD again. The front-panel profile (`.FPP`) is also cleared |
+| **OSD Reset** | OSD item *Reset* (`R0`, `status[0]`) | Reset while asserted | **Kept**: the loaded image is restarted from `0x0000`. SDRAM is not re-initialised, so the image is intact | None |
+| **Reset after Mount** | OSD option *Reset after Mount = Yes*, then mounting an `*.IMG` | Reset for 65536 `clk_sys` cycles | Kept (image restarted) | None. The SDRAM controller is re-initialised in this case, like a hard reset; the image bytes are not rewritten and a hardware check that they survive has not been done |
+| **Manual file load** | You pick a file in the OSD | Reset during the download and for a short stretch after | `.BIN` sets it, `.DSK`/`.FPP` leave it unchanged | The picked file only |
+| **Post-download restart** | Automatic, end of any download | Reset for 65536 `clk_sys` cycles | Unchanged (a `.BIN` sets it) | None |
+
+Rules of thumb:
+
+- **OSD Reset restarts the software; hard reset removes it.** Use OSD Reset
+  to restart a loaded image, and re-select the Boot Rom Image after a hard reset
+  (or after a core reload with no saved Boot Rom Image).
+- The SDRAM controller is initialised at power-up and on a hard reset /
+  user button / mount reset, but never by OSD Reset or while a download is in
+  progress (that would stall the HPS in the middle of a transfer).
+- Because there is no ROM, any Z-80 write to port `0x38` (the old ROM-disable
+  trigger) is ignored.
+
 ## I/O port map (reference)
 
 A consolidated list of all I/O ports identified for use by this
@@ -73,7 +170,7 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 
 | Port(s)       | Width | Function                                                                                                  |
 |---------------|-------|-----------------------------------------------------------------------------------------------------------|
-| `0x38`        | 1     | ROM-disable trigger. Any write disables the boot ROM at `0x0000-0x1FFF` and exposes the RAM beneath it.   |
+| `0x38`        | 1     | Unmapped. Formerly the ROM-disable trigger; the boot ROM has been removed, so writes are ignored.        |
 | `0x70`-`0x71` | 2     | DS12887 real-time clock (`n_rtcCS`, `Components/RTC/ds12887.vhd`). AT-style index/data pair: `0x70` = register index, `0x71` = selected register. See below. |
 | `0x80`-`0x81` | 2     | SBCTextDisplayRGB (`n_interface1CS`). VGA/PS-2 text display.                                              |
 | `0x82`-`0x83` | 2     | bufferedUART (`n_interface2CS`). Serial console.                                                          |

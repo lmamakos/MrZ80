@@ -42,9 +42,10 @@ some file names have been changed to relfect that.
 - **Physical memory map**: 128 MB SDRAM at the bottom of the physical
   space, with the 64 KB on-chip block RAM relocated to its own page
   (`block_ram_page`, physical `0x8000000`) just above it — no more
-  shadowing between the two. Frame 0 resets to the block-RAM page (normal
-  boot) or to SDRAM page 0 when a `.BIN` has been OSD-loaded
-  (`bin_loaded`). See `HARDWARE.md` for the exact address layout and reset
+  shadowing between the two. Frame 0 resets to SDRAM page 0 when a `.BIN`
+  has been loaded (`bin_loaded`), or to the block-RAM page for the
+  block-RAM debug load. There is no built-in boot ROM: the CPU is held in
+  reset until a `.BIN` boot image has been loaded. See `HARDWARE.md` for the exact address layout and reset
   mapping.
 - **SDRAM controller + client FSM** (`MicrocomputerZ80CPM.vhd`): a 4-state
   FSM (`S_IDLE → S_REQ → S_DONE → S_GAP`) drives the CoCo3-derived
@@ -60,8 +61,8 @@ some file names have been changed to relfect that.
   logical `0x0000`) and `.DSK` (8 MB RAM-disk images, default top-of-SDRAM)
   streamed in over the HPS `ioctl` download path.
 - **CamelFORTH** (`forth/`): an interim Z-80 monitor/test harness (not part
-  of RomWBW), booted via the `.BIN` loader in place of the legacy BASIC/CP/M
-  ROM. Includes RAM-disk I/O primitives and MMU debug words built on top of
+  of RomWBW), booted via the `.BIN` loader (the legacy BASIC/CP/M
+  ROM is no longer in the core). Includes RAM-disk I/O primitives and MMU debug words built on top of
   the direct-access port. Presently uses the classic 7-instruction inline
   `NEXT` macro, **not** the custom `ED 27` opcode (see below).
 - **Front-panel LED subsystem** (`Components/FRONTPANEL/`): WS2812/SK6812
@@ -594,9 +595,10 @@ As RomWBW's HBIOS takes over boot and memory management, strip out
 remaining Grant Searle MultiComp legacy elements that RomWBW does not need,
 notably:
 
-- The port-`0x38` boot-ROM-disable trigger (`n_RomActive`/`n_basRomCS` in
-  `MicrocomputerZ80CPM.vhd`) — a Searle-convention mechanism for unmapping
-  the boot ROM overlay that RomWBW's own boot sequence will supersede.
+- ~~The port-`0x38` boot-ROM-disable trigger (`n_RomActive`/`n_basRomCS` in
+  `MicrocomputerZ80CPM.vhd`)~~ — done: the built-in boot ROM, `n_RomActive`
+  and `n_basRomCS` have been removed; boot images now come only from the HPS
+  ("Boot Rom Image") and the CPU is held in reset until one is loaded.
 - ~~Any remaining non-Z-80 CPU support (6800/6502/6809 cores and their mux
   logic)~~ — done: the OSD CPU selector and the `cpu_type`-indexed signal
   muxes in `MultiComp.sv` have been removed; the Z-80 core connects directly.

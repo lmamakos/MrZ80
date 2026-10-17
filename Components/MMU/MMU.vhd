@@ -96,12 +96,14 @@
 -- shadow the bottom of the physical address space). It is relocated to its
 -- own physical page given by the generic block_ram_page, above the SDRAM
 -- region, so the full SDRAM is contiguously addressable with no shadowing.
--- At reset the map points logical frame 0 at block_ram_page (so the Z-80
--- boots from block RAM at logical 0x0000) and frames 1..3 at SDRAM physical
--- pages 1..3. The bin_loaded input overrides frame 0 to SDRAM physical page
--- 0 when a .BIN boot image has been loaded into SDRAM, so it boots from
--- 0x0000 instead. This default-mapping mechanism replaces the former
--- external "force block RAM on/off" control signals.
+-- At reset the map points logical frame 0 at block_ram_page and frames 1..3
+-- at SDRAM physical pages 1..3. The bin_loaded input overrides frame 0 to
+-- SDRAM physical page 0 when a .BIN boot image has been loaded into SDRAM, so
+-- it boots from 0x0000. There is no built-in boot ROM: the top level holds
+-- the CPU in reset until a boot image has been loaded, so the bin_loaded = '0'
+-- (block RAM) map is only used when the image was loaded into block RAM (the
+-- "Boot Load Target = Block RAM" debug option, which forces bin_loaded to
+-- the MMU low).
 --
 
 library IEEE;
@@ -143,12 +145,10 @@ entity MMU is
         -- Boot-source select for the reset mapping. When low (default), the
         -- reset map points logical frame 0 at the relocated on-chip block
         -- RAM page (block_ram_page) so the Z-80 fetches its first
-        -- instructions from block RAM at logical 0x0000. When high (a .BIN
-        -- boot image has been loaded into SDRAM), the reset map points frame
-        -- 0 at SDRAM physical page 0 instead, so the loaded image boots from
-        -- 0x0000. This replaces the former external "force block RAM on/off"
-        -- control signals: the boot source is now chosen purely by the
-        -- default MMU mapping.
+        -- instructions from block RAM at logical 0x0000 (boot image loaded
+        -- into block RAM). When high (a .BIN boot image has been loaded into
+        -- SDRAM), the reset map points frame 0 at SDRAM physical page 0
+        -- instead, so the loaded image boots from 0x0000.
         bin_loaded      : in  std_logic := '0'
     );
 end MMU;

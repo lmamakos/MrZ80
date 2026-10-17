@@ -336,13 +336,11 @@ set_global_assignment -name VHDL_FILE Components/TERMINAL/CGABoldRom.vhd
 set_global_assignment -name VHDL_FILE Components/UART/bufferedUART.vhd
 set_global_assignment -name VHDL_FILE Components/SDCARD/sd_controller.vhd
 set_global_assignment -name VHDL_FILE Components/SDCARD/hps_blockdev.vhd
-# set_global_assignment -name QIP_FILE ROMS/Z80/Z80_BASIC_ROM.qip
 set_global_assignment -name QIP_FILE Components/TERMINAL/DisplayRam1K.qip
 # set_global_assignment -name CDF_FILE output_files/m6502.cdf
 set_global_assignment -name QIP_FILE Components/INTERNALRAM/InternalRam64K.qip
 set_global_assignment -name QIP_FILE Components/TERMINAL/DisplayRam2K.qip
 set_global_assignment -name QIP_FILE Components/TERMINAL/CGABoldRomReduced.qip
-set_global_assignment -name QIP_FILE ROMS/Z80/Z80_CPM_BASIC_ROM.qip
 set_global_assignment -name VHDL_FILE MicrocomputerZ80CPM.vhd
 # set_global_assignment -name VHDL_FILE MicrocomputerZ80Basic.vhd
 set_global_assignment -name SIGNALTAP_FILE "output_files/status13-stp1.stp"

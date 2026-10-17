@@ -375,7 +375,7 @@ assign AUDIO_MIX = 0;
 `include "build_id.v"
 parameter CONF_STR = {
 	"MrZ80;;",
-	"FC1,BINROM,Boot Rom Image;",                     // index 1: boot ROM image -> SDRAM @ 0x000000 (or block RAM if OD set)
+	"FC1,BINROM,Boot Rom Image;",                     // index 1: boot ROM image -> SDRAM @ 0x000000 (or block RAM if OD set). No built-in ROM: CPU is held in reset until one is loaded
 	"FC2,DSK,8MB Disk Image;",                        // index 2: RAM-disk image -> SDRAM, top 8 MB first
 	                                                  // indices 3,4: reserved for larger RAM-disk images (SDRAM, DSK-style slots)
 	"FC5,FPP,Front Panel Profiles;",                  // index 5: front-panel LED profiles -> FrontPanel_Subsystem (not SDRAM)
@@ -398,7 +398,7 @@ parameter CONF_STR = {
 // 0         1         2         3          4         5         6   
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// X     XXXXXXX XX     (bit 0 = Reset via "R0"; bit 14 = Flow Control only)
+// X     XXXXXXX XX     (bit 0 = Reset via "R0"; bit 13 = Boot Load Target ("OD"); bit 14 = Flow Control; bit 15 = Reset after Mount)
 // bits 16-19 = Front Panel Profile ("OGJ"): 0 = Software, 1..8 = profile 0..7
    
 //////////////////   HPS I/O   ///////////////////
@@ -554,12 +554,15 @@ end
 
 // ---- OSD-download boot-source latch and post-download auto-reset ----
 //
-// bin_loaded persists the "boot from the loaded .BIN" decision: it is set
-// when a .BIN download finishes and stays set until a deliberate hard reset
-// (rising edge of RESET / user button buttons[1]). The OSD Reset item
-// (status[0]) and the post-download auto-reset only reset the CPU, so the
-// loaded image is restarted rather than discarded; its bytes are still in
-// SDRAM because the SDRAM controller is not re-initialized by them.
+// There is no built-in boot ROM. bin_loaded persists the "a boot image has
+// been loaded" decision: it is set when a .BIN download finishes and stays set
+// until a deliberate hard reset (rising edge of RESET / user button
+// buttons[1]). While bin_loaded is clear the CPU is held in reset (see
+// `reset` below). The OSD Reset item (status[0]) and the post-download
+// auto-reset only reset the CPU, so the loaded image is restarted rather
+// than discarded; its bytes are still in SDRAM because the SDRAM controller
+// is not re-initialized by them. After a hard reset the boot image must be
+// selected again from the OSD ("Boot Rom Image").
 //
 // The clear is EDGE-triggered, and the download-complete set has priority,
 // so a hard reset that is still held when a download completes cannot wipe
@@ -578,8 +581,9 @@ always @(posedge clk_sys) begin
         // Falling edge of a .BIN download: latch boot-from-BIN.
         bin_loaded <= 1'b1;
     end else if (hard_reset_req & ~hard_reset_d) begin
-        // Rising edge of a hard reset clears the boot-source latch
-        // (return to built-in ROM). OSD Reset (status[0]) does not.
+        // Rising edge of a hard reset clears the boot-source latch; the CPU
+        // is then held in reset until a boot image is loaded again.
+        // OSD Reset (status[0]) does not.
         bin_loaded <= 1'b0;
     end
 
@@ -596,9 +600,11 @@ always @(posedge clk_sys) begin
     end
 end
 
-// CPU is held in reset during a download and for the post-download stretch.
+// CPU is held in reset during a download, for the post-download stretch, and
+// for as long as no boot image has been loaded (no built-in boot ROM).
+// ~bin_loaded is deliberately NOT part of sdram_init_reset below.
 wire reset = RESET_sync | status[0] | buttons[1] | reset_from_mount
-           | ioctl_download | dl_reset_stretch;
+           | ioctl_download | dl_reset_stretch | ~bin_loaded;
 
 // The SDRAM controller must NOT be re-initialized during a download (that
 // would wipe the bytes we are streaming in, and would stall the HPS forever

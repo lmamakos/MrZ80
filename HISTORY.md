@@ -3371,3 +3371,26 @@ vector via symbolic `dbgReg_*` signals in the order A F A' F' B C B' C' D E D' E
 IX IY PC SP, which fills the 256-LED string exactly. Bit offsets were checked against the
 concatenation in `T80.vhd`; whole-core GHDL sim and Quartus synthesis pass. Not yet tested
 on hardware.
+
+### Built-in boot ROM disconnected
+
+The 8 KB Grant Searle boot ROM (`Z80_CPM_BASIC_ROM`, `intMon.hex`) is no longer part of
+the FPGA design. Boot software now comes only from the HPS "Boot Rom Image" (`FC1`, `.BIN`),
+so choosing among bootable images needs no special case compiled into the core.
+
+- `MicrocomputerZ80CPM.vhd`: removed the `rom1` instance, `basRomData`, `n_basRomCS`,
+  `n_RomActive`, the port `$38` latch and the ROM term in the `cpuDataIn` mux. Port `$38`
+  is now unmapped (`cbios128.asm` still writes it; harmless).
+- `MrZ80.sv`: `reset` now includes `~bin_loaded`, so the Z-80 is held in reset until a `.BIN`
+  has been loaded. `~bin_loaded` is deliberately not in `sdram_init_reset` (that would
+  recreate the HPS auto-load deadlock). A hard reset (RESET / user button) still clears
+  `bin_loaded`, so the boot image must be selected again from the OSD afterwards. OSD Reset
+  still restarts the loaded image.
+- The "Boot Load Target: Block RAM" debug option (`status[13]`, `dl_bram_*`) is kept; it still
+  sets `bin_loaded` so the CPU is released after a block-RAM load.
+- `MrZ80.qsf`: removed the `Z80_CPM_BASIC_ROM.qip` entry. `MrZ80.sdc`: removed the ROM from
+  `mem_regs`.
+- `sim/`: regenerated `MicrocomputerZ80CPM_sim.vhd`, removed the ROM stand-in from
+  `behav_ram_rom.vhd`.
+- The `ROMS/Z80/` files and the monitor sources are left in the repository, unused.
+- Known: `MrZ80.qsf` references `output_files/status13-stp1.stp`, which is not present.

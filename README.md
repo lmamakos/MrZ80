@@ -119,8 +119,9 @@ For more details on console connection, refer to the official MiSTer documentati
 
 
 ### Z80 Basic
-There is a BASIC interpreter lurking around, still in the older Grant Searle boot monitor program.  This will eventually
-be deleted when the RomWBW port makes more progress.
+The older Grant Searle boot monitor program with its BASIC interpreter is no longer part of the FPGA core (the
+built-in boot ROM was disconnected).  Its sources remain in the repository under `ROMS/Z80/` and
+`Z80 CPM and bootloader (basmon)/`, and `intMon.hex` could be built into a `.BIN` boot image if wanted.
 
 SGN, INT, ABS ,USR, FRE, INP, POS, SQR, RND ,LOG, EXP, COS, SIN, TAN, ATN, PEEK ,DEEK ,LEN, STR$, VAL ,ASC, CHR$ ,LEFT$,
 RIGHT$, MID$, END, FOR, NEXT, DATA, INPUT, DIM, READ, LET, GOTO, RUN, IF, RESTORE, GOSUB, RETURN, REM, STOP, OUT, ON,
@@ -163,10 +164,11 @@ This section describes the On-Screen Display menu configuration for the MultiCom
 ### System Control
 
 - __Boot Rom Image__ (`.BIN`/`.ROM`): loaded into SDRAM at address 0 and started
-  in place of the built-in boot ROM. The last file chosen is remembered and
+  from there. There is no built-in boot ROM: the Z-80 is held in reset until a
+  boot image has been loaded. The last file chosen is remembered and
   loaded automatically when the core starts. OSD Reset restarts the loaded
-  image; a hard reset (reloading the core or the user button) returns to the
-  built-in boot ROM.
+  image; a hard reset (reloading the core or the user button) discards it and
+  holds the Z-80 in reset until a boot image is selected again from the OSD.
 - __Mount *.IMG__ (SD card image): mounts an image file as a block device at Z-80
   I/O ports `0x90`-`0x97` (see `HARDWARE.md`, "Storage"). It is independent of
   the physical SD card socket, which is served by the SPI controller at

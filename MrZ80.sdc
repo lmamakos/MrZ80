@@ -37,7 +37,7 @@ set t80_regs [get_registers "$core|T80s:cpu1|*"]
 # check stays on the launch edge. This covers the paths that leave the
 # core and come back through the address decode, MMU read-back and the
 # cpuDataIn mux. Paths from other clk_sys registers into the T80
-# (peripheral data, sdramReadData, sdram_wait_n, block-RAM q, n_RomActive)
+# (peripheral data, sdramReadData, sdram_wait_n, block-RAM q)
 # are NOT relaxed: they can change on any clk_sys edge, including the one
 # just before a cpu_cen edge, so they get the normal one-period check.
 set_multicycle_path -setup -end 5 -from $t80_regs -to $t80_regs
@@ -48,7 +48,7 @@ set_multicycle_path -hold  -end 4 -from $t80_regs -to $t80_regs
 set_false_path -from [get_registers {emu:emu|bin_loaded}] -to $t80_regs
 set_false_path -from [get_registers {emu:emu|hps_io:hps_io|status[13]}] -to $t80_regs
 
-# ---- T80 -> block RAM / boot ROM (setup) ------------------------------------
+# ---- T80 -> block RAM (setup) ------------------------------------
 # Their input registers sample the T80 address/data/strobes on every clk_sys
 # edge, but the T80 only uses the result at a later cpu_cen edge:
 #   reads  - the address is driven at the start of a T-state and the data
@@ -65,8 +65,7 @@ set_false_path -from [get_registers {emu:emu|hps_io:hps_io|status[13]}] -to $t80
 # Allow 4 clk_sys periods for these paths; the hold check stays on the
 # launch edge (-hold -end 3).
 set mem_regs [get_registers [list \
-    "$core|InternalRam64K:ram1|*" \
-    "$core|Z80_CPM_BASIC_ROM:rom1|*" ]]
+    "$core|InternalRam64K:ram1|*" ]]
 set_multicycle_path -setup -end 4 -from $t80_regs -to $mem_regs
 set_multicycle_path -hold  -end 3 -from $t80_regs -to $mem_regs
 

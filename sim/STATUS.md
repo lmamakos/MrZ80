@@ -37,7 +37,7 @@ everything under `sim/` is new.
   Run after any edit to the real files or their copies. `run.sh` calls
   this automatically before compiling.
 - `behav_ram_rom.vhd`, `behav_display.vhd` -- behavioral (non-megafunction)
-  stand-ins for `InternalRam64K`, `Z80_CPM_BASIC_ROM`, and
+  stand-ins for `InternalRam64K` and
   `SBCTextDisplayRGB`'s font/display-RAM chain, all of which are Quartus
   MegaWizard `altsyncram` wrappers needing the Altera `altera_mf`
   simulation library (present as source under Quartus's `eda/sim_lib/` on

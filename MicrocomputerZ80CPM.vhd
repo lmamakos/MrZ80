@@ -91,8 +91,10 @@ entity MicrocomputerZ80CPM is
 		sdram_ready		: in  std_logic;
 
 		-- High when a .BIN boot image has been downloaded from the MiSTer
-		-- OSD. When set, the built-in 8 KB boot ROM overlay is disabled so
-		-- the Z-80 boots the loaded image from 0x0000 instead of the ROM.
+		-- OSD / HPS. When set, the MMU reset map points logical frame 0 at
+		-- SDRAM page 0 so the Z-80 boots the loaded image from 0x0000.
+		-- There is no built-in boot ROM: the top level holds the CPU in
+		-- reset until an image has been loaded.
 		bin_loaded		: in  std_logic := '0';
 
 		-- Debug aid: when high, the .BIN was loaded into the on-chip 64 KB
@@ -179,7 +181,6 @@ architecture struct of MicrocomputerZ80CPM is
 
 	signal fpChainRegsOut			: std_logic;
 
-	signal basRomData				: std_logic_vector(7 downto 0);
 	signal internalRam1DataOut		: std_logic_vector(7 downto 0);
 	-- Block RAM port muxed between the CPU and the OSD download write path.
 	signal bram_address				: std_logic_vector(15 downto 0);
@@ -206,7 +207,6 @@ architecture struct of MicrocomputerZ80CPM is
 	signal n_int2					: std_logic :='1';	
 	
 	signal n_internalRam1CS			: std_logic :='1';
-	signal n_basRomCS				: std_logic :='1';
 	signal n_interface1CS			: std_logic :='1';
 	signal n_interface2CS			: std_logic :='1';
 	signal n_sdCardCS				: std_logic :='1';
@@ -327,28 +327,8 @@ architecture struct of MicrocomputerZ80CPM is
 	signal serialClock				: std_logic;
 	signal sdClock					: std_logic;
 
-	--CPM
-	signal n_RomActive 				: std_logic := '0';
-
 	
 begin
-	--CPM
-	-- Disable ROM on any OUT to port $38; re-enable on reset. Sampled in
-	-- the clk domain during the I/O write strobe (the address is stable
-	-- throughout it), like fpLatch, rather than clocked by the n_ioWR
-	-- strobe itself as in the original MultiComp. The ROM is disabled a
-	-- few clk cycles earlier than before (start rather than end of the
-	-- write strobe); no memory read can occur in between.
-	process (clk) begin
-		if rising_edge(clk) then
-			if N_RESET = '0' then
-				n_RomActive <= '0';
-			elsif n_ioWR = '0' and cpuAddress(7 downto 0) = "00111000" then -- $38
-				n_RomActive <= '1';
-			end if;
-		end if;
-	end process;
-
 process(clk)
 begin
 	if rising_edge(clk) then
@@ -449,24 +429,12 @@ sdram_release <= '1' when (sdram_state = S_REQ and sdram_ready = '1' and
                           (sdram_state = S_HOLD and sdram_match = '1') else '0';
 cpu_wait_n <= (not mmu_cpu_wait) and (sdram_wait_n or sdram_release);
 -- ____________________________________________________________________________________
--- ROM GOES HERE	
-
-rom1 : entity work.Z80_CPM_BASIC_ROM
-port map(
-	address => cpuAddress(12 downto 0),
-	clock => clk,
-	q => basRomData
-);
-
--- ____________________________________________________________________________________
 -- RAM GOES HERE
 
 -- Block RAM is addressed by the MMU's physical output (low 16 bits). It is
 -- the backing store for the relocated block RAM page 8192..8195 (physical
 -- 0x8000000..0x800FFFF). Writes are qualified by both the memory-write
--- strobe and the physical decode (phys_in_blockram); the ROM overlay at
--- logical 0x0000-0x1FFF still wins on the cpuDataIn mux while
--- n_RomActive = '0'.
+-- strobe and the physical decode (phys_in_blockram).
 -- During a block-RAM-targeted .BIN download the CPU is in reset, so the
 -- download write port drives the block RAM's address/data/wren. Otherwise
 -- the CPU's MMU-translated physical address and write strobe are used.
@@ -725,7 +693,9 @@ fpChainEnd :  entity work.Transparent_Capture_Chain
 		latch         => fpChainLatch,
 		shift_en      => fpChainShiftEn,
 
-		combined_data => x"000000" & fpLatch,
+		combined_data => x"0000_0" &    -- 20 bits
+                                 not n_WR & not n_RD & not n_MREQ & not n_IORQ &  -- 4 bits
+                                 fpLatch,       -- 8 bits
 
 		chain_in      => '0',
 		chain_out     => fpChainEndOut
@@ -863,11 +833,9 @@ n_memRD <= n_RD or n_MREQ;
 -- ____________________________________________________________________________________
 -- CHIP SELECTS GO HERE
 
--- Boot ROM still overlays logical 0x0000-0x1FFF before MMU translation.
--- The ROM data wins on the cpuDataIn mux while n_RomActive = '0'; this is
--- how the bootloader runs before it has had a chance to set up the MMU
--- or copy code into RAM.
-n_basRomCS <= '0' when cpuAddress(15 downto 13) = "000" and n_memRD='0' and n_RomActive = '0' and bin_loaded = '0' else '1'; --8K at bottom of memory (disabled when a BIN boot image is loaded)
+-- There is no built-in boot ROM: all boot code arrives as a .BIN image
+-- loaded by the HPS (OSD "Boot Rom Image"). Port $38 (the old ROM-disable
+-- trigger) is now unmapped.
 n_interface1CS <= '0' when cpuAddress(7 downto 1) = "1000000" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 2 Bytes $80-$81
 n_interface2CS <= '0' when cpuAddress(7 downto 1) = "1000001" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 2 Bytes $82-$83
 n_sdCardCS <= '0' when cpuAddress(7 downto 3) = "10001" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 8 Bytes $88-$8F
@@ -883,10 +851,7 @@ n_rtcCS <= '0' when cpuAddress(7 downto 1) = "0111000" and (n_ioWR='0' or n_ioRD
 mmu_io_cs <= '1' when n_mmuCS = '0' else '0';
 
 -- Block-RAM chip-select: assert whenever the MMU's physical address
--- lands in the low 64 KB region. The ROM overlay still wins on the
--- cpuDataIn mux for logical 0x0000-0x1FFF, but the underlying RAM
--- is kept selected so writes into the ROM region silently update
--- the backing RAM (matching legacy bootloader behaviour).
+-- lands in the low 64 KB region.
 n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
 
 -- ____________________________________________________________________________________
@@ -898,7 +863,6 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
     --     direct-access data port at +12 (offset "1100"); on +12 the MMU
     --     promotes the cycle to a memory access and the data must come
     --     from the physical-memory path below.
-    --   * ROM overlay at logical 0x0000-0x1FFF wins over RAM.
     --   * Physical-memory path: block RAM for phys < 0x010000, SDRAM
     --     otherwise. Both legs are qualified by mmu_req_mem_out (a memory
     --     cycle, or the MMU's promoted direct-access port +12), because
@@ -915,7 +879,6 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
                  timerDataOut        when (n_timerCS = '0') else
                  rtcDataOut          when (n_rtcCS = '0') else
                  mmu_dataOut         when (mmu_io_cs = '1' and cpuAddress(3 downto 0) /= "1100") else
-                 basRomData          when (n_basRomCS = '0') else
                  internalRam1DataOut when (mmu_req_mem_out = '1' and phys_in_blockram = '1') else
                  sdram_dout          when (mmu_req_mem_out = '1' and phys_in_sdram = '1') else
                  x"FF";
