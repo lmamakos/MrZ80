@@ -10,6 +10,10 @@ output_files/*
 # GHDL work libraries (e.g. work-obj08.cf produced by `ghdl -a`)
 work-obj*.cf
 
+# Python bytecode caches
+__pycache__/
+*.pyc
+
 # AI assistant session transcripts
 session-ses_*.md
 .Xauthority
