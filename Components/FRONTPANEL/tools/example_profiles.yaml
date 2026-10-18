@@ -1,0 +1,109 @@
+# example_profiles.yaml -- front-panel profile configuration for fpprofile.py
+#
+#   python3 fpprofile.py example_profiles.yaml -o profiles.fpp
+#   python3 fpprofile.py --dump profiles.fpp          (inspect a file)
+#
+# Copy profiles.fpp to the MiSTer SD card and select it with the OSD item
+# "Front Panel Profiles".  Profiles that are not listed emit as the default
+# profile: identity map, ON = #FF0001, OFF = #000009 (the hardware's own
+# no-file defaults).  Unknown keys and bad values are errors.  The full
+# semantics of every key live in NEW-REQUIREMENTS.md.
+#
+# This example describes the development panel: a 256-LED flexible matrix,
+# 8 rows x 32 columns upright, wired from the top-left corner straight down
+# column 0, serpentine into each next column (layout below).
+#
+# Capture chain (MicrocomputerZ80CPM.vhd, MSB first):
+#   0..7    fpLatch (port $FF style output latch), bit 7 first
+#   8..23   address bus A15..A0
+#   24..31  data bus D7..D0
+#   32..63  fpLatch again (test)
+#   64..191 CPU registers: A F A' F' B C B' C' D E D' E' H L H' L' (8 each)
+#   192..255 IX, IY, PC, SP (16 each)
+
+chain_bits: 256          # matches the default FPGA CHAIN_BITS build
+leds: 256                # matches the default FPGA NUM_LEDS
+# dir: right             # run directions default to "right"; a profile-level
+                         # `dir:` (see profile.2) or a per-run `dir:` wins
+
+colors:                  # names usable anywhere a colour is accepted;
+  heartbeat: "#FF2800"   # extend/override the built-in CSS/HTML names
+  amber: "#FFBF00"       # (amber is not a CSS keyword -- define it once)
+
+signals:                 # named chain groups; a definition may reference
+  LATCH:  ["0..7"]       # only EARLIER symbols; repeats are allowed
+  ADDR:   ["8..23"]      # A15..A0, chain order left to right
+  DATA:   ["24..31"]     # D7..D0
+  REG_AF: ["64..79"]
+  REG_BC: ["96..111"]
+  REG_DE: ["128..143"]
+  REG_HL: ["160..175"]
+  IX:     ["192..207"]
+  IY:     ["208..223"]
+  PC:     ["224..239"]
+  SP:     ["240..255"]
+  PTRS:   [IX, IY]                 # composed of earlier symbols
+  ALU_HDR: ["REG_AF[7..0]"]        # positional subset: A's 8 bits, MSB first
+
+layout:                  # one global wiring description, all profiles
+  rows: 8
+  cols: 32
+  origin: top-left       # the data feed corner
+  major: column          # the string runs down columns...
+  serpentine: true       # ...zig-zagging into each next column
+
+defaults:
+  on:  "#FF0001"         # same as the hardware's built-in colours
+  off: "#000009"
+
+profile.0:               # "everything in one frame" overview
+  runs:
+    - start: [0, 0]      # bus row: 8 + 16 + 8 = exactly 32 cells
+      signals: [LATCH, ADDR, DATA]   # (dir omitted: defaults to right)
+    - start: [2, 0]
+      signals: [REG_AF]  # 16 cells from [2,0]; the rest of the row is free
+    - start: [3, 0]
+      dir: right         # explicit, though it is the default
+      signals: [REG_BC]
+    - start: [4, 0]
+      signals: [REG_DE]
+    - start: [5, 0]
+      signals: [REG_HL]
+    - start: [6, 0]
+      on: amber          # highlight the pointers against the default red
+      signals: [PC, SP]
+
+profile.1:               # pointers and a recoloured data bus
+  on: "#00FF40"          # profile colour: every run that doesn't override
+  runs:
+    - start: [0, 0]
+      dir: right
+      signals: [PTRS]                        # IX then IY, 32 cells
+    - start: [1, 0]
+      signals: [PC, SP]
+    - start: [3, 0]
+      signals:                            # per-element colours
+        - {sig: "ADDR[7..0]", on: red, off: black}
+        - "-"
+        - {sig: DATA, on: heartbeat}
+        - LATCH
+    - start: [3, 25]     # packs into row 3 right where the run above
+      dir: right         # stops (it claims 25 cells, cols 0..24)
+      on: skyblue
+      signals: ["8..14"] # claim is exactly the data: 7 cells, cols 25..31
+
+profile.2:               # one vertical column, then a mixed row
+  dir: right             # this profile's default direction...
+  runs:
+    - start: [7, 0]      # ...except the feed-corner column, upward
+      dir: up
+      on: red
+      signals: ["ADDR[7..0]"]
+    - start: [5, 2]      # dark "-" cells make readable gaps
+      on: teal
+      signals:
+        - LATCH
+        - {sig: "-", off: "#101010"}
+        - LATCH
+        - "-"
+        - {sig: ALU_HDR, on: gold}

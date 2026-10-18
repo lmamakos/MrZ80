@@ -290,7 +290,7 @@ and writes maps 0..255 as before). To read an entry back, set the pointer, read
 
 ### Profile file format
 
-All values are bytes; the file (version 2) is exactly **16400 bytes**. Version 1 files (one-byte map, 14352 bytes) are no longer accepted by the hardware; regenerate them with `fpprofile.py`, which can still `--dump` a version 1 file.
+All values are bytes; the file (version 2) is exactly **16400 bytes**. Version 1 files (one-byte map, 14352 bytes) are no longer accepted by the hardware (`fpprofile.py --dump` can still decode them).
 
 | Offset | Size | Content |
 |--------|------|---------|
@@ -303,134 +303,70 @@ All values are bytes; the file (version 2) is exactly **16400 bytes**. Version 1
 
 ### Building a profile file: `tools/fpprofile.py`
 
-    python3 Components/FRONTPANEL/tools/fpprofile.py my.toml -o profiles.fpp
+    python3 Components/FRONTPANEL/tools/fpprofile.py example_profiles.yaml -o profiles.fpp
     python3 Components/FRONTPANEL/tools/fpprofile.py --dump profiles.fpp
 
-The input is TOML (Python 3.11+). Profiles that are not mentioned get the
-defaults, as do LEDs that a profile does not override, so a file may
-describe any subset of the 8 profiles. `tools/example_profiles.toml` is an
-annotated example. Unknown keys, bad values and out-of-range numbers are
-reported as errors rather than ignored.
+The input is YAML (Python >= 3.9 with PyYAML -- Debian package
+`python3-yaml`). TOML input was retired with this rework; a `.toml`
+file is rejected with a pointer to the rewrite. The complete model and
+every validation rule are specified in `tools/NEW-REQUIREMENTS.md`;
+`tools/example_profiles.yaml` is an annotated example matching the
+development panel. Profiles the config does not mention emit as the
+default profile (identity map, ON = `#FF0001`, OFF = `#000009` -- the
+hardware's own no-file defaults).
 
 Command line:
 
 | Argument | Meaning |
 |----------|---------|
-| `config` | TOML file to read. Omit it to produce an all-defaults file. |
+| `config` | YAML file to read. Omit it to produce an all-defaults file. |
 | `-o FILE`, `--output FILE` | Profile file to write (required when building). |
-| `--force` | Pad/truncate profiles that do not produce exactly 256 LEDs instead of failing. |
+| `--chain-bits N` | Override the `chain_bits` key (1..1024). |
 | `--strict` | Treat warnings as errors (nothing is written). |
-| `--chain-bits N` | Length of the capture chain (1..1024). Warn about map entries at or beyond it (they would always show OFF). Without it, any value up to 1023 is accepted silently. |
-| `--dump FILE` | Decode and summarise an existing profile file instead of building. |
+| `--dump FILE` | Decode and summarise an existing profile file (version 2; version 1 readable). |
 
-#### Configuration file reference
+#### Configuration model (summary; `tools/NEW-REQUIREMENTS.md` is the spec)
 
-Values written as *a* | *b* are the complete list of accepted choices.
-Values in the Default column apply when the key is omitted.
+- **`layout`** -- one, global, wiring only: `rows` x `cols` (must equal
+  `leds`, default 256) plus the wiring walk (`origin` corner, `major`,
+  `serpentine`); the cell visited at step *n* holds physical LED *n*.
+- **`signals`** -- named chain-position groups built from chain
+  numbers, ranges `a..b` (inclusive, first endpoint emitted first --
+  `"34..30"` descends), and earlier symbols or subsets `NAME[7..0]`
+  (positional indices into the definition, written order). Forward
+  references are errors; repeats are fine. Quoted `"a:b"`/`"a-b"` are
+  accepted aliases; remember that an *unquoted* `16:23` is YAML 1.1
+  sexagesimal (the integer 983), and the tool says so when rejecting
+  such a value. In flow lists (`[...]`) subset tokens must be quoted.
+- **`profile.N`** (`N` 0..7) -- optional `on`/`off` colours, an
+  optional default run `dir`, and an ordered list of **runs**. A run
+  places its expanded signal list on a straight line from
+  `start: [row, col]` (top-left origin) toward the panel edge in
+  `dir: right|left|up|down`, one element per cell; `dir` is optional
+  and inherits the profile's `dir`, then the top-level `dir`, then
+  `right`. No wrap: overflow past the edge is an error. The run
+  claims exactly
+  the cells its data covers -- never the bare edge past them -- so
+  runs pack freely into one line; any two runs claiming the same cell
+  is an error naming both runs and the shared cells.
+- **Blanks** -- `-` occupies a cell as an unused LED, and cells no
+  run claims are blank automatically (the grid always fills with the
+  default OFF values).
+  A blank maps chain position 0 with ON and OFF both baked to the
+  resolved OFF colour, so it is static regardless of what chain bit 0
+  does. `{sig: "-", off: "#101010"}` picks a custom darkness (`on` on
+  a blank is an error).
+- **Elements** -- a bare token inherits the run's colours;
+  `{sig: X, on: C, off: C}` colours the cells of that one reference.
+- **Colours** -- `#RRGGBB`, `RRGGBB`, `[r,g,b]`, or a name: the
+  built-in CSS/HTML names, extended/overridden by the `colors` table.
+  Per channel: element > run > profile > `defaults` > built-in.
+- Warnings (errors under `--strict`): a `signals` symbol or `colors`
+  entry nothing references. Duplicate chain positions are normal and
+  silent. Unknown keys are errors with the config path and source
+  line. Output bytes are deterministic.
 
-**Colour values** (used by every `on`/`off` key): a string `"#RRGGBB"` or
-`"RRGGBB"` (hex, either case), or an array `[r, g, b]` of three integers
-0..255. Colours are R,G,B as you see them; the GRB reordering the LEDs need
-is done in hardware. Examples: `"#FF8000"`, `"FF8000"`, `[255, 128, 0]`.
-
-**`[defaults]`** (optional table): colours for every profile and LED that
-does not set its own.
-
-| Key | Values | Default |
-|-----|--------|---------|
-| `on` | colour | `#FF0001` (red) |
-| `off` | colour | `#000009` (dim blue) |
-
-**`[profile.N]`** (optional; `N` is 0, 1, 2, 3, 4, 5, 6 or 7; any other
-number is an error). All keys are optional.
-
-| Key | Values | Default |
-|-----|--------|---------|
-| `on` | colour for every LED of this profile when its chain bit is 1 | `[defaults]` `on` |
-| `off` | colour for every LED of this profile when its chain bit is 0 | `[defaults]` `off` |
-| `map` | array of exactly 256 integers, each 0..1023 (a value at or beyond the hardware's `CHAIN_BITS` shows OFF). Entry *n* (counting from 0) is the chain position shown by physical LED *n*. | identity (LED *n* shows chain position *n*) |
-| `matrix` | sub-table, see below. Cannot be combined with `map`. | none |
-| `led` | array of per-LED override tables (`[[profile.N.led]]`), see below. Applied after `map`/`matrix`. | none |
-
-**`[profile.N.matrix]`**: computes `map` for an X by Y matrix. The chain
-order (how the capture chain enumerates the cells) and the strip order (how
-the string of LEDs is wired through the cells) are described separately;
-the resulting map sends each physical LED to the chain position of the cell
-it sits at. Rows are counted from the top, columns from the left.
-
-| Key | Values | Default |
-|-----|--------|---------|
-| `cols` | integer >= 1 (X: number of columns). **Required.** | |
-| `rows` | integer >= 1 (Y: number of rows). **Required.** | |
-| `chain_offset` | integer 0..1023: added to every chain position, so a 256-cell matrix can show a different window of a chain longer than 256 bits | `0` |
-| `chain_origin` | `"top-left"` \| `"top-right"` \| `"bottom-left"` \| `"bottom-right"`: the corner where the chain order starts | `"top-left"` |
-| `chain_major` | `"row"` \| `"column"`: `"row"` runs along a row first, then steps to the next row; `"column"` runs down a column first, then steps to the next column | `"row"` |
-| `chain_serpentine` | `true` \| `false`: `true` reverses direction on every second row/column (zig-zag), `false` restarts each from the same edge | `false` |
-| `strip_origin` | same choices as `chain_origin`: the corner where the LED string starts | `"top-left"` |
-| `strip_major` | same choices as `chain_major`: direction the LED string runs first | `"row"` |
-| `strip_serpentine` | `true` \| `false`, as `chain_serpentine`, for the LED string | `false` |
-
-**`chain_*` versus `strip_*`.** Both groups take the same three settings
-(origin corner, major direction, serpentine), but each describes a different
-walk across the cells of the matrix:
-
-- `chain_*` is the order of the *signals*. Cell *k* of the chain walk is the
-  cell that shows capture-chain bit *k*. It is how the displayed bits are
-  laid out on the panel (for example a register drawn in left-to-right rows
-  from the top-left), and has nothing to do with how the LEDs are wired.
-- `strip_*` is the order of the *wiring*. Cell *n* of the strip walk is
-  where the *n*-th LED of the string is mounted, i.e. how the data wire
-  snakes through the board.
-
-The tool puts physical LED *n* at cell *n* of the strip walk; that cell is
-cell *k* of the chain walk, so `map[n] = k`. Change `chain_*` to rearrange
-which signal appears where on the panel, and `strip_*` to match the board
-wiring. Identical settings give the identity map.
-
-Example, 4 columns x 3 rows, chain walk left default (chain bit shown in
-each cell):
-
-    chain bit            strip_origin="top-left", strip_major="row",
-     0  1  2  3          strip_serpentine=true: LED number in each cell
-     4  5  6  7           0  1  2  3      map = 0,1,2,3, 7,6,5,4, 8,9,10,11
-     8  9 10 11           7  6  5  4
-                          8  9 10 11
-
-                         strip_origin="bottom-left", strip_major="column",
-                         strip_serpentine=true:
-                          2  3  8  9      map = 8,4,0, 1,5,9, 10,6,2, 3,7,11
-                          1  4  7 10
-                          0  5  6 11
-
-Either way the panel still shows chain bit 0 at the top-left and bit 11 at
-the bottom-right; only the LED wiring differs.
-
-`cols` x `rows` should be 256. Any other size is an error (see `--force`
-below). If the chain and strip settings are identical the map is the
-identity. Origins and directions are always taken relative to the top-left
-of the picture, so `"bottom-left"` with `"column"` means "start at the
-bottom-left cell and run up the first column".
-
-**`[[profile.N.led]]`**: one table per LED to override; any number may be
-given.
-
-| Key | Values | Default |
-|-----|--------|---------|
-| `index` | integer 0..255: the physical LED to change | the table's position in the list (first = 0, second = 1, ...) |
-| `map` | integer 0..1023: chain position this LED shows | unchanged |
-| `on` | colour | unchanged |
-| `off` | colour | unchanged |
-
-Colour precedence, highest first: `[[profile.N.led]]` `on`/`off`, then
-`[profile.N]` `on`/`off`, then `[defaults]`, then the built-in colours.
-Map precedence: `[[profile.N.led]]` `map`, then `matrix` or `map`, then the
-identity map.
-
-A profile whose geometry does not produce exactly 256 LEDs is an error and
-nothing is written, unless `--force` is given (the profile is then padded
-with identity-map LEDs, or truncated). Out-of-range map values are errors;
-chain positions used by more than one LED are warnings (`--strict` makes
-warnings errors). Unit tests: `cd Components/FRONTPANEL/tools && python3 -m unittest -v test_fpprofile`.
+Unit tests: `cd Components/FRONTPANEL/tools && python3 -m unittest -v test_fpprofile`.
 
 ## Current chain assignment (`MicrocomputerZ80CPM.vhd`)
 

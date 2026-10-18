@@ -3420,3 +3420,29 @@ image was re-selected from the OSD.
 
 `reset_from_mount` was removed from `sdram_init_reset` in `MrZ80.sv` (it still resets the CPU for 65536
 `clk_sys` cycles). SDRAM is now re-initialised only at power-up and on the framework `RESET` (core reload).
+
+### Front-panel profile tool rework: YAML input, symbolic signals, run placement (`Components/FRONTPANEL/tools/`)
+
+`fpprofile.py` was rewritten from scratch against the resolved spec in
+`Components/FRONTPANEL/tools/NEW-REQUIREMENTS.md`. TOML input (retired), the matrix/`chain_*`/`strip_*`
+model, per-LED `led:` overrides and `--force` are gone. The YAML schema instead has: one global `layout`
+(wiring walk: `rows`/`cols`/`origin`/`major`/`serpentine`, `rows*cols` must equal `leds`); a `signals`
+table of named chain groups built from ranges `a..b` (inclusive, first endpoint emitted first, either
+direction; quoted `a:b`/`a-b` aliases), earlier symbols, and positional subsets `NAME[hi..lo]` emitted in
+written order; and per-profile `runs` that paint a straight line from `start: [row, col]` in
+`dir: right|left|up|down`, each run claiming exactly the cells its expanded data covers -- not the
+bare edge to the panel -- so runs pack freely into one line (element count beyond the line's capacity,
+and two runs claiming one cell, are errors with full diagnostics; unclaimed cells always fill as
+blanks). `dir` is optional at run level and inherits the profile's `dir`,
+then a top-level `dir`, defaulting to `right`. Colours attach to runs and to individual run elements
+(`{sig: X, on: C, off: C}`), resolving per channel element > run > profile > `defaults` > built-in, and
+accept CSS/HTML colour names extended by a `colors` table. Unused cells are blanks: map chain position 0
+with ON=OFF baked to the resolved OFF colour so they are static whatever bit 0 does. PyYAML (`safe_load`)
+is the input parser behind a `SafeLoader` subclass whose bool resolver accepts only `true`/`false` —
+YAML 1.1 would otherwise turn every `on:`/`off:` key into a boolean. Errors report the config key path
+with source line; rejected integers that look like YAML-eaten sexagesimal ranges (unquoted `16:23` = 983)
+get a did-you-mean hint; output is deterministic. The binary remains version 2, unchanged for the
+hardware. `example_profiles.yaml` (new) describes the development panel; `profiles.fpp` was regenerated
+from it; `profiles.toml`/`example_profiles.toml` deleted. `test_fpprofile.py` rewritten: 57 tests
+covering range/subset semantics, spans, overlaps, blanks, colour precedence, the boolean-key trap, TOML
+sniffing, encode/decode and the CLI, all passing; `sim/run_frontpanel.sh` unchanged and passing.
