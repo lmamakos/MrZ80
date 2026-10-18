@@ -271,6 +271,6 @@ nothing), confirming the ALU/flag path as ground truth.
 `MicrocomputerZ80CPM.vhd` splits `cpuDbgRegisters` at the fixed §1.1
 positions into `dbgReg_*` and drives the front-panel capture chain
 (`fpChainRegs`, LEDs 32-223 of the 384-bit chain, A first).  Thanks to the
-§1.3 invariant no `Alternate` awareness is needed there either.  Note the
-older chain-assignment table in `Components/FRONTPANEL/README.md` still
-reflects the 256-bit era and is stale.
+§1.3 invariant no `Alternate` awareness is needed there either.  The
+full chain map (all 384 positions) is documented in
+`Components/FRONTPANEL/README.md`, § *Current capture chain*.

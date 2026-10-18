@@ -6,9 +6,9 @@ index FC5) and initialises all 8 profiles of FrontPanel_Subsystem.
 A profile record gives, for each physical LED: the capture-chain
 position it displays (the map) and its ON and OFF RGB colours.
 
-Input is YAML (PyYAML).  The authoritative description of the model
-and of every validation rule is tools/NEW-REQUIREMENTS.md; this
-docstring is the working reference.
+Input is YAML (PyYAML).  The authoritative user guide and validation
+specification is tools/fpprofile.md; this docstring is the working
+reference.
 
   python3 fpprofile.py example_profiles.yaml -o profiles.fpp
   python3 fpprofile.py --dump profiles.fpp            (inspect a file)
@@ -296,7 +296,7 @@ def load_config(path):
     if path.endswith(".toml") or looks_like_toml(text):
         raise ConfigError(
             f"{path}: TOML input was retired with the YAML rework; rewrite "
-            f"it as YAML (see NEW-REQUIREMENTS.md and example_profiles.yaml)")
+            f"it as YAML (see fpprofile.md and example_profiles.yaml)")
     try:
         doc = yaml.load(text, Loader=Loader)
     except yaml.YAMLError as e:
@@ -962,7 +962,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Build or inspect a MrZ80 front-panel profile file "
                     "(OSD 'Front Panel Profiles', FC5).",
-        epilog="See the module docstring, NEW-REQUIREMENTS.md, and "
+        epilog="See the module docstring, fpprofile.md, and "
                "example_profiles.yaml for the YAML schema.")
     ap.add_argument("config", nargs="?",
                     help="YAML configuration (omit with -o for an "

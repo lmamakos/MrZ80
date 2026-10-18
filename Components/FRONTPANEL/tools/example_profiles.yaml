@@ -7,21 +7,27 @@
 # "Front Panel Profiles".  Profiles that are not listed emit as the default
 # profile: identity map, ON = #FF0001, OFF = #000009 (the hardware's own
 # no-file defaults).  Unknown keys and bad values are errors.  The full
-# semantics of every key live in NEW-REQUIREMENTS.md.
+# semantics of every key live in fpprofile.md.
 #
 # This example describes the development panel: a 256-LED flexible matrix,
 # 8 rows x 32 columns upright, wired from the top-left corner straight down
 # column 0, serpentine into each next column (layout below).
 #
-# Capture chain (MicrocomputerZ80CPM.vhd, MSB first):
-#   0..7    fpLatch (port $FF style output latch), bit 7 first
-#   8..23   address bus A15..A0
-#   24..31  data bus D7..D0
-#   32..63  fpLatch again (test)
-#   64..191 CPU registers: A F A' F' B C B' C' D E D' E' H L H' L' (8 each)
-#   192..255 IX, IY, PC, SP (16 each)
+# Capture chain (MicrocomputerZ80CPM.vhd, MSB first, CHAIN_BITS=384):
+#   0..7     fpLatch (port $FF style output latch), bit 7 first
+#   8..23    address bus A15..A0
+#   24..31   data bus D7..D0
+#   32..39   A          40..47  F          48..55  A'        56..63  F'
+#   64..71   B          72..79  C          80..87  B'        88..95  C'
+#   96..103  D         104..111 E         112..119 D'       120..127 E'
+#   128..135 H         136..143 L         144..151 H'       152..159 L'
+#   160..175 IX       176..191 IY        192..207 PC       208..223 SP
+#   224..243 tied 0
+#   244..247 WR RD MREQ IORQ strobes (stretched)
+#   248..255 fpLatch again (bit 7 first)
+#   256..383 headroom, reads 0 (no segment wired)
 
-chain_bits: 256          # matches the default FPGA CHAIN_BITS build
+chain_bits: 384          # must match the FPGA CHAIN_BITS build
 leds: 256                # matches the default FPGA NUM_LEDS
 # dir: right             # run directions default to "right"; a profile-level
                          # `dir:` (see profile.2) or a per-run `dir:` wins
@@ -34,16 +40,21 @@ signals:                 # named chain groups; a definition may reference
   LATCH:  ["0..7"]       # only EARLIER symbols; repeats are allowed
   ADDR:   ["8..23"]      # A15..A0, chain order left to right
   DATA:   ["24..31"]     # D7..D0
-  REG_AF: ["64..79"]
-  REG_BC: ["96..111"]
-  REG_DE: ["128..143"]
-  REG_HL: ["160..175"]
-  IX:     ["192..207"]
-  IY:     ["208..223"]
-  PC:     ["224..239"]
-  SP:     ["240..255"]
-  PTRS:   [IX, IY]                 # composed of earlier symbols
-  ALU_HDR: ["REG_AF[7..0]"]        # positional subset: A's 8 bits, MSB first
+  REG_AF: ["32..47"]     # A, F (current bank)
+  REG_AP: ["48..63"]     # A', F'
+  REG_BC: ["64..79"]
+  REG_BCP: ["80..95"]
+  REG_DE: ["96..111"]
+  REG_DEP: ["112..127"]
+  REG_HL: ["128..143"]
+  REG_HLP: ["144..159"]
+  IX:     ["160..175"]
+  IY:     ["176..191"]
+  PC:     ["192..207"]
+  SP:     ["208..223"]
+  STROBES: ["244..247"]  # WR RD MREQ IORQ (hardware-stretched)
+  PTRS:   [IX, IY]                # composed of earlier symbols
+  ALU_HDR: ["REG_AF[7..0]"]       # positional subset: A's 8 bits, MSB first
 
 layout:                  # one global wiring description, all profiles
   rows: 8
@@ -60,18 +71,23 @@ profile.0:               # "everything in one frame" overview
   runs:
     - start: [0, 0]      # bus row: 8 + 16 + 8 = exactly 32 cells
       signals: [LATCH, ADDR, DATA]   # (dir omitted: defaults to right)
+    - start: [1, 0]
+      signals: [REG_AF, REG_AP]      # AF pair plus its shadow: 32 cells
     - start: [2, 0]
-      signals: [REG_AF]  # 16 cells from [2,0]; the rest of the row is free
+      signals: [REG_BC, REG_BCP]     # BC/BC' span exactly one row
     - start: [3, 0]
-      dir: right         # explicit, though it is the default
-      signals: [REG_BC]
+      signals: [REG_DE, REG_DEP]
     - start: [4, 0]
-      signals: [REG_DE]
+      signals: [REG_HL, REG_HLP]
     - start: [5, 0]
-      signals: [REG_HL]
+      signals: [IX, IY]              # 32 cells: the index registers
     - start: [6, 0]
       on: amber          # highlight the pointers against the default red
-      signals: [PC, SP]
+      signals: [PC, SP]              # 32 cells
+    - start: [7, 0]
+      signals:
+        - STROBES                    # the four stretched bus strobes
+        - {sig: "LATCH", on: teal}  # second latch copy, recoloured
 
 profile.1:               # pointers and a recoloured data bus
   on: "#00FF40"          # profile colour: every run that doesn't override
