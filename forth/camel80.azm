@@ -565,6 +565,27 @@ dodoes:: ; -- a-addr
         ld c,l
         next
 
+; DODOER, code action of a DEFER'd (deferred action) word
+; entered by        CALL fragment
+;                   parameter field:  action xt
+;                       ...
+;        fragment:  CALL DODOER
+; Fetches the execution token stored in the word's parameter
+; field and executes it in place.  DE (the caller's IP) is
+; deliberately left untouched so that the action's EXIT
+; resumes the deferring definition -- exactly as if the
+; action word had been compiled there.  The action may be a
+; CODE word (it ends with 'next', continuing from DE) or a
+; colon definition (its docolon preserves/restores DE).
+; (internal code fragment, not a Forth word)
+dodoer:: ; run stored action
+        pop hl         ; parameter field address -> HL
+        ld a,(hl)      ; fetch action xt; leave DE (IP) intact
+        inc hl
+        ld h,(hl)
+        ld l,a         ; HL = action xt
+        jp (hl)        ; execute the action in place
+
 ; STACK OPERATIONS ==============================
 
 ;C DUP      x -- x x      duplicate top of stack

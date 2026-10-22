@@ -776,6 +776,52 @@ TICK:   call docolon
         DW LIT,XDOES,COMMAXT
         DW LIT,dodoes,COMMACF,EXIT
 
+;C DEFER  <name> --     create a deferred-action word
+;   CREATE ['] ABORT ,
+;   ['] dodoer LATEST @ NFA>CFA !CF ;
+; CREATE gives the new word a normal header whose code field
+; is CALL docreate and an empty parameter field.  We then
+; store an execution token (initially ABORT's -- the default
+; "not yet defined" action) into the parameter field, and
+; relink the code field from docreate to dodoer so that
+; executing the word runs whatever action is presently stored
+; there.  The parameter field is the action cell; '>BODY of
+; the word (its code field is a 3-byte CALL, so cfa+3) finds
+; it.  Redefine the action with IS.  ANS Forth Core ext.
+    head DEFER,5,'DEFER',docolon
+        DW CREATE                 ; header + CALL docreate; LATEST=new word
+        DW LIT,ABORT              ; push ABORT xt (default action)
+        DW COMMA                  ; store it in the parameter field
+        DW LIT,dodoer             ; new code action (adrs) ...
+        DW LATEST,FETCH,NFATOCFA  ; ... for the cfa of the new word
+        DW STORECF                ; !CF: code field := CALL dodoer
+        DW EXIT
+
+;C IS  <action> <name> --   set the action of a DEFER word
+;   ' >BODY  STATE @
+;     IF ['] LIT ,XT , POSTPONE !   \ compile: <action xt> body !
+;     ELSE !                        \ interpret: action xt already on stack
+;   THEN ; IMMEDIATE
+; Usage:   ' EMIT IS ROUTE
+; In the interpreter the action xt is already on the stack (put
+; there by ' <action>), so IS parses the deferred word's name,
+; finds its action cell with ' >BODY and stores immediately.
+; Compiling into a definition, ' <action> was compiled to push
+; its xt at run time; here we emit a literal of the (constant)
+; action-cell address followed by '!' so the store happens when
+; the definition runs.  ANS Forth Core ext.
+    immed IS,2,'IS',docolon
+        DW TICK                   ; ' <name> -> xt of the DEFER word
+        DW TOBODY                 ; >BODY: cfa+3 -> action-cell address
+        DW STATE,FETCH            ; compiling?
+        DW QBRANCH,IS1            ; no  -> store now
+        DW LIT,LIT,COMMAXT        ; yes: compile the 'lit' primitive
+        DW COMMA                  ;      ... and the action-cell literal
+        DW LIT,STORE,COMMAXT      ;      ... and '!' (stores at run time)
+        DW branch,IS2
+IS1:    DW STORE                  ; interpret: ( action-xt body ) !
+IS2:    DW EXIT
+
 ;C RECURSE  --      recurse current definition
 ;   LATEST @ NFA>CFA ,XT ; IMMEDIATE
     immed RECURSE,7,'RECURSE',docolon

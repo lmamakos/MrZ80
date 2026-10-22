@@ -119,8 +119,10 @@ specified by the ANS Forth document.
 AGAIN  adrs --           uncond'l backward branch
 COMPILE,  xt --            append execution token
 DABS   d1 -- +d2        absolute value, dbl.prec.
+DEFER  "name" --        create a deferred-action word
 DNEGATE d1 -- d2         negate, double precision
 HEX    --                  set number base to hex
+IS     <action> "name" --   set action of a DEFER word
 PAD    -- a-addr                  user PAD buffer
 TIB    -- a-addr            Terminal Input Buffer
 WITHIN n1|u1 n2|u2 n3|u3 -- f     test n2<=n1<n3?
