@@ -46,9 +46,9 @@ all:
 	cd blocks; make
 
 install:	camel80.bin camelf.bin
-	scp camel80.bin       mister:/media/fat/games/MultiComp/camel80.bin
-	scp camelf.bin        mister:/media/fat/games/MultiComp/camelf.bin
-	scp blocks/forth.blk  mister:/media/fat/games/MultiComp/forth.dsk
+	scp camel80.bin       mister:/media/fat/games/MrZ80/camel80.bin
+	scp camelf.bin        mister:/media/fat/games/MrZ80/camelf.bin
+	scp blocks/forth.blk  mister:/media/fat/games/MrZ80/forth.dsk
 
 cpm: blocks/forth.blk
 	@echo make sure to remove all the *.AZM and *.SUB files from the CP/M disk image
