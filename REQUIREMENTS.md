@@ -85,6 +85,33 @@ reliability fixes") and `SDRAM-review-handoff.md`. The arbiter/cache
 architecture below is no longer needed for correctness; it remains a
 performance/feature item (see item 4).
 
+**Traceability (2026-10).** The front-panel examine/deposit port
+requirement of this item is subsumed by the debug-monitor design in
+`doc/ODT_MONITOR_DESIGN.md` (v0.6): the RISC-V support CPU
+(VexRiscv + Mecrisp-Quintus Forth) drives a cycle-accurate `dbg_bridge`
+mastering engine, a parked physical-memory client (`mon_mem_client`,
+borrowing the existing SDRAM/BRAM wiring without disturbing guest state),
+and a hardware front-panel engine — delivering independent logical and
+physical examine/deposit without a dedicated new port in the arbiter
+sketched below.
+
+**Rework decisions (2026-10, round R9; full record
+`doc/SDRAM_REWORK_PLAN.md`).** The arbiter/cache architecture below is
+dispositioned as follows: the **BRAM cache stays shelved** (item 4 steps
+3/4 cut the SDRAM penalty to +0.7% — no performance case; RomWBW hot
+banks instead go in block-RAM page 8192 via the MMU high-byte ports).
+The **block-transfer engine (reserved slot 3 below) is retired** —
+RAM-disk/bank copies use CPU-driven `INIR`/`OTIR` through the MMU
+direct-access port (ordinary CPU-class traffic). **No burst transfers**
+(complexity/risk unjustified by demand), and **loader streaming mode is
+deferred** (current mount throughput adequate). The **arbiter** itself is
+approved as a useful refactor, staged **A-then-B**: additive
+borrowed-wiring muxes first (monitor P1/P2), extraction of a formal
+`sd_arb` module as a dedicated milestone after monitor P2. The monitor's
+only concurrent-while-running access (vid-port background reads, lowest
+priority) deliberately enters the existing controller rather than the
+future arbiter.
+
 **Original symptom.** Individual memory probes (discrete byte read/write via the MMU
 direct-access port, or through a mapped frame) succeed, but sustained
 access patterns fail: instruction fetch out of SDRAM is unreliable, and
@@ -111,6 +138,9 @@ continuing to patch the existing single-client FSM. Proposed shape:
   3. Reserved slot(s) for future clients (e.g. a block-transfer engine for
      RAM-disk I/O) — the arbiter should be sized for more than 2 ports
      from the start rather than hard-coded for exactly one.
+     *(Retired 2026-10, R9: a dedicated block-transfer client is not
+     needed — block moves use `INIR`/`OTIR` via the MMU direct-access
+     port; see `doc/SDRAM_REWORK_PLAN.md` D-S2.)*
 - **BRAM cache layer**: a small write-through cache (direct-mapped or
   2-way set-associative, short lines — e.g. 16–32 bytes) sitting in front
   of the SDRAM controller. Goals:
@@ -449,7 +479,10 @@ T-states. Acceptable for now; revisit either or both of:
    (HISTORY.md, "speculative SDRAM reads and posted writes"); hardware
    tests pass. CamelFORTH `bench`: SDRAM 29465 ms vs block RAM 29271 ms
    (+0.7%; was +49% before item 4.1). This removes the performance case
-   for the SDRAM cache (item 4.2), which is shelved.*
+   for the SDRAM cache (item 4.2), which is shelved.* Cache shelving
+   re-confirmed 2026-10 (R9), together with no-bursts and deferred
+   loader-streaming — memory-subsystem rework roadmap:
+   `doc/SDRAM_REWORK_PLAN.md`.
 
    Steps 3/4 as originally proposed:
    - *Speculative read at T1*: the T80's address is valid for the whole
