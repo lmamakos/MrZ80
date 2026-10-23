@@ -1,6 +1,6 @@
 # ODT_MONITOR_DESIGN — FPGA-Resident ODT-Style Debug Monitor for MrZ80
 
-Status: **DRAFT v0.6** — v0.2 (support-CPU architecture: VexRiscv RV32IMC +
+Status: **DRAFT v0.7** — v0.2 (support-CPU architecture: VexRiscv RV32IMC +
 Mecrisp-Quintus FORTH + cycle-accurate `dbg_bridge`) as amended by the
 **design decision session of 2026-10-22** (full round-by-round log in §17),
 plus follow-up refinement **R7**: 32-switch bank with dual personality
@@ -18,6 +18,12 @@ borrowed wiring for P1/P2 now; formal `sd_arb` extraction approved as a
 later refactor milestone), **no block-transfer engine** (`INIR`/`OTIR` via
 the MMU direct-access port suffices), **no burst transfers**, loader
 streaming **deferred**; new OQ-19 (milestone-B scheduling).
+**v0.7** = MMU map switch (round **R10**, 2026-10-23): 9th SPDT lever —
+MMU-EXAM reads entry `S1:S0` from the `MAP` taps and displays the page on
+the address lamps at their physical A27..A14 positions (frame number echoed
+in L1:L0, rest of the low lamps dark); MMU-DEPOSIT stores `S27..S14` as
+the entry's page (implicit valid, parked port-master macro) — **D-24**,
+UX spec §4A.
 Headline changes from v0.2: downloadable monitor ROM (no refit to update FW)
 + FORTH program pack via OSD; RV32IMC facilities settled; MMU direct-access
 path **retracted** (guest-owned state) and replaced by a parked physical
@@ -95,7 +101,7 @@ $D0–$D3 as the seed of HBIOS cooperation.
 |---|---|---|
 | D-01 | `[decided]` Serial console SNAC mux: `monitor_owned = OSD OK(bit20) ∧ FW CTRL.console_own`; guest forced to Console Port while owned; untouched passthrough otherwise; hardware `OK`/S32-off forces release (P-B). Ratified in session R4. | bit-bang shared UART; passive-snoop-only |
 | D-02 | `[decided]` Registers read-only in v1; `G aaaa`/START = trampoline (§7.4) after reset-vent; context loss accepted (session R2); write-back `[deferred]` P3. | invasive T80 write datapath (rejected) |
-| D-03 | `[decided, revised v0.4]` Front panel = **32 address/mode toggle switches (S31..S0)** + **SPDT momentary function switches** (8 two-way = 16 lines, §11.2) + quadrature encoder w/push + escape/disable toggle, SNAC bridge board (74HC165 frame). Toggle bank has **dual personality**: panel-engine input *and* guest sense switches ($FC–$FF, D-05). Function **execution is hardware** (panel engine, D-18). Electrical/board freeze at bridge-board design (OQ-09). | 64-switch bank (v0.1, retired by R5/R7 layout); FW-only panel (v0.2 — superseded by session R5/R6); matrix keyboard |
+| D-03 | `[decided, revised v0.7]` Front panel = **32 address/mode toggle switches (S31..S0)** + **SPDT momentary function switches** (9 two-way = 18 lines incl. MMU EXAM/DEPOSIT added R10, §11.2) + quadrature encoder w/push + escape/disable toggle, SNAC bridge board (74HC165 frame). Toggle bank has **dual personality**: panel-engine input *and* guest sense switches ($FC–$FF, D-05). Function **execution is hardware** (panel engine, D-18). Electrical/board freeze at bridge-board design (OQ-09). | 64-switch bank (v0.1, retired by R5/R7 layout); FW-only panel (v0.2 — superseded by session R5/R6); matrix keyboard |
 | D-04 | `[decided, session R5]` **$D0–$D3 guest→monitor mailbox allocated**: guest writes mirror to bridge `MBX0..3` + raise monitor IRQ; guest reads return the mirror (never stalls). 0xD4–0xDF, 0xE0–0xEF reserved. | reserved-for-later |
 | D-05 | `[decided, revised v0.4 (R7)]` Guest **sense-switch ports** at the top of the port space, IMSAI-style: **$FF = S31..S24** (mode byte, incl. bit7=S31 PHYS), **$FE = S23..S16**, **$FD = S15..S8**, **$FC = S7..S0** (also the DEP data byte), **$FB = encoder menu counter** (§11.6). Reads return debounced state from hardware — zero FW dependency (P-B). **$FF write still drives `fpLatch`** LED latch (`MicrocomputerZ80CPM.vhd:~570`); $FF *read* repurposed from `fpLatchDataOut` (no guest reader exists — §3). $F8–$FA reserved. | 8-byte $F8–$FF window for a 64-switch bank (v0.1/D-05-original); FW-served sense reads |
 | D-06 | `[decided]` Jump-history ring P2: T80 `CTEV*` side-band + 16-entry HW ring + FW `J` + lamps. | SW-only trace (can't keep up, §4.3) |
@@ -116,6 +122,7 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-21 | `[decided, session R1]` **Code is data lifecycle**: monitor boots before/independent of guest image; ROM image (index 6) and FORTH pack (index 7: text source staged in DTCM, auto-`EVAL`'d at boot, magic+length trailer; position-independent, survives kernel rebuilds) both OSD-loadable; serial upload path (P2) reuses the same "eval a buffer" primitive. No NVRAM machinery in v1. | refit-per-change; battery-backed dict (deferred OQ-13) |
 | D-22 | `[decided, session R5]` Addressing is **modal** on both surfaces: logical (MMU-translated, 16-bit) ⟷ physical (28-bit). FW keeps a live MMU shadow from the `mmu_frame` HW tap (state-neutral) and can translate/report either view; serial mode command (`PHY`/`LOG`); panel physical mode = **S31 = '1'** (§11.2). | single addressing mode |
 | D-23 | `[decided, new v0.5 (R8)]` Panel UX package (full spec `ODT_PANEL_UX.md`): sovereignty-with-`PANEL_LOCK` (G-8) · S28=**BP ARM** (LOAD-ADDR also sets BP at encoder-cursor slot), S29=**FREEZE**, S30=**START-AT-A** (hardware trampoline start, firmware-free — closes D-07 panel gap) · per-page lamp remap with pinned chrome + page-ID lamps (G-9; cold default = identity ⇒ CLASSIC) · encoder: hold-cursor after commit, rapid double-press zeroes (no commit) · hybrid `*` commentary · colour conventions · WDG-dead ⇒ page forced to CLASSIC, lock cleared. | static-map/paged-content (rejected R8 in favour of per-page layout); unconditional RUN; zero-after-commit; queue-only or silent commentary |
+| D-24 | `[decided, new v0.7 (R10)]` **MMU map switch** — 9th SPDT (center-off momentary; two electrical lines): UP = **MMU-EXAM**: entry `n=S1:S0` read from the `MAP0..3` taps (no port cycle — P-D-safe); sustained display override until next display-changing op: page → lamps at the physical **A27..A14** positions, `n` → L1:L0, other low lamps dark; re-query on each UP edge and live on `S1:S0` change while active `[board-adjustable]`. DOWN = **MMU-DEPOSIT**: page `S27..S14` → entry `n` via parked port-master macro (`OUT $B0+n` low, `OUT $B4+n` high; valid set implicitly, bit encoding per `MMU.vhd` verified at landing); no panel-side validity check — an invalid mapping misbehaves exactly as a guest-set invalid value (owner R10). Engine-only capable both directions (tap + mastering); FW mirrors events for `*` commentary; FW map shadow self-corrects via tap. | valid-dot lamp — rejected: unnecessary (op is for a stopped CPU; static lights); FW-dependent display; latching toggle part |
 
 ### 2.5 Principles
 
@@ -433,7 +440,7 @@ Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 | 0xF4 | `LED_ADDR` | RW | profile-7 map/colour/fb write address (forwarded to `FP_RAM_Store` Port-A via ownership mux, §11.5) |
 | 0xF8 | `LED_DATA0..2` | RW | map entry (≤10b) / colour (R,G,B) / fb bit per write-type select — FW rewrites profile-7 **map per page** (G-9); cold default = identity map ⇒ CLASSIC layout free |
 | 0x100 | `FP_SW` | R | debounced toggle bank `{S31..S0}` — same source driving guest ports $FC–$FF (single source of truth, §11.6) |
-| 0x104 | `FP_FN` | R | live debounced SPDT function-line levels (16 lines, §11.2) — FW snoop of panel activity |
+| 0x104 | `FP_FN` | R | live debounced SPDT function-line levels (18 lines incl. MMU-EXAM/DEPOSIT at bits 17:16, R10, §11.2) — FW snoop of panel activity |
 | 0x108 | `FP_ENC_CNT` | R | menu-selection counter — same source as guest port $FB (§11.6) |
 | 0x10C | `FP_ENC_STAT` | R/W1C | `{committed[7:0](15:8), page_id[2:0], dbl_zero_evt, commit_evt, press_evt}` — press commits page (cursor **held**, D-23); rapid double-press zeroes cursor w/o commit; FW may subscribe instead of polling |
 | 0xFF0 | `DEC_ERR_COUNT` | R | unimplemented-offset counter |
@@ -517,7 +524,10 @@ commands update `AR` explicitly (both surfaces leave `AR` coherent, R-15).
 `MAP0..3` tap → FW shadow {valid, page} ×4 ⇒ logical↔physical translation
 available in FW without any port cycles (D-22); `P` command + lamp page
 source; map-change IRQ optional (glitch-free sample at parked). MMU *writes*
-from monitor: `[deferred]` P3 (arbitration at tap, guest priority).
+from monitor FW: `[deferred]` P3 (arbitration at tap, guest priority);
+**panel-originated** MMU deposit is sanctioned in P2 via D-24 (parked
+port-master macro — deliberate operator action, not observation; P-D
+unaffected).
 
 ---
 
@@ -556,8 +566,9 @@ BP table init, lamp page) is FW-owned, engine-executed.
 **32 address/mode toggle switches S31..S0** (S27..S0 address, low 8 doubling
 as DEP data; S31 PHYS mode; S30..S28 reserved) — dual personality: consulted
 by the panel engine on command actuation *and* readable by guest programs as
-sense switches ($FC–$FF, §11.6); **8 SPDT momentary function switches**
-(center-off; each lever position = one function, 16 lines); **quadrature
+sense switches ($FC–$FF, §11.6); **9 SPDT momentary function switches**
+(center-off; each lever position = one function, 18 lines — R10 adds
+MMU-EXAM/DEPOSIT); **quadrature
 encoder with push** (accumulate-and-commit menu selector, §11.3/§11.6);
 escape/disable toggle; 256-lamp WS2812 array; SNAC bridge board (74HC165 ×N,
 io4 clk-out, io5 data-in; `Hardware/README.md`, OQ-09). Frame: 68 bits
@@ -583,7 +594,8 @@ frame[51:36]  SPDT function lines:
   F6+/F6-   RESET CPU / RESET SYSTEM
   F7+/F7-   RUN / STOP                    (when stopped)
   F8+/F8-   STEP INSTRUCTION / STEP CYCLE (when stopped)
-frame[67:52]  spare (future: banked data entry, page-step, extra functions)
+  F9+/F9-   MMU EXAMINE / MMU DEPOSIT   (R10, D-24; see §11.3/UX §4A)
+frame[67:54]  spare (future: banked data entry, page-step, extra functions)
 encoder       signed ±1/detent menu counter; PRESS commits (§11.3);
               first application: lamp-profile/state-page select (OQ-12: menu
               semantics list remains open; AR-nudge retired from encoder role)
@@ -621,6 +633,21 @@ M0–M2. **PANEL_LOCK gate (G-8):** while `CTRL.bit9` is set, RUN(up) and
 START-AT-A are rejected (HALT-lamp flash, `lock_rejected` event/log);
 STOP/EXAM/DEP/PORT/STEP/RESET/FREEZE/LOAD never gated; lock auto-clears on
 WDG_PARK expiry, escape, OK-off, MROM mount.
+**MMU map switch (D-24/R10):** UP edge = MMU-EXAM: `n ← S1:S0`;
+`{valid, page}` read from the `MAP` tap n — no bus cycle, guest untouched
+(P-D exemplar). Display override *sustains* until the next display-changing
+op (any panel op, encoder page commit, FW auto-page): lamps at the
+physical **A27..A14** positions ← page[13:0]; L1:L0 ← `n` (which frame is
+shown); L12..L2 dark; no valid lamp (op targets a stopped CPU — taps are
+static; R10). Re-query on each UP edge; `S1:S0` change while the override
+is active re-queries live `[board-adjustable]`. DOWN edge = MMU-DEPOSIT:
+page ← `S27..S14` written to entry `n` as a two-out macro through the
+existing port-master path (`OUT $B0+n` low byte, `OUT $B4+n` high byte;
+valid set implicitly — bit encoding per `MMU.vhd`, verify at landing),
+guest transiently parked (G-4 budget); no value checking (invalid mapping
+behaves guest-invalid). Both ops FW-free; events mirrored (`FP_FN[17:16]`)
++ `ENG_LOG` so FW prints `*` commentary, and the FW map shadow self-corrects
+from the tap.
 
 ### 11.4 Lamps — pages own content *and* layout (D-17/D-23, G-6/G-9)
 
@@ -729,6 +756,9 @@ New:
 | R-34 | Per-page lamp remap: page change ⇒ profile-7 map rewritten + content swapped; cold default identity == CLASSIC layout; WDG-dead forces page-0 content, chrome intact | `tb_fp_led` |
 | R-35 | Modifiers: BP-ARM LOAD also sets BP (cursor-slot); FREEZE latches export, chrome live; START-AT-A = trampoline+reset-vent+release, firmware-free | `tb_fp_engine` |
 | R-36 | FW auto-paging per UX §3 table + `*` commentary (immediate idle / queued busy) golden script | `tb_fw_panel` |
+| R-37 | MMU-EXAM: correct tap field per entry `n=S1:S0`; page→A27..A14 lamp routing, `n`→L1:L0, rest dark; persist-until-next-op; re-query on UP edge + live on S1:S0 change; zero MMU write strobes (state-neutral) | `tb_fp_engine` |
+| R-38 | MMU-DEPOSIT: two-out macro `$B0+n`/`$B4+n`, executed only with guest parked; valid set implicitly, no value checking; FW map shadow matches taps after deposit | `tb_fp_engine` + `tb_fw_panel` |
+| R-39 | MMU ops full-function with FW held in reset (engine-only: tap exam + deposit) | `tb_fw_panel` |
 R-21 unchanged and doubly load-bearing.
 
 ---
@@ -750,7 +780,7 @@ OQ-18)**.
 | OQ-09 | Bridge board un-built: electrical freeze incl. SPDT parts, encoder, spare banks; sim now with synthetic frames (R-13) + SPDT pair encoding assumptions | P2 dependency, not P1 |
 | OQ-10 | **Exact "Reset System" scope** — proposed: `hard_reset_req`-equivalent (guest + monitor + FP profile clear; not FPGA config). Confirm at board design. | needs owner confirmation |
 | OQ-11 | vid-port **writes** revisit gate (D-15-B): after R-26 passes with reads; scope = `sdram2.sv` DQM mod; alternative = physical writes stay parked-only forever | revisit P3+ |
-| OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 52–67) future use | board design time; `ODT_PANEL_UX.md` §11 checklist |
+| OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 54–67) future use; **MMU-switch (D-24) silkscreen labels + 9th-SPDT mounting; live-re-query-on-`S1:S0` policy; deposit valid-bit encoding check vs `MMU.vhd`** | board design time; `ODT_PANEL_UX.md` §11 checklist |
 | OQ-19 | Milestone-B scheduling: formal `sd_arb` extraction approved (R9) but unscheduled — proposal: dedicated refactor milestone after P2 green, before P3 polish work; confirm at P3 planning | `SDRAM_REWORK_PLAN.md` §6/§10 |
 | OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1 |
 | OQ-15 | Graphical frame buffer for monitor *video* output (vs 80×25 ANSI on SBC terminal), including exclusive HDMI+kbd console details (D-19 P3): font, pages, keymap | later-phase design note |
@@ -765,7 +795,7 @@ OQ-18)**.
 |---|---|---|
 | **P0** | VexRiscv vendored+P0 synth (Quartus 17.0, `5CSEBA6U23I7`); **vexgen container round-trip green** (§5.7: image built on tycho, coursier cache volume, twice-regen diff empty, manifest committed) + Mecrisp hello-world + downloadable-ROM write path sim + `fit.rpt` headroom recorded + crt0 convention verified + fallback decision | clean synth, headroom numbers logged, reproducible regen, Go/fallback |
 | **P1 — console core** | bridge (regs incl. MD/AR/DR/PR, MAP0..3, MBX, WDG×2, ID), mon_uart (O9B divider), escape-break, STEP assist, reset stretcher, trampoline, MEM-SEQ (logical) + **`mon_mem_client`** (physical P/W), SNAC mux + MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export, FW: ODT skin + `G S T X K E D I O R A W V ? U F ODT PHY LOG MB` | R-01…R-09, R-12, R-19…R-25, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired |
-| **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`ODT_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, BP/`C` (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `mon_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
+| **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`ODT_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, BP/`C` (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `mon_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
 | **P3 — polish** | T80 register write-back (retires trampoline), step-over, conditional BPs, `Y`, MMU writes from monitor, exclusive HDMI+kbd console (D-19), vid-write revisit (OQ-11), HPS path eval, mailbox protocol hardening with HBIOS | D-02 retired; all prior green |
 
 > **SDRAM arbiter milestone (R9):** P1/P2 use additive borrowed-wiring
@@ -863,3 +893,16 @@ initial implementation uses MMU direct-access I/O port + `INIR`/`OTIR`
 single-beat protocol, `BURST_LENGTH`=2 stays) · facts logged: vid-write
 (OQ-11) unchanged, `SDRAM_CLK_100` fallback currently live at
 `MrZ80.sv:502` (both clk_ram taps are standing regression targets).
+
+R10 **MMU map switch (2026-10-23; UX spec §4A v0.2)**: 9th SPDT,
+center-off **momentary** (owner clarification: "two electrical switches",
+same part family as F1–F8; frame bits 52/53, spare bank now 54–67) · UP =
+MMU-EXAM: `MAP`-tap read of entry `n=S1:S0` (no port cycle), sustained
+lamp display at the **physical A27..A14 placements**, frame number echoed in
+L1:L0, remaining low lamps dark; re-query per throw + live on `S1:S0` move ·
+DOWN = MMU-DEPOSIT: `S27..S14` → entry `n` page via parked two-port macro
+(`$B0+n`/`$B4+n`), **implicit validity** — owner: no panel hand-holding,
+bogus values fail exactly like guest-set ones · valid-dot display **rejected**
+(op is inherently a stopped-CPU operation; lights static) · fully engine-only
+capable both directions; FW `FP_FN[17:16]` events, `*` commentary, shadow
+self-corrects via tap → **D-24**, R-37…R-39, P2 scope.

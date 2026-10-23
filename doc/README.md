@@ -14,16 +14,17 @@ high-level words), archived from the top-level README; sourced from
 archived from the top-level README. The 6502 and 6809 CPUs have been removed
 from the core.
 
-`ODT_MONITOR_DESIGN.md` -- draft design spec (v0.6) for the FPGA-resident
+`ODT_MONITOR_DESIGN.md` -- draft design spec (v0.7) for the FPGA-resident
 ODT-style debug monitor: a VexRiscv RV32IMC support CPU running
 Mecrisp-Quintus FORTH, a cycle-accurate `dbg_bridge` MMIO interface, and a
 hardware classic-console front-panel engine (halt/step/examine/deposit,
 breakpoints, jump history, downloadable monitor ROM + Forth packs via OSD).
 §17 records the design decision sessions of 2026-10-22/23.
 
-`ODT_PANEL_UX.md` -- front-panel user-experience spec (v0.1, deep-dive of
-2026-10-23): lamp zones/chrome/colours, paged state blocks with per-page
-remap, BP-ARM/FREEZE/START-AT-A modifiers, PANEL_LOCK sovereignty ladder,
+`ODT_PANEL_UX.md` -- front-panel user-experience spec (v0.2; deep-dive
+2026-10-23 + MMU-switch addendum): lamp zones/chrome/colours, paged state
+blocks with per-page remap, BP-ARM/FREEZE/START-AT-A modifiers, MMU
+EXAM/DEPOSIT map switch (§4A), PANEL_LOCK sovereignty ladder,
 encoder hold-cursor + double-press-zero, `*` commentary protocol,
 acceptance walkthroughs, board-freeze checklist.
 

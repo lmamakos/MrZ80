@@ -1,12 +1,13 @@
 # ODT_PANEL_UX — Front-Panel User-Experience Specification
 
-Status: **DRAFT v0.1** — first pass of the panel-UX deep-dive (OQ-16b/OQ-12),
-owner session of 2026-10-23, recorded as round **R8** in
-`ODT_MONITOR_DESIGN.md` §17. Implements the panel-side surface of design
-v0.5 §§11/6. Notation/tags as in the design doc; `[proposed]` marks items
+Status: **DRAFT v0.2** — v0.1 = first pass of the panel-UX deep-dive
+(OQ-16b/OQ-12), owner session of 2026-10-23, recorded as round **R8** in
+`ODT_MONITOR_DESIGN.md` §17; **v0.2** = round **R10** addendum — the MMU
+map switch (§4A). Implements the panel-side surface of design
+v0.7 §§11/6. Notation/tags as in the design doc; `[proposed]` marks items
 still open to board-freeze adjustment.
 
-Companions: `ODT_MONITOR_DESIGN.md` v0.5 (architecture, decisions D-23/G-8/G-9
+Companions: `ODT_MONITOR_DESIGN.md` v0.7 (architecture, decisions D-23/D-24/G-8/G-9
 introduced here), `HARDWARE.md` (port/lamp tables on landing), `fp_engine`/
 `fp_capture`/`dbg_bridge` RTL (module specs reference this document).
 
@@ -15,8 +16,9 @@ introduced here), `HARDWARE.md` (port/lamp tables on landing), `fp_engine`/
 ## 1. Physical vocabulary (from design §11.1)
 
 32 toggles `S31..S0` (address `S27..S0`, data = `S7..S0`, `S31` = PHYS,
-`S30..S28` = modifiers, this spec §4) · 8 SPDT momentary function switches
-(16 lever functions) · quadrature encoder with push (menu selector) ·
+`S30..S28` = modifiers, this spec §4) · 9 SPDT momentary function switches
+(18 lever functions — F9 = MMU EXAM/DEPOSIT, new R10, §4A) · quadrature
+encoder with push (menu selector) ·
 escape/disable toggle · RUN/HALT state · 256-lamp WS2812 array ·
 guest sense ports $FC–$FF/$FB (design §11.6, unchanged by this spec).
 
@@ -75,7 +77,7 @@ last layout stays, chrome intact).
 | 1 | **CORE-A** | PC · SP · AF · HL | 4×16 in A(+M) / B / D rows |
 | 2 | **CORE-B** | BC · DE · IX · IY | as above |
 | 3 | **CORE-C** | PC · SP · I · R · {IFF2,IFF1,IM[1:0],ALT,alt3} | interrupt/status view |
-| 4 | **MMU** | 4 × {valid, page[13:0]} (56 b) | four field groups with valid-dot lamps |
+| 4 | **MMU** | 4 × {valid, page[13:0]} (56 b) | four field groups with valid-dot lamps; single-entry live view from the panel lever: §4A |
 | 5 | **BP** | 4 × addr[15:0]; per-slot arm/hit via lamp colour (amber/red) | four rows; slot index labels |
 | 6 | **MSG** | MBX0..3 (32) · ENC cursor (8) · committed (8) · doorbell code (8) · spare | guest↔monitor conversation |
 | 7 | **SYS** | ring-head {SRC, DST, type} · trap {port, data} · FW heartbeat bits · id nibble | diagnostics tail |
@@ -103,6 +105,40 @@ board time]`
   vent (stretched), release park ⇒ guest boots `JP A[15:0]`. Firmware-free
   (P-B); MD is display context only for START (target = guest-side fetch
   address at reset). Lamp (M2).
+
+### 4A. MMU map switch (F9, SPDT #9, center-off momentary) `[decided R10]`
+
+One center-off two-way lever, momentary in both directions like F1–F8 —
+electrically two lines (frame bits 52/53):
+
+- **UP — MMU EXAMINE.** Each UP edge queries MMU entry `n` = current
+  **low 2 bits of the address switches (S1:S0)** via the monitor's
+  `MAP0..3` tap — no bus cycle, guest untouched. The result overlays the
+  address lamps **at the positions those bits hold in a physical address**:
+
+  | Lamps | Content |
+  |---|---|
+  | L27..L14 | page number = physical `A27..A14` of the frame's base |
+  | L1:L0 | entry (frame) number `n` — *which* mapping is displayed |
+  | L12..L2 | dark |
+
+  The display **sustains** until the next display-changing op (any panel
+  op, encoder page commit, FW auto-page). Re-throw UP to re-query; while
+  the overlay is active, moving `S1:S0` re-queries live — flick through
+  frames 0–3 without re-throwing `[proposed: board-adjustable]`. No
+  valid-bit lamp: this operation is inherently for a **stopped CPU**, where
+  the taps are static and any mapped value is shown as-is (R10).
+- **DOWN — MMU DEPOSIT.** Each DOWN edge stores page = `S27..S14` into
+  entry `n` (same `S1:S0`). **Implicit validity:** the engine performs no
+  sanity check — a bogus page misbehaves exactly as if guest software had
+  written it (R10). Executed as a two-write macro through the existing
+  port-master path (`OUT $B0+n` low byte, `OUT $B4+n` high byte), the
+  guest transiently parked (G-4 budget). `S1:S0`/`S27..S14` moves alone
+  do nothing until the lever is thrown.
+
+Both directions work with **zero firmware** (tap + mastering). FW mirrors
+the events (`FP_FN[17:16]`), prints `*` commentary (§7), and its MMU
+translation shadow self-corrects from the tap.
 
 ## 5. Encoder `[decided R8: hold-cursor + double-press-zero]`
 
@@ -159,6 +195,8 @@ next prompt. Formats:
 * BP2 SET @ 1234
 * LOCKED (RUN ignored)
 * START @ 1000
+* MMU EX 2 -> page 0A5C (phys 0A5C000)
+* MMU DP 2 <- 0A5C
 ```
 
 Silent panel ops = never (hybrid chosen); `SW`, `ENC`, `ENG` commands for
@@ -181,6 +219,11 @@ manual dumps; mailbox doorbell events print `* MSG n <- dd`.
 5. **FW death**: halt FW (test hook) ⇒ ≤2 s: cyan blink → violet, console
    demotes, page forces to CLASSIC content, engine full-function; escape
    still frees everything.
+6. **Map surgery at the panel (§4A)**: with the CPU stopped (serial `K` or
+   BP hit), set `S27..S14` = new page, `S1:S0` = target frame, throw
+   MMU-DEP ⇒ FW prints `* MMU DP n <- pggg`; throw MMU-EXAM to confirm the
+   lamps show the new page under A27..A14; FW `P` (map view) agrees — tap
+   truth. Emergency path needs no serial at all.
 
 ## 9. Failure postures (summary)
 
@@ -197,7 +240,10 @@ D-23 (panel UX package): sovereignty-with-lock (§6) · S28/S29/S30 =
 BP-ARM/FREEZE/START-AT-A (§4) · per-page lamp remap with pinned chrome
 (§2/§3, G-9) · encoder hold-cursor + rapid-double-press-zero (§5) ·
 hybrid `*` commentary (§7) · colour conventions (§2.3) · WDG-dead forces
-page 0 + clears lock (§3/§6).
+page 0 + clears lock (§3/§6) · **D-24 MMU map switch** (§4A: tap-exam
+display at physical A27..A14 placements + frame echo in L1:L0, sustained +
+live re-query; parked implicit-valid deposit macro; no validity checking,
+no valid lamp).
 
 ## 11. Board-freeze hold-list (values/ergonomics, OQ-18)
 
@@ -205,4 +251,7 @@ LED physical placement vs switch banks (zone letter ↔ real geometry) ·
 double-press window `T_w` · page-ID lamp physical encoding (binary vs
 one-hot) · lock-reject flash pattern · BP panel-clear gesture (§4 open) ·
 debounce/heartbeat constants · S28–S30 panel silkscreen labels · spare
-bank (frame bits 52–67) future use · zone-E second export word capacity.
+bank (frame bits 54–67) future use · zone-E second export word capacity ·
+MMU-switch silkscreen labels + 9th-SPDT physical mounting · live-re-query
+on `S1:S0` policy (§4A) · FW MMU commentary number format (hex digits) ·
+deposit valid-bit encoding verification against `MMU.vhd` at landing.
