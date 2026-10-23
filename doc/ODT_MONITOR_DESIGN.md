@@ -38,8 +38,9 @@ Companion documents: `doc/t80_reg_debug_vector.md` (normative register map),
 `ODT_PANEL_UX.md` (panel UX spec — R8 outcome, referenced by §11),
 `SDRAM_REWORK_PLAN.md` (memory-subsystem rework roadmap — R9 outcome,
 referenced by §9.2), `ODT_RISCV_REVIEW.md` (v0.1→v0.2 rationale + fact
-corrections), `ODT_CHANGE.md`
-(pivot handoff, historical), `REQUIREMENTS.md` item 1 (this design is its
+corrections), `archive/ODT_CHANGE.md`
+(pivot handoff, historical — superseded by this doc), `REQUIREMENTS.md` item 1
+(this design is its
 detailed spec — traceability note added there), `HARDWARE.md` (I/O map; must
 be updated when this lands).
 

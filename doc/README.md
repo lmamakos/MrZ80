@@ -38,5 +38,8 @@ shelving re-confirmed, verification spine and future-work ledger.
 the RISC-V/FORTH pivot; fact corrections and the disposition map used to
 produce v0.2.
 
-`ODT_CHANGE.md` -- pivot handoff: RISC-V/VexRiscv + Mecrisp-Quintus
-approach notes and the initial `z80_bus_monitor.v` sketch.
+`archive/` -- superseded documents kept for provenance (see
+`archive/README.md` for the disposition map): `ODT_CHANGE.md` was the
+original pivot handoff (RISC-V/VexRiscv + Mecrisp-Quintus approach notes
+and the initial `z80_bus_monitor.v` sketch), fully absorbed by
+`ODT_MONITOR_DESIGN.md` and corrected by `ODT_RISCV_REVIEW.md`.

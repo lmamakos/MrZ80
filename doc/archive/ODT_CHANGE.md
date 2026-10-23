@@ -1,3 +1,8 @@
+> **ARCHIVED 2026-10-23.** Historical handoff only — superseded by
+> `doc/ODT_MONITOR_DESIGN.md` (v0.6) and fact-corrected by
+> `doc/ODT_RISCV_REVIEW.md`; see `doc/archive/README.md`. Do not implement
+> from this document or its `z80_bus_monitor.v` sketch.
+
 RISC-V VexRiscv & Mecrisp-Quintus Debug Monitor Handoff Document
 
 Target Platform: Intel Cyclone V FPGA (MiSTer MultiComp Framework)
