@@ -101,7 +101,7 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-06 | `[decided]` Jump-history ring P2: T80 `CTEV*` side-band + 16-entry HW ring + FW `J` + lamps. | SW-only trace (can't keep up, §4.3) |
 | D-07 | `[decided]` Panel START runs at the live switch-set address. | two-phase LOAD-then-RUN |
 | D-08 | `[decided]` MC/TS port-out on `T80s` + bundled **`Alternate` export** (session R3; closes OQ-01) in the same P1 mod; `CEN` already ported. T-state/Mcycle step via bridge `STEP_CTL`. | BUSRQ-only stepping |
-| D-09 | `[decided, session R1]` Support core = **VexRiscv** (SpinalHDL, vendored generated Verilog, pinned config + regen script; sbt not run on tycho), **P0 Quartus-17.0 synthesis gate**; documented fallback **PicoRV32** (architecture is core-agnostic; only `crt0.S` + cycle budgets change). | femtoRV primary; spike-both |
+| D-09 | `[decided, session R1]` Support core = **VexRiscv** (SpinalHDL, vendored generated Verilog, pinned config + regen script; sbt not run on tycho — generation is containerized on tycho, §5.7), **P0 Quartus-17.0 synthesis gate**; documented fallback **PicoRV32** (architecture is core-agnostic; only `crt0.S` + cycle budgets change; PicoRV32/FemtoRV need no generation step at all). | femtoRV primary; spike-both |
 | D-10 | `[decided, session R1]` **64 KiB ROM / 64 KiB RAM** (parameterized; final gate = P0 `fit.rpt`). **"ROM" is downloadable**: M10K block read-only to the RV, write port fed by the OSD download path; factory contents from committed init hex; downloaded contents persist across core resets within a session (full FPGA reconfig restores factory). | 16K/16K; refit-required ROM |
 | D-11 | `[decided]` Bridge MMIO base `0x2000_0000`, 4 KiB, word-aligned SimpleBus, slave may stall (late resp.valid). | 32-byte region |
 | D-12 | `[decided]` Formal invariants **P-A..P-D** (§2.5) + named guidance notes G-1..G-7 (session R2/R6: A–C formal per owner; P-D promoted R6). | notes-only |
@@ -241,7 +241,7 @@ numbers are hints — grep the name.
 
 | Module | Responsibility |
 |---|---|
-| `Components/RISCV/VexRiscv.v` + `.qip` | Vendored core (D-09); `gen/VexRiscvConfig.scala` + `regen.sh` + pinned generator hash committed |
+| `Components/RISCV/VexRiscv.v` + `.qip` | Vendored core (D-09); provenance manifest + `gen/GenMrZ80.scala` committed; regeneration via containerized `tools/vexgen.sh` (§5.7, pinned rev — no sbt/JDK anywhere in the day-to-day flow) |
 | `monitor/rtl/mon_top.v` | Subsystem wrapper: core + ROM + RAM + decoder + `mon_uart` + `dbg_bridge`; sideband bundle to CPM; `mon_irq` out; guest controls out; `MON_CHAIN[63:0]` export |
 | `monitor/rtl/dbg_bridge.v` | §6 register file; shared functional registers (MD/AR/DR/PR); MEM-SEQ engine + arbiter; STEP assist; BP/trap; WDG×2; IRQ; ID |
 | `monitor/rtl/mon_uart.v` | 8N1 UART, divider select from `O9B` table index (D-22 session R4); RX FIFO (8) `[proposed]`; RX-byte → escape-break + IRQ |
@@ -320,11 +320,78 @@ wdg→console-dead report. Main loop: parked→REPL `.`; running→background
 skin over a scriptable core).
 
 ### 5.6 Toolchain & fallback
-Vendored generation (pin + regen script committed); **P0 = full tycho
+Vendored generation (pin + regen script committed; containerized on tycho —
+**§5.7**); **P0 = full tycho
 Quartus 17.0 synthesis spike** for `5CSEBA6U23I7` incl. Mecrisp hello-world
 on the UART + `fit.rpt` headroom capture. If P0 fails on VexRiscv-specific
 grounds → PicoRV32 drop-in (identical bridge/FW; `crt0.S` rewrite; ~1 IPC
-acceptable). Fallback decision recorded in P0 exit note.
+acceptable). Fallback decision recorded in P0 exit note. Zero-new-environment
+note: PicoRV32 (`picorv32.v`, single file, ISC, Quartus scripts in-tree) and
+FemtoRV32 (ships *inside* the Mecrisp-Quintus distribution) need no
+generation step at all — the fallback path therefore adds no tooling risk;
+only the VexRiscv *primary* path needs §5.7.
+
+### 5.7 Containerized generation of the VexRiscv configuration ("vexgen")
+
+No Scala/sbt toolchain is ever installed on the dev box or on `tycho`;
+the CPU .v is produced in a throwaway container exactly like Quartus is
+(quartus_build.sh pattern: SSH → `docker run --rm` bind-mount → outputs
+land back in the repo), then **vendored + committed** (D-09). Day-to-day
+builds never see the toolchain; the container is re-run only when the CPU
+config is deliberately reconfigured (G-7 hygiene for RTL).
+
+**Generator (`Components/RISCV/gen/GenMrZ80.scala`, vendored).** Anchored on
+upstream **Murax** (`vexriscv.demo.Murax`) — VexRiscv's own smallest
+SoC generator, whose CPU plugin set is precisely our §5.1 spec:
+RV32**IMC** (`FetchPlugin` compressed + `ExecPlugin`/`MulPlugin`/
+`DivPlugin`, full barrel shifter), machine-mode-only
+(`CsrPluginConfig.smallest`-class: mtime/mtimecmp soft timer, MSIP-style
+soft IRQ + one external IRQ input wired from `|IRQ_PENDING`), **no MMU, no
+I$/D$**, simple uncached IBus/DBus. Murax's APB peripherals (uart/gpio/
+prescaler) are dropped — UART lives in our bridge (§5.3); the generator
+emits the bare *CPU* plus its IBus/DBus + IRQ/timer pins, which our
+`rv_top` wires to MROM/DTCM/SimpleBus shim and `dbg_bridge`.
+
+**Container (`tools/vexgen/Dockerfile`, built once on tycho).**
+`FROM eclipse-temurin:17-jdk` + `git` + the **mill** launcher single
+binary (upstream VexRiscv README documents mill as the sbt alternative:
+`curl -L -o mill …/0.11.6-assembly`; no sbt, no scala install, JDK 17
+satisfies current SpinalHDL). Tag `localhost/mrz80-vexgen:1`. First run
+pulls ~500 MB of Maven deps into coursier/ivy; persist them in a named
+volume (`mrz80-rvcache` → `/root/.cache/coursier:/root/.ivy2`) so later
+runs are near-offline.
+Optional same-image add-on: prebuilt **riscv64-unknown-elf binutils**
+(riscv-collab tarball, unpack-anywhere) so Mecrisp `crt0.S`/kernel
+assembly builds in the same container — no host installs for FW either.
+
+**Wrapper (`tools/vexgen.sh`).** Mirrors `tools/quartus_build.sh`: find
+project root; rsync `Components/RISCV/gen/` →
+`tycho:Projects/z80fp/MrZ80-gen/`; `ssh tycho docker run --rm -v …:…
+-v mrz80-rvcache:… localhost/mrz80-vexgen:1 ./mill
+"VexRiscv.runMain mrz80.GenMrZ80"`;
+rsync outputs back. (Unlike the Quartus wrapper's implicit remote-copy
+assumption, vexgen makes both sync directions explicit in the script.)
+
+**Pinned inputs + provenance manifest (all committed).**
+`Components/RISCV/VEXRISCV_MANIFEST`: upstream URL + pinned VexRiscv commit
+(`VEXRISCV_REF`), SpinalHDL/JDK/mill versions (also echoed in the
+generated file header), exact mill command line, sha256 of the emitted
+Verilog, and the P0 fit figures. Outputs: `Components/RISCV/VexRiscv.v`
+(+ any companion `.v` the generator emits; `.qip` per AGENTS mechanism 3),
+marked `.gitattributes: linguist-generated=true`.
+
+**Reproducibility gate (P0 exit):** regenerate twice at the same pin —
+body diff must be empty (ignore generator date/header lines). Any
+unexplained diff blocks vendoring.
+
+**Pin candidates `[proposed, verify at spike]`:** VexRiscv master as of
+2026-Q4, or — for extra provenance — the exact rev LiteX pins per variant
+in `litex/soc/cores/cpu/vexriscv` (LiteX ships *our* config-adjacent
+pre-gens, confirming field-tested pins; we generate ours fresh at that
+pin). Pre-generated VexRiscv files elsewhere (m-labs/VexRiscv-verilog
+2019 snapshot; LiteX variant cores) are **not** adopted directly: fixed
+wrong plugin sets (no RV32C, or MMU+caches); they are config references
+only.
 
 ---
 
@@ -696,7 +763,7 @@ OQ-18)**.
 
 | Phase | Scope | Exit |
 |---|---|---|
-| **P0** | VexRiscv vendored+P0 synth (Quartus 17.0, `5CSEBA6U23I7`) + Mecrisp hello-world + downloadable-ROM write path sim + `fit.rpt` headroom recorded + crt0 convention verified + fallback decision | clean synth, headroom numbers logged, Go/fallback |
+| **P0** | VexRiscv vendored+P0 synth (Quartus 17.0, `5CSEBA6U23I7`); **vexgen container round-trip green** (§5.7: image built on tycho, coursier cache volume, twice-regen diff empty, manifest committed) + Mecrisp hello-world + downloadable-ROM write path sim + `fit.rpt` headroom recorded + crt0 convention verified + fallback decision | clean synth, headroom numbers logged, reproducible regen, Go/fallback |
 | **P1 — console core** | bridge (regs incl. MD/AR/DR/PR, MAP0..3, MBX, WDG×2, ID), mon_uart (O9B divider), escape-break, STEP assist, reset stretcher, trampoline, MEM-SEQ (logical) + **`mon_mem_client`** (physical P/W), SNAC mux + MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export, FW: ODT skin + `G S T X K E D I O R A W V ? U F ODT PHY LOG MB` | R-01…R-09, R-12, R-19…R-25, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired |
 | **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`ODT_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, BP/`C` (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `mon_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
 | **P3 — polish** | T80 register write-back (retires trampoline), step-over, conditional BPs, `Y`, MMU writes from monitor, exclusive HDMI+kbd console (D-19), vid-write revisit (OQ-11), HPS path eval, mailbox protocol hardening with HBIOS | D-02 retired; all prior green |
