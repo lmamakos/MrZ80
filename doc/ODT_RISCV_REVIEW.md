@@ -2,7 +2,7 @@
 
 Status: **DRAFT v0.1** (2026-10-22). Review of `ODT_MONITOR_DESIGN.md` v0.1
 (hardwired mon_core/mon_cli architecture) against the new approach in
-`ODT_CHANGE.md`: a VexRiscv RV32IMC softcore running Mecrisp-Quintus FORTH
+`archive/ODT_CHANGE.md`: a VexRiscv RV32IMC softcore running Mecrisp-Quintus FORTH
 as the debug monitor, reaching over to the T80 through a thin MMIO bridge
 (`z80_bus_monitor`).
 
@@ -15,7 +15,7 @@ Tags: `[verified]` (re-confirmed against source this review, anchor given),
 implementation moves hardware→FORTH or FORTH→bridge), `[superseded]`,
 `[new]`, `[risk]`, `[decision]` (needs owner call before v0.2).
 
-Companion docs: `ODT_MONITOR_DESIGN.md` (review subject), `ODT_CHANGE.md`
+Companion docs: `ODT_MONITOR_DESIGN.md` (review subject), `archive/ODT_CHANGE.md`
 (pivot handoff), `doc/t80_reg_debug_vector.md` (still normative),
 `REQUIREMENTS.md` item 1 (the examine/deposit-port requirement this
 architecture satisfies), `HARDWARE.md` (must gain the monitor windows).
