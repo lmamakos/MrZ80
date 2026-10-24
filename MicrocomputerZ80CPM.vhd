@@ -149,6 +149,16 @@ architecture struct of MicrocomputerZ80CPM is
 	signal cpuDataIn				: std_logic_vector(7 downto 0);
 	signal cpuDbgRegisters			: std_logic_vector(211 downto 0);
 
+	-- Define some T80 control signals that are hardwired for the moment, but
+	-- future cleverness awaits.   This allows us to wire these up to the
+	-- signal chain thing now.
+	signal n_INT   : std_logic;
+	signal n_NMI   : std_logic;
+	signal n_BUSRQ : std_logic;
+	signal n_M1    : std_logic;
+	signal n_HALT  : std_logic;
+	signal n_BUSAK : std_logic;
+
 	-- Symbolic names for the CPU debug register vector (REG of T80s).
 	-- Layout of cpuDbgRegisters (see T80.vhd), MSB first:
 	--   [211] IFF2  [210] IFF1  [209:208] interrupt mode
@@ -178,8 +188,6 @@ architecture struct of MicrocomputerZ80CPM is
 	signal dbgReg_IY				: std_logic_vector(15 downto 0);
 	signal dbgReg_PC				: std_logic_vector(15 downto 0);
 	signal dbgReg_SP				: std_logic_vector(15 downto 0);
-
-	signal fpChainRegsOut			: std_logic;
 
 	signal internalRam1DataOut		: std_logic_vector(7 downto 0);
 	-- Block RAM port muxed between the CPU and the OSD download write path.
@@ -307,14 +315,38 @@ architecture struct of MicrocomputerZ80CPM is
 	signal fpRefreshCount			: unsigned(19 downto 0) := (others => '0');
 	signal fpRefreshTick			: std_logic := '0';
 
-	-- Capture-chain wires from the Transparent_Capture_Chain back to
-	-- the FrontPanel_Subsystem.
-	signal fpChainSerial			: std_logic;
+	-- Capture-chain wiring between the front-panel chain segments. The
+	-- segments are daisy-chained toward the FrontPanel_Subsystem, shifting
+	-- MSB-first, so the signal that leaves one segment enters the next:
+	--
+	--   fpChainEnd     [260-291] --fpChainEndOut-->    fpChainCPUctl   [252-259]
+	--   fpChainCPUctl  [252-259] --fpChainCPUctlOut--> fpChainPhysAddrBus [224-251]
+	--   PhysAddrBus    [224-251] --fpChainPhysAddr-->   fpChainRegs     [32-223]
+	--   fpChainRegs    [32-223]  --fpChainRegsOut-->    fpChainStaticTest [8-31]
+	--   StaticTest     [8-31]    --fpChainStatic-->     fpChain         [0-7]
+	--   fpChain        [0-7]     --fpChainSerial-->     FrontPanel_Subsystem
+	--
+	-- One signal per segment boundary (VHDL cannot wire two component
+	-- ports together directly). Listed in chain order, lowest bits first.
+	--
+	-- NOTE: Any change to the chain segments below (add/remove/reorder,
+	-- width or signal changes) MUST be reflected in SIGNAL-CAPTURES.md,
+	-- the authoritative bit-allocation reference for this chain.
+	signal fpChainSerial			: std_logic;  -- fpChain           -> FrontPanel_Subsystem
+	signal fpChainStatic			: std_logic;  -- fpChainStaticTest -> fpChain
+	signal fpChainRegsOut			: std_logic;  -- fpChainRegs     -> fpChainStaticTest
+	signal fpChainPhysAddr			: std_logic;  -- PhysAddrBus     -> fpChainRegs
+	signal fpChainCPUctlOut			: std_logic;  -- fpChainCPUctl   -> fpChainPhysAddrBus
+	signal fpChainEndOut			: std_logic;  -- fpChainEnd      -> fpChainCPUctl
+	-- Capture-chain control, fanned out to every segment:
 	signal fpChainLatch				: std_logic;
 	signal fpChainShiftEn			: std_logic;
-        signal fpChainEndOut : std_logic;
-        signal fpChainStatic : std_logic;
-
+	-- Chain 8-31 capture data: address bus plus the data bus seen by the
+	-- CPU (bus contents during reads/idle, CPU-driven value during writes).
+	-- Hoisted into a signal because VHDL does not allow when/else conditional
+	-- expressions in port associations (same reason as mmu_reset above).
+	signal fpStaticBusData			: std_logic_vector(23 downto 0);
+	signal fpStaticDataBus			: std_logic_vector(7 downto 0);
 	signal serialClkCount				: unsigned(15 downto 0);
 	signal cpuClkCount				: std_logic_vector(5 downto 0) := (others => '0');
 	signal sdClkCount				: std_logic_vector(5 downto 0); 	
@@ -356,19 +388,29 @@ port map(
 	clk_n => clk,
 	cen => cpu_cen,
 	wait_n => cpu_wait_n,
-	int_n => '1',
-	nmi_n => '1',
-	busrq_n => '1',
+	int_n => n_INT,
+	nmi_n => n_NMI,
+	busrq_n => n_BUSRQ,
 	mreq_n => n_MREQ,
 	iorq_n => n_IORQ,
 	rd_n => n_RD,
 	wr_n => n_WR,
+	m1_n => n_M1,
+	halt_n => n_HALT,
+	busak_n => n_BUSAK,
 	a => cpuAddress,
 	di => cpuDataIn,
 	do => cpuDataOut,
 	mrd_t1 => cpu_mrd_t1,
         REG => cpuDbgRegisters
 );
+
+-- The interrupt and bus-request inputs are tied inactive for the moment;
+-- future cleverness awaits. n_int1/n_int2 (the io1/io2 interrupt outputs)
+-- are currently unconnected and would be the natural source for n_INT.
+n_INT   <= '1';
+n_NMI   <= '1';
+n_BUSRQ <= '1';
 
 -- ____________________________________________________________________________________
 -- MMU GOES HERE
@@ -618,7 +660,7 @@ dbgReg_IY     <= cpuDbgRegisters(207 downto 192);
 dbgReg_PC     <= cpuDbgRegisters(79 downto 64);
 dbgReg_SP     <= cpuDbgRegisters(63 downto 48);
 
--- **** LED 0 - 7
+-- **** Signal Chain 0 - 7
 -- 8-bit transparent capture chain sourced from the fpLatch register.
 fpChain : entity work.Transparent_Capture_Chain
 	generic map (
@@ -636,7 +678,14 @@ fpChain : entity work.Transparent_Capture_Chain
 		chain_out     => fpChainSerial    -- final output to FrontPanel_Subsystem
 	);
 
--- **** LED 8 - 31
+-- **** Signal Chain 8 - 31
+-- Bus data mux for chain 8-31: show what the CPU sees on the data bus
+-- (reads/idle), or what it is driving during write cycles. Split into two
+-- simple assignments: VHDL-93 has no parenthesised-expression production, so
+-- a when/else clause cannot sit inline inside the concatenation below.
+fpStaticDataBus <= cpuDataIn when n_WR = '1' else cpuDataOut;
+fpStaticBusData <= cpuAddress & fpStaticDataBus;
+
 fpChainStaticTest : entity work.Transparent_Capture_Chain
 	generic map (
 		TOTAL_WIDTH => 24
@@ -647,16 +696,16 @@ fpChainStaticTest : entity work.Transparent_Capture_Chain
 		latch         => fpChainLatch,
 		shift_en      => fpChainShiftEn,
 
-		combined_data => cpuAddress & cpuDataIn,
+		combined_data => fpStaticBusData,
 
 		chain_in      => fpChainRegsOut,
 		chain_out     => fpChainStatic
 	);
 
--- **** LED 32 - 223
--- All CPU registers, in LED order: A F A' F' B C B' C' D E D' E' H L H' L'
+-- **** Signal Chain 32 - 223
+-- All CPU registers, in Signal Chain order: A F A' F' B C B' C' D E D' E' H L H' L'
 -- IX IY PC SP (8-bit registers first, then the 16-bit ones; the first
--- listed is the MSB, i.e. the first LED). Last link of the chain.
+-- listed is the MSB, i.e. the first Signal Chain bit).
 fpChainRegs : entity work.Transparent_Capture_Chain
 	generic map (
 		TOTAL_WIDTH => 192
@@ -678,11 +727,49 @@ fpChainRegs : entity work.Transparent_Capture_Chain
 		                 dbgReg_IX & dbgReg_IY & dbgReg_PC & dbgReg_SP,
 			--       [160-175]  [176-191]  [192-207]      [208-223]
 
-		chain_in      => fpChainEndOut,
+		chain_in      => fpChainPhysAddr,
 		chain_out     => fpChainRegsOut
 	);
   
--- **** LED 224 - 255
+-- **** Signal Chain 224 - 251
+fpChainPhysAddrBus :  entity work.Transparent_Capture_Chain
+	generic map (
+		TOTAL_WIDTH => 28
+	)
+	port map (
+		clk           => clk,
+		reset         => not N_RESET,
+		latch         => fpChainLatch,
+		shift_en      => fpChainShiftEn,
+
+		combined_data => mmu_phys_addr,
+
+		chain_in      => fpChainCPUctlOut,
+		chain_out     => fpChainPhysAddr
+	);
+
+-- **** Signal Chain 252 - 259
+fpChainCPUctl :  entity work.Transparent_Capture_Chain
+	generic map (
+		TOTAL_WIDTH => 8
+	)
+	port map (
+		clk           => clk,
+		reset         => not N_RESET,
+		latch         => fpChainLatch,
+		shift_en      => fpChainShiftEn,
+
+		combined_data => not n_WR    & not n_RD & not n_INT  & not n_NMI &
+			--              [252]       [253]      [254]       [255]
+		                     not n_BUSRQ & not n_M1 & not n_HALT & not n_BUSAK,
+			--              [256]         [257]      [258]       [259]
+
+		chain_in      => fpChainEndOut,
+		chain_out     => fpChainCPUctlOut
+	);
+
+
+-- **** Signal Chain 260 - 291
 fpChainEnd :  entity work.Universal_Capture_Chain
 	generic map (
 		TOTAL_WIDTH => 32,

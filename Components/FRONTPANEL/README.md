@@ -122,6 +122,23 @@ global, not per profile.
   copy of the loaded file (`pri_ram`) used to restore the working copy
   on every reset.
 
+### Signal colours (authoring-time)
+
+The hardware keys colours to physical LEDs, but the profile *tool* lets
+colours be authored per **signal** instead: a `signal_colors` table in
+the YAML attaches ON/OFF colours to chain positions (by name, range or
+number), and at build time each colour is written into every LED whose
+map selects that bit — see `tools/fpprofile.md` §
+[`signal_colors`](tools/fpprofile.md#signal_colors). The binary file
+and the core are unchanged (still v2, still per-LED). Two consequences
+of baking:
+
+- A Z-80 rewriting a map entry (`+5`) at runtime does **not** move the
+  colour with the new signal: the LED keeps whatever colour was baked
+  for the old one until the file is regenerated and reloaded.
+- Colour edits over the bus (`+3`) address LEDs, as before; there is no
+  "edit signal *n*'s colour" port.
+
 ### Long capture chains (up to 1024 bits)
 
 `FrontPanel_Subsystem` has generic `CHAIN_BITS` (1..1024; the shipped
@@ -171,19 +188,29 @@ is an annotated example for the development panel (8 × 32 matrix)
 matching the signal chain below. Unit tests:
 `python3 -m unittest -v test_fpprofile` in `tools/`.
 
-## Current capture chain (`MicrocomputerZ80CPM.vhd`, 384 bits)
+## Current capture chain (`MicrocomputerZ80CPM.vhd`, 292 wired bits)
+
+> Authoritative bit map: [`../../SIGNAL-CAPTURES.md`](../../SIGNAL-CAPTURES.md)
+> — update that table whenever the chain changes. Summary below.
 
 Chain positions below are also the LED numbers under the identity
-profile, MSB-first throughout. The chain is built from four daisy-chained
-segments; source detail for the register bits is in
-[`doc/t80_reg_debug_vector.md`](../../doc/t80_reg_debug_vector.md).
+profile, MSB-first throughout. The chain is built from six daisy-chained
+segments, in order toward the LED controller: `fpChainEnd` →
+`fpChainCPUctl` → `fpChainPhysAddrBus` → `fpChainRegs` →
+`fpChainStaticTest` → `fpChain`. Source detail for the register bits is
+in [`doc/t80_reg_debug_vector.md`](../../doc/t80_reg_debug_vector.md).
 
 | Positions | Source |
 |-----------|--------|
 | 0–7 | `fpLatch` — the `$FF` output latch, bit 7 first |
 | 8–23 | address bus A15..A0 |
-| 24–31 | data bus `cpuDataIn`, D7..D0 |
+| 24–31 | data bus `D7..D0` (bus contents; CPU-driven during writes) |
 | 32–223 | CPU registers (exact order in the next table) |
+| 224–251 | `mmu_phys_addr[27:0]` — MMU physical address, bit 27 first |
+| 252–259 | CPU control, active-high: `/WR` `/RD` `/INT` `/NMI` `/BUSRQ` `/M1` `/HALT` `/BUSAK` (`/INT`, `/NMI`, `/BUSRQ` currently tied inactive) |
+| 260–279 | reserved, tied 0 |
+| 280–283 | `/WR` `/RD` `/MREQ` `/IORQ` — **stretched** (glow ≈ 50 ms per pulse) |
+| 284–291 | `fpLatch` again (bit 7 first) |
 
 The register region (32–223) mirrors the T80 `REG` export through the
 symbolic `dbgReg_*` signals, in this exact LED order:
@@ -203,27 +230,18 @@ symbolic `dbgReg_*` signals, in this exact LED order:
 | 112–119 | `D'` | | |
 | 120–127 | `E'` | | |
 
-| Positions | Source |
-|-----------|--------|
-| 224–243 | tied 0 (dark) |
-| 244 | `/WR` (active-low strobe inverted — glows when asserted); **stretched** |
-| 245 | `/RD` — **stretched** |
-| 246 | `/MREQ` — **stretched** |
-| 247 | `/IORQ` — **stretched** |
-| 248–255 | `fpLatch` again (bit 7 first) |
-
 Notes:
 
 * `B/C`, `D/E`, `H/L` are always the **current** bank and the primed
   names the alternate bank: after an odd number of `EXX`, the T80
   reports both banks correctly through this fixed layout (the `REG`
   vector re-orders internally; verified by `sim/tb_cpuregs.vhd`).
-* The wired chain is 256 bits but `CHAIN_BITS => 384`: chain positions
-  256–383 exist and read 0 (shifted in from the far `chain_in = '0'`),
-  giving headroom for added segments. Identity-mapped LEDs 0–255 cover
-  the whole wired chain, including the strobe and second-latch bits at
-  244–255; any LED can additionally be mapped to 256–383 (maps are
-  16-bit), where it will simply read 0 until real signals are added.
+* The wired chain is 292 bits but `CHAIN_BITS => 384`: positions
+  292–383 exist and read 0 (shifted in from the far `chain_in = '0'`),
+  giving headroom for added segments. An identity profile map exposes
+  bits 0–255 only — the upper control bits at 256–291 (upper CPU
+  control, reserved filler, and the `fpLatch` echo) need a profile that
+  maps them explicitly (maps are 16-bit).
 
 ## Capture-chain components
 
