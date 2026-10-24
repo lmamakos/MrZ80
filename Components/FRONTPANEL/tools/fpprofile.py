@@ -54,6 +54,17 @@ Configuration (YAML):
     FLAGS:  [25, 26, 27]  #   errors).  Repeats are allowed.
     STATUS: ["ADDR[7..0]", FLAGS]
 
+  signal_colors:        # optional; colours that follow a SIGNAL rather
+    PC:   {on: cyan}      #   than an LED.  Keys are reference tokens
+    DATA: {on: lime, off: "#002000"}  #   (numbers, ranges, symbols,
+                                      #   subsets); values are a mapping
+                                      #   {on:, off:} (either optional)
+                                      #   or a bare colour (= ON only).
+                                      #   Every LED whose map selects the
+                                      #   bit gets the colour; profile-
+                                      #   level signal_colors overlay this
+                                      #   table field-wise (see below).
+
   layout:               # optional (defaults to one row of `leds`);
     rows: 8             #   exactly one layout, global, wiring only.
     cols: 32
@@ -88,7 +99,16 @@ chain bit 0 does.  Cells no run claims are blanks too, resolved in
 profile context -- the rest of the panel always fills with blanks.
 
 Colour precedence (each of ON and OFF independently):
-  element > run > profile > defaults > built-in (#FF0001 / #000009).
+  element > run > profile signal colour > global signal colour >
+  profile > defaults > built-in (#FF0001 / #000009).
+Signal colours travel with the chain bit: they reach every LED of that
+profile whose map selects the bit, and sit above the profile/default
+levels -- a signal's declared identity survives a re-themed profile
+default.  A field (on/off) not set at the signal levels falls through
+to the levels below; profile-level signal_colors entries overlay
+top-level ones per bit and per field.  Signal colours apply only to
+defined profiles (an unspecified profile stays fully built-in) and
+never to blank cells.
 Any colour position accepts "#RRGGBB", "RRGGBB", [r, g, b], or a
 colour name (built-in CSS/HTML names plus the `colors` table; a
 6-character all-hex string is always read as hex, never as a name).
@@ -494,6 +514,49 @@ def build_symbols(cfg_symbols, chain_bits, path, referenced):
     return symbols
 
 
+def build_signal_colors(cfg_table, symbols, chain_bits, palette, path):
+    """`signal_colors` table -> {chain bit: {"on": raw|None,
+    "off": raw|None}}.
+
+    Keys are the same reference tokens the rest of the schema uses
+    (chain numbers, "a..b" ranges, symbols, subsets); blanks are not
+    allowed -- a blank is not a signal.  A value is a mapping with
+    optional `on`/`off` colours, or a bare colour (which sets ON only).
+    Entries apply per bit and per field: later entries override earlier
+    ones for the bits they cover."""
+    table = {}
+    if cfg_table is None:
+        return table
+    if not isinstance(cfg_table, dict):
+        raise ConfigError(f"{where(path, cfg_table)}: 'signal_colors' must "
+                          f"be a mapping of signal -> colour(s)")
+    for key, val in cfg_table.items():
+        p = f"{path}.{key}"
+        positions, _ = expand_token(key, symbols, chain_bits, p,
+                                    allow_blank=False)
+        if isinstance(val, dict):
+            for k in val:
+                if k not in ("on", "off"):
+                    raise ConfigError(f"{where(p, val)}: unknown key {k!r} "
+                                     f"(want 'on' and/or 'off')")
+            if not val:
+                raise ConfigError(f"{where(p, val)}: needs at least one of "
+                                 f"'on' / 'off'")
+            fields = dict(val)
+        else:
+            fields = {"on": val}
+        for k in ("on", "off"):
+            if k in fields:
+                parse_color(fields[k], f"{p}.{k}", palette)  # early check
+        for pos in positions:
+            ent = table.setdefault(pos, {"on": None, "off": None})
+            if "on" in fields:
+                ent["on"] = fields["on"]
+            if "off" in fields:
+                ent["off"] = fields["off"]
+    return table
+
+
 # --------------------------------------------------------------------
 # Layout / grid geometry
 # --------------------------------------------------------------------
@@ -647,13 +710,16 @@ def parse_run(run, ri, layout, symbols, chain_bits, palette, path, referenced,
 
 
 def build_profile(num, pcfg, base_on, base_off, layout, symbols,
-                  chain_bits, leds, palette, errors, referenced, base_dir):
-    """-> dict(map=[...], on=[...], off=[...]) of length leds."""
+                  chain_bits, leds, palette, errors, referenced, base_dir,
+                  sigc_global=None, sigc_prof=None):
+    """-> dict(map=[...], on=[...], off=[...], placed=set()) of length
+    leds; `placed` is the set of chain bits the profile actually shows
+    (non-blank claimed cells), used for signal_colors usage warnings."""
     path = f"profile.{num}"
     if not isinstance(pcfg, dict):
         raise ConfigError(f"{where(path, pcfg)}: profile must be a mapping")
     for k in pcfg:
-        if k not in ("on", "off", "dir", "runs"):
+        if k not in ("on", "off", "dir", "runs", "signal_colors"):
             raise ConfigError(f"{where(path, pcfg)}: unknown key {k!r}")
 
     run_dir = pcfg.get("dir", base_dir)
@@ -667,6 +733,20 @@ def build_profile(num, pcfg, base_on, base_off, layout, symbols,
         parse_color(prof_on, f"{path}.on", palette)
     if prof_off is not None:
         parse_color(prof_off, f"{path}.off", palette)
+
+    # Signal-colour layers: the global table overlaid field-wise by this
+    # profile's own table.  Resolved per chain bit at cell assignment
+    # below, so a signal's colour reaches every LED of this profile that
+    # displays it, and sits above the profile/default colour levels.
+    merged_sigc = {}
+    for b, ent in (sigc_global or {}).items():
+        merged_sigc[b] = dict(ent)
+    for b, ent in (sigc_prof or {}).items():
+        m = merged_sigc.setdefault(b, {"on": None, "off": None})
+        if ent["on"] is not None:
+            m["on"] = ent["on"]
+        if ent["off"] is not None:
+            m["off"] = ent["off"]
 
     runs = pcfg.get("runs", [])
     if not isinstance(runs, (list, tuple)):
@@ -710,18 +790,23 @@ def build_profile(num, pcfg, base_on, base_off, layout, symbols,
 
     # Resolve every claimed cell.
     cellcolor = {}  # cell -> (map, on, off)
+    placed = set()  # chain bits this profile actually displays
     for cell, (ri, _, i) in claimed.items():
         pos, e_on, e_off, _ = parsed[ri]["cells"][i]
+        sig = merged_sigc.get(pos) if pos is not None else None
         off = resolve_off([(f"{path}.runs[{ri}].signals.off", e_off),
                            (f"{path}.runs[{ri}].off", parsed[ri]["off"]),
+                           ("signal_colors.off", sig["off"] if sig else None),
                            (f"{path}.off", prof_off),
                            ("defaults.off", base_off[0])],
                           palette, DEFAULT_OFF)
         if pos is None:  # explicit blank: ON baked to OFF, static
             cellcolor[cell] = (0, off, off)
         else:
+            placed.add(pos)
             on = resolve_off([(f"{path}.runs[{ri}].signals.on", e_on),
                               (f"{path}.runs[{ri}].on", parsed[ri]["on"]),
+                              ("signal_colors.on", sig["on"] if sig else None),
                               (f"{path}.on", prof_on),
                               ("defaults.on", base_on[0])],
                              palette, DEFAULT_ON)
@@ -747,19 +832,23 @@ def build_profile(num, pcfg, base_on, base_off, layout, symbols,
                 maps[led], ons[led], offs[led] = cellcolor[(r, c)]
             else:
                 maps[led], ons[led], offs[led] = 0, default_off, default_off
-    return {"map": maps, "on": ons, "off": offs}
+    return {"map": maps, "on": ons, "off": offs, "placed": placed}
 
 
 def default_profile(leds, on=DEFAULT_ON, off=DEFAULT_OFF):
+    # Signal colours do NOT apply to unspecified profiles (built-in
+    # colours only), so `placed` is empty: it never absorbs a
+    # signal_colors usage warning.
     return {"map": list(range(leds)),
-            "on": [on] * leds, "off": [off] * leds}
+            "on": [on] * leds, "off": [off] * leds,
+            "placed": set()}
 
 
 # --------------------------------------------------------------------
 # Whole configuration -> profiles
 # --------------------------------------------------------------------
 TOP_KEYS = ("chain_bits", "leds", "dir", "colors", "defaults", "signals",
-            "layout")
+            "signal_colors", "layout")
 
 
 def build_profiles(config, chain_bits_override=None):
@@ -804,6 +893,8 @@ def build_profiles(config, chain_bits_override=None):
     referenced = set()
     symbols = build_symbols(config.get("signals"), chain_bits, "signals",
                             referenced)
+    sigc_global = build_signal_colors(config.get("signal_colors"), symbols,
+                                      chain_bits, palette, "signal_colors")
     layout = get_layout(config.get("layout"), leds, "layout")
 
     pcfgs = {}
@@ -820,22 +911,43 @@ def build_profiles(config, chain_bits_override=None):
                          DEFAULT_OFF)
 
     profiles = []
+    all_placed = set()
+    sigc_warnings = []
     for n in range(NUM_PROFILES):
         if n in pcfgs:
-            profiles.append(build_profile(n, pcfgs[n], base_on, base_off,
-                                          layout, symbols, chain_bits, leds,
-                                          palette, errors, referenced,
-                                          base_dir))
+            psig = build_signal_colors(
+                pcfgs[n].get("signal_colors") if isinstance(pcfgs[n], dict)
+                else None,
+                symbols, chain_bits, palette, f"profile.{n}.signal_colors")
+            prof = build_profile(n, pcfgs[n], base_on, base_off,
+                                 layout, symbols, chain_bits, leds,
+                                 palette, errors, referenced, base_dir,
+                                 sigc_global, psig)
+            profiles.append(prof)
+            all_placed |= prof["placed"]
+            sigc_warnings += [
+                f"profile.{n}: signal colour for chain position {b} is "
+                f"never displayed by this profile"
+                for b in sorted(psig) if b not in prof["placed"]]
         else:
             profiles.append(default_profile(leds, fb_on, fb_off))
 
     warnings = [f"signal '{name}' is defined but no profile references it"
                 for name in symbols if name not in referenced]
+    warnings += sigc_warnings
+    warnings += [
+        f"signal_colors: chain position {b} is not displayed by any "
+        f"defined profile"
+        for b in sorted(sigc_global) if b not in all_placed]
     if isinstance(config.get("colors"), dict):
         warnings += [
             f"colour '{name}' in the colors table is never referenced"
             for name in config["colors"]
             if not color_name_used(name, config)]
+    # `placed` is internal bookkeeping for the signal_colour warnings;
+    # drop it so profile dicts stay uniform with decode()'s output.
+    for p in profiles:
+        p.pop("placed", None)
     return profiles, warnings, errors
 
 
@@ -853,7 +965,7 @@ def color_name_used(name, config):
             return s == target or s == "#" + target
         return False
 
-    for key in ("defaults",):
+    for key in ("defaults", "signal_colors"):
         if key in config and walk(config[key]):
             return True
     for k in config:

@@ -361,6 +361,203 @@ class BlanksAndPrecedence(unittest.TestCase):
             build_yaml("signals:\n  A: ['-']\n")
 
 
+class SignalColours(unittest.TestCase):
+    CYAN = (0, 255, 255)
+    LIME = (0, 255, 0)
+
+    def test_global_signal_beats_profile_and_defaults(self):
+        p, w, e = build_yaml(
+            "leds: 8\n"
+            "layout: {rows: 1, cols: 8}\n"
+            "defaults: {on: '#040404', off: '#000000'}\n"
+            "signal_colors:\n"
+            '  "0..1": {on: "#0A0A0A"}\n'
+            "profile.0:\n"
+            "  on: '#030303'\n"
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            '      signals: ["0", "1", "2"]\n')
+        self.assertEqual((w, e), ([], []))
+        self.assertEqual(p[0]["on"][0], (10, 10, 10))   # signal layer
+        self.assertEqual(p[0]["on"][1], (10, 10, 10))
+        self.assertEqual(p[0]["on"][2], (3, 3, 3))       # profile default
+        self.assertEqual(p[0]["off"][0], BLACK)           # signal sets on only
+
+    def test_placement_beats_signal_colour(self):
+        p, _, e = build_yaml(
+            "leds: 8\n"
+            "layout: {rows: 1, cols: 8}\n"
+            "signal_colors:\n"
+            '  "0..2": {on: cyan}\n'
+            "profile.0:\n"
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            "      on: red\n"
+            '      signals: ["0..1", {sig: "2", on: black}]\n')
+        self.assertEqual(e, [])
+        self.assertEqual(p[0]["on"][0], RED)             # run beats signal
+        self.assertEqual(p[0]["on"][2], BLACK)           # element beats signal
+
+    def test_fieldwise_fallthrough(self):
+        p, _, e = build_yaml(
+            "leds: 4\n"
+            "layout: {rows: 1, cols: 4}\n"
+            "defaults: {on: '#040404', off: '#020202'}\n"
+            "signal_colors:\n"
+            "  \"5\": {on: lime}\n"
+            "profile.0:\n"
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            '      signals: ["5"]\n')
+        self.assertEqual(e, [])
+        self.assertEqual(p[0]["on"][0], self.LIME)
+        self.assertEqual(p[0]["off"][0], (2, 2, 2))      # unset off: defaults
+
+    def test_profile_overlay_fieldwise(self):
+        p, _, e = build_yaml(
+            "leds: 4\n"
+            "layout: {rows: 1, cols: 4}\n"
+            "signal_colors:\n"
+            '  "0..1": {on: cyan, off: "#001010"}\n'
+            "profile.0:\n"
+            "  signal_colors:\n"
+            '    "0": {off: "#020202"}\n'
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            '      signals: ["0..1"]\n')
+        self.assertEqual(e, [])
+        self.assertEqual(p[0]["on"][0], self.CYAN)       # global on survives
+        self.assertEqual(p[0]["off"][0], (2, 2, 2))      # profile off wins
+        self.assertEqual(p[0]["off"][1], (0, 16, 16))    # bit 1 untouched
+
+    def test_symbol_subset_keys_and_later_wins(self):
+        p, _, e = build_yaml(
+            "leds: 8\n"
+            "layout: {rows: 1, cols: 8}\n"
+            "signals:\n"
+            '  PC: ["4..7"]\n'
+            "signal_colors:\n"
+            "  PC: gold\n"
+            '  "PC[1..0]": {on: black}\n'
+            "profile.0:\n"
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            "      signals: [PC]\n")
+        self.assertEqual(e, [])
+        ons = p[0]["on"][:4]
+        # PC emits bits 4,5,6,7; subset PC[1..0] = bits 5,4 painted black
+        self.assertEqual(ons, [BLACK, BLACK, (255, 215, 0), (255, 215, 0)])
+
+    def test_colour_follows_every_led_showing_the_bit(self):
+        p, _, e = build_yaml(
+            "leds: 8\n"
+            "layout: {rows: 1, cols: 8}\n"
+            "signals:\n"
+            '  LATCH: ["0..3"]\n'
+            "signal_colors:\n"
+            '  "2": {on: cyan}\n'
+            "profile.0:\n"
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            "      signals: [LATCH, LATCH]\n")
+        self.assertEqual(e, [])
+        self.assertEqual(p[0]["map"][:8], [0, 1, 2, 3, 0, 1, 2, 3])
+        self.assertEqual(p[0]["on"][2], self.CYAN)
+        self.assertEqual(p[0]["on"][6], self.CYAN)       # repeat shares it
+
+    def test_blanks_ignore_signal_colours(self):
+        p, _, e = build_yaml(
+            "leds: 4\n"
+            "layout: {rows: 1, cols: 4}\n"
+            "defaults: {off: '#000009'}\n"
+            "signal_colors:\n"
+            '  "0": {off: "#050505"}\n'
+            "profile.0:\n"
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            "      signals: ['-']\n")
+        self.assertEqual(e, [])
+        self.assertEqual(p[0]["off"][0], (0, 0, 9))      # claimed blank
+        self.assertEqual(p[0]["off"][2], (0, 0, 9))      # unclaimed cell
+
+    def test_unspecified_profile_stays_builtin(self):
+        p, _, e = build_yaml(
+            "leds: 4\n"
+            "layout: {rows: 1, cols: 4}\n"
+            "signal_colors:\n"
+            "  PC: cyan\n"
+            "signals:\n"
+            '  PC: ["0"]\n'
+            "profile.0:\n"
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            "      signals: [PC]\n")
+        self.assertEqual(e, [])
+        self.assertEqual(p[7]["on"][0], (0xFF, 0x00, 0x01))  # built-in
+
+    def test_unknown_symbol_is_error(self):
+        with self.assertRaises(fp.ConfigError) as cm:
+            build_yaml("signal_colors:\n  NOPE: red\n")
+        self.assertIn("NOPE", str(cm.exception))
+
+    def test_blank_key_is_error(self):
+        with self.assertRaises(fp.ConfigError):
+            build_yaml("signal_colors:\n  '-': red\n")
+
+    def test_bad_entry_is_error(self):
+        with self.assertRaises(fp.ConfigError):
+            build_yaml('signal_colors:\n  "1": {on: red, bogus: blue}\n')
+        with self.assertRaises(fp.ConfigError):
+            build_yaml('signal_colors:\n  "1": {}\n')
+        with self.assertRaises(fp.ConfigError):
+            build_yaml('signal_colors:\n  "1": {off: notacolour}\n')
+
+    def test_out_of_range_key_is_error(self):
+        with self.assertRaises(fp.ConfigError):
+            build_yaml("chain_bits: 8\nsignal_colors:\n  10: red\n")
+
+    def test_unused_signal_colours_warn(self):
+        _, w, e = build_yaml(
+            "leds: 8\n"
+            "layout: {rows: 1, cols: 8}\n"
+            "signal_colors:\n"
+            '  "77": {on: cyan}\n'
+            "profile.0:\n"
+            "  signal_colors:\n"
+            '    "5": {on: red}\n'
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            '      signals: ["0"]\n')
+        self.assertEqual(e, [])
+        self.assertTrue(any("77" in x for x in w), w)
+        self.assertTrue(any(x.startswith("profile.0:") and "5" in x
+                            for x in w), w)
+
+    def test_bare_colour_sets_on_only(self):
+        p, _, e = build_yaml(
+            "leds: 4\n"
+            "layout: {rows: 1, cols: 4}\n"
+            "signal_colors:\n"
+            "  \"1\": red\n"
+            "profile.0:\n"
+            "  runs:\n"
+            "    - start: [0, 0]\n"
+            "      dir: right\n"
+            '      signals: ["1"]\n')
+        self.assertEqual(e, [])
+        self.assertEqual(p[0]["on"][0], RED)
+        self.assertEqual(p[0]["off"][0], (0, 0, 9))      # default OFF
+
+
 class DirDefaults(unittest.TestCase):
     def maps(self, text):
         p, w, e = build_yaml(text)

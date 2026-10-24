@@ -39,9 +39,10 @@ its YAML configuration language only.
 | **blank** | A cell showing no signal: a static dim LED (see § Blanks). |
 | **profile** | One of the 8 profiles (0..7) the hardware holds. |
 
-The flow: `signals` name chain bits → `profile.N` runs place them on
-cells → the layout converts cells to LED numbers → the output file gives
-every LED its chain position plus ON/OFF colours.
+The flow: `signals` name chain bits → `signal_colors` colours
+them → `profile.N` runs place them on cells → the layout converts cells
+to LED numbers → the output file gives every LED its chain position plus
+ON/OFF colours.
 
 ## Configuration reference
 
@@ -55,6 +56,7 @@ configuration path and source line.
 | `chain_bits` | integer | 256 | Validation chain length, 1..1024. Override with `--chain-bits`. **Match your build** (shipped core: 384). |
 | `leds` | integer | 256 | Physical LED count (mirrors the FPGA `NUM_LEDS` generic). The layout must cover it exactly. |
 | `dir` | `right` \| `left` \| `up` \| `down` | `right` | Default run direction for every profile that does not set its own. |
+| `signal_colors` | mapping | — | Colours attached to **signals** (chain positions) instead of LEDs; every LED displaying the bit in any **defined** profile inherits them. See § [`signal_colors`](#signal_colors). |
 
 `rows * cols` must equal `leds`; a mismatch fails loudly rather than
 emitting a silently wrong map.
@@ -84,7 +86,7 @@ signals:
   ADDR:   ["8..23"]                   # A15..A0: element 0 is chain 8
   DATA:   ["24..31"]                  # D7..D0
   LATCH:  ["0..7"]                    # port $FF latch, bit 7 first
-  FLAGS:  [244, 245, 246, 247]       # WR RD MREQ IORQ (stretched)
+  FLAGS:  [280, 281, 282, 283]       # WR RD MREQ IORQ (stretched)
   STATUS: ["LATCH[7..4]", FLAGS]      # subset of an earlier symbol + more
 ```
 
@@ -153,12 +155,15 @@ resolves to a concrete RGB triple at emit time.
 
 **Precedence** (each of ON and OFF resolves independently):
 
-> **element > run > profile > `defaults` > built-in**
+> **element > run > profile signal colour > global signal colour >
+> profile > `defaults` > built-in**
 
 Built-in defaults match the hardware's power-on values: ON `#FF0001`,
 OFF `#000009`. For a cell no run claims (automatic blank), element and
 run levels do not exist in its context, so resolution starts at the
-profile level.
+profile level — and signal-colour levels never apply to blanks (§
+Blanks). A specific signal colour anywhere beats any profile/default
+theme: that is the point of naming colours after signals.
 
 ### `defaults`
 
@@ -170,14 +175,57 @@ defaults:
 
 Fallback colours for everything below the top level.
 
+### `signal_colors`
+
+Colours that travel with a **signal** rather than with an LED position:
+
+```yaml
+signal_colors:
+  PC:   {on: cyan}                 # either field optional
+  SP:   {on: magenta, off: "#002020"}
+  DATA: red                        # bare colour = ON only
+```
+
+The table maps **reference tokens** — chain numbers, `"a..b"` ranges,
+symbol names, subsets (`"PC[7..0]"`) — to a colour pair. It expands to
+a per-chain-bit table at build time; within one table, a later entry
+overrides an earlier one **per bit and per field** (same composition
+rule as `signals` references). Keys that name unknown symbols or reach
+outside `0..chain_bits-1` are errors; `-` is not a signal and is not a
+legal key.
+
+Effect: every **claimed, non-blank** cell whose chain position is in
+the table takes the signal's colour, unless an element- or run-level
+colour overrides it (see Precedence). The same signal looks the same on
+every LED of every **defined** profile that displays it — and survives
+profiles that re-theme their default colours, because signal colours sit
+above the profile level. Profiles 3..7 in the worked example below show
+this: it names `PC` cyan globally and profile 1 recolors only PC's dark
+half.
+
+Per-profile override: `profile.N` may carry its own `signal_colors`
+table, merged field-wise over the global one for that profile only —
+`{off: …}` there replaces just the OFF field of a globally-coloured
+signal.
+
+Two limits follow from the hardware being per-LED storage that the tool
+bakes at build time:
+
+* Profiles the config does not define emit built-in colours — signal
+  colours apply only to defined profiles.
+* A Z-80 rewriting the map RAM (`+5`) at runtime does **not** re-associate
+  colours; colours reach an LED through the map that was baked for it.
+
 ### `profile.N` and runs
 
 `profile.N` (N = 0..7) defines one profile; any subset of the 8 may be
 given. A profile not mentioned emits as the **default profile**:
 identity map (LED/cell *n* shows chain *n*) with built-in colours.
 
-A profile may set `on`/`off` (defaults for all its runs) and `dir`
-(default direction for its runs), and carries a `runs` list. Each run:
+A profile may set `on`/`off` (defaults for all its runs), `dir`
+(default direction for its runs), and `signal_colors` (per-profile
+overlay of the global signal-colour table), and carries a `runs` list.
+Each run:
 
 | Key | Type | Meaning |
 |-----|------|---------|
@@ -240,8 +288,9 @@ A blank cell emits map = chain position 0 with **both** ON and OFF
 colours set to the resolved darkness — so the cell shows a static
 colour no matter what chain bit 0 does. Darkness resolves along the
 normal chain restricted to OFF values: element `off` > run `off` >
-profile `off` > `defaults.off` > built-in, and is baked into the binary
-as a literal triple.
+signal `off` > profile `off` > `defaults.off` > built-in, and is baked
+into the binary as a literal triple. (Signal colours never apply to
+blanks: a blank shows no signal.)
 
 ## Command line
 
@@ -283,11 +332,17 @@ reported with the key path and source line. The full catalogue:
   run would have placed there. This is the most common error while
   tuning a panel layout.
 * `on` given on a `-` element.
+* `signal_colors` key that is not a reference token, names an unknown
+  symbol, is `-`, or reaches outside `0..chain_bits-1`; entry that is
+  not a colour or an `on`/`off` mapping; unknown key or empty mapping
+  in an entry.
 * TOML input (see § Migration).
 
 Warnings (errors under `--strict`): a `signals` symbol or `colors`
-entry that nothing references. Duplicate chain positions across LEDs are
-*not* a warning — repeats are a feature.
+entry that nothing references; a `signal_colors` entry (global or
+profile-level) whose chain position no defined profile displays.
+Duplicate chain positions across LEDs are *not* a warning — repeats are
+a feature.
 
 Two YAML gotchas the tool defends against:
 
@@ -369,7 +424,7 @@ signals:
   IY: ["176..191"]
   PC: ["192..207"]
   SP: ["208..223"]
-  STROBES: ["244..247"]                    # WR RD MREQ IORQ (stretched)
+  STROBES: ["280..283"]                   # WR RD MREQ IORQ (stretched)
   PTRS: [IX, IY]                           # composed of earlier symbols
 
 colors:
@@ -379,6 +434,10 @@ colors:
 defaults:
   on:  "#FF0001"
   off: "#000009"
+
+signal_colors:
+  PC: {on: cyan}                     # every defined profile shows PC cyan…
+  SP: {on: magenta}                  # …unless placement overrides
 
 profile.0:               # one-frame overview of bus + registers
   runs:
@@ -404,6 +463,8 @@ profile.0:               # one-frame overview of bus + registers
 
 profile.1:               # pointers + recoloured low address
   on: "#00FF40"
+  signal_colors:
+    PC: {off: "#003040"}            # PC's dark half only; global cyan ON stays
   runs:
     - start: [0, 0]
       signals: [PTRS]                      # IX then IY, 32 cells
@@ -430,4 +491,7 @@ profile.2:               # vertical feed-corner column, upward
 Profiles 3..7 are not mentioned and emit as the identity profile.
 Build it, dump it, load it from the OSD, and LED-number 0..255 on
 profile 0's row 0 shows `$FF` latch, then A15..A0, then D7..D0, exactly
-as wired.
+as wired. Note the precedence at work: profile 0's amber run still beats
+the global `PC: cyan`, but profile 0's SP cells and all of profile 1's
+PC/SP take the signal colours — and profile 1's PC is cyan-on over a
+`#003040` dark.

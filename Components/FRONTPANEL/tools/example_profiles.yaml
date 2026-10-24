@@ -13,7 +13,8 @@
 # 8 rows x 32 columns upright, wired from the top-left corner straight down
 # column 0, serpentine into each next column (layout below).
 #
-# Capture chain (MicrocomputerZ80CPM.vhd, MSB first, CHAIN_BITS=384):
+# Capture chain (MicrocomputerZ80CPM.vhd, MSB first, CHAIN_BITS=384;
+# full map: ../../../SIGNAL-CAPTURES.md):
 #   0..7     fpLatch (port $FF style output latch), bit 7 first
 #   8..23    address bus A15..A0
 #   24..31   data bus D7..D0
@@ -22,10 +23,12 @@
 #   96..103  D         104..111 E         112..119 D'       120..127 E'
 #   128..135 H         136..143 L         144..151 H'       152..159 L'
 #   160..175 IX       176..191 IY        192..207 PC       208..223 SP
-#   224..243 tied 0
-#   244..247 WR RD MREQ IORQ strobes (stretched)
-#   248..255 fpLatch again (bit 7 first)
-#   256..383 headroom, reads 0 (no segment wired)
+#   224..251 mmu_phys_addr[27:0]
+#   252..259 WR RD INT NMI BUSRQ M1 HALT BUSAK (active-high)
+#   260..279 tied 0
+#   280..283 WR RD MREQ IORQ strobes (stretched)
+#   284..291 fpLatch again (bit 7 first)
+#   292..383 headroom, reads 0 (no segment wired)
 
 chain_bits: 384          # must match the FPGA CHAIN_BITS build
 leds: 256                # matches the default FPGA NUM_LEDS
@@ -52,7 +55,7 @@ signals:                 # named chain groups; a definition may reference
   IY:     ["176..191"]
   PC:     ["192..207"]
   SP:     ["208..223"]
-  STROBES: ["244..247"]  # WR RD MREQ IORQ (hardware-stretched)
+  STROBES: ["280..283"]  # WR RD MREQ IORQ (hardware-stretched)
   PTRS:   [IX, IY]                # composed of earlier symbols
   ALU_HDR: ["REG_AF[7..0]"]       # positional subset: A's 8 bits, MSB first
 
@@ -66,6 +69,12 @@ layout:                  # one global wiring description, all profiles
 defaults:
   on:  "#FF0001"         # same as the hardware's built-in colours
   off: "#000009"
+
+signal_colors:           # colours that follow the SIGNAL, not the LED:
+  PC:  {on: cyan}        #   every LED displaying the bit in every
+  SP:  {on: magenta}     #   DEFINED profile gets these...
+                         #   ...element/run placement colours still win
+                         #   (see profile.0's amber run below)
 
 profile.0:               # "everything in one frame" overview
   runs:
@@ -91,6 +100,9 @@ profile.0:               # "everything in one frame" overview
 
 profile.1:               # pointers and a recoloured data bus
   on: "#00FF40"          # profile colour: every run that doesn't override
+  signal_colors:
+    PC: {off: "#003040"} # per-profile overlay: PC's dark half only;
+                          # its cyan ON still comes from the global table
   runs:
     - start: [0, 0]
       dir: right
