@@ -77,7 +77,15 @@ layout:                  # one global wiring description, all profiles
 
 defaults:
   on:  "#FF0001"         # same as the hardware's built-in colours
-  off: "#000009"
+  off: "#000000"
+
+signal_colors:
+  IORQ: { on: yellow }
+  MREQ: { on: green  }
+  RD:   { on: darkseagreen }
+  WR:   { on: magenta }
+  M1:   { on: darkblue }
+
 
 profile.0:               # "everything in one frame" overview
   runs:
@@ -115,6 +123,83 @@ profile.0:               # "everything in one frame" overview
 
     - start: [6,16]
       signals: [IORQ]
+      on: red
+    - start: [6,17]
+      signals: [MREQ]
+      on: red
+    - start: [6,18]
+      signals: [RD]
+      on: red
+    - start: [6,19]
+      signals: [WR]
+      on: red
+    - start: [6,20]
+      signals: [HALT]
+      on: red
+    - start: [6,21]
+      signals: [M1]
+      on: red
+    - start: [6,22]
+      signals: [BUSAK]
+      on: red
+    - start: [6,23]
+      signals: [INTREQ]
+      on: red
+    - start: [6,24]
+      signals: [DATA]
+
+    - start: [7, 4]
+      signals: [PHYSADDR]
+
+      
+profile.1:
+  on:  "#F00000"
+  off: "#000000"
+  runs:
+    - start: [0, 0]
+      signals: [LATCH]   # (dir omitted: defaults to right)
+
+    - start: [6,16]
+      signals: [IORQ]
+      on: red
+    - start: [6,17]
+      signals: [MREQ]
+      on: red
+    - start: [6,18]
+      signals: [RD]
+      on: red
+    - start: [6,19]
+      signals: [WR]
+      on: red
+    - start: [6,20]
+      signals: [HALT]
+      on: red
+    - start: [6,21]
+      signals: [M1]
+      on: red
+    - start: [6,22]
+      signals: [BUSAK]
+      on: red
+    - start: [6,23]
+      signals: [INTREQ]
+      on: red
+
+    - start: [6,24]
+      signals: [DATA]
+      on: red
+    - start: [7, 4]
+      signals: [PHYSADDR]
+      on: red      
+ 
+profile.2:
+  on:  "#F00000"
+  off: "#000000"
+  runs:
+    - start: [0, 0]
+      signals: [LATCH]   # (dir omitted: defaults to right)
+
+    - start: [6,16]
+      signals: [IORQ]
     - start: [6,17]
       signals: [MREQ]
     - start: [6,18]
@@ -134,9 +219,8 @@ profile.0:               # "everything in one frame" overview
 
     - start: [7, 4]
       signals: [PHYSADDR]
-
       
-profile.1:               # pointers and a recoloured data bus
+profile.3:               # pointers and a recoloured data bus
   on: "#00FF40"          # profile colour: every run that doesn't override
   runs:
     - start: [0, 0]
@@ -151,7 +235,68 @@ profile.1:               # pointers and a recoloured data bus
         - {sig: DATA, on: heartbeat}
         - LATCH
 
-profile.2:               # one vertical column, then a mixed row
+profile.4:               # "everything in one frame" overview
+  off: "#000003"
+  on:  "#ff0400"  
+  runs:
+    - start: [0, 0]
+      signals: [LATCH]   # (dir omitted: defaults to right)
+    - start: [0, 16]
+      signals: [A]
+    - start: [0,24]
+      signals: ["AF[8..15]"]
+
+    - start: [1,0]
+      signals: [altBC]
+    - start: [1,16]
+      signals: [BC]
+
+    - start: [2,0]
+      signals: [altDE]
+    - start: [2,16]
+      signals: [DE]
+
+    - start: [3,0]
+      signals: [altHL]
+    - start: [3,16]
+      signals: [HL]
+
+    - start: [4,0]
+      signals: [IX]
+      on: blue
+    - start: [4,16]
+      signals: [SP]
+
+    - start: [5,0]
+      signals: [IY]
+      on: amber
+    - start: [5,16]
+      signals: [PC]
+
+    - start: [6,16]
+      signals: [IORQ]
+    - start: [6,17]
+      signals: [MREQ]
+    - start: [6,18]
+      signals: [RD]
+    - start: [6,19]
+      signals: [WR]
+    - start: [6,20]
+      signals: [HALT]
+    - start: [6,21]
+      signals: [M1]
+    - start: [6,22]
+      signals: [BUSAK]
+    - start: [6,23]
+      signals: [INTREQ]
+    - start: [6,24]
+      signals: [DATA]
+      on: green
+    - start: [7, 4]
+      signals: [PHYSADDR]
+      on: violet
+
+profile.5:               # one vertical column, then a mixed row
   dir: right             # this profile's default direction...
   runs:
     - start: [7, 0]      # ...except the feed-corner column, upward
