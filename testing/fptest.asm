@@ -4,7 +4,7 @@
 ; PURPOSE
 ;   Check that every CPU register exposed on the front-panel capture chain
 ;   actually reaches the LEDs.  Each register is loaded with a distinctive
-;   pattern and held long enough to see (~0.5 s); the pattern alternates
+;   pattern and held long enough to see (~2 s); the pattern alternates
 ;   AA / 55 four times per register, so a dead, shorted or mis-mapped LED
 ;   group stands out, and the byte order of a 16-bit pair can be read
 ;   straight off the panel.
@@ -12,9 +12,9 @@
 ; WHAT IS TESTED
 ;   Each pass sweeps the panel twice per alternation - once with every
 ;   register showing AA, once with every register showing 55 - four times
-;   over, so each of the 16 registers is presented 8 times at ~0.5 s each
-;   (~33 s per pass) and every register alternates AA/55 four times per
-;   pass.  The sweep order is B, C, D, E, H, L, IX, IY, then B', C', D',
+;   over, so each of the 16 registers is presented 8 times at ~2 s each
+;   (about 2 1/4 minutes per pass) and every register alternates AA/55 four
+;   times per pass.  The sweep order is B, C, D, E, H, L, IX, IY, then B', C', D',
 ;   E', H', L' and IX, IY again.  A/AF are deliberately excluded - keeping
 ;   the accumulator live would leave no register for the console and timer
 ;   traffic that has to run during the hold (every IN/OUT names A), and the
@@ -26,12 +26,13 @@
 ; CONSOLE / PANEL READING
 ;   One console line per presentation, printed as the pattern is applied:
 ;
-;       Testing B  = AA ..
+;       Testing B  = AA ........
 ;
-;   Each dot is one quarter-second of hold, so the console leads the panel
-;   by the hold time - which is the point: the line tells you what the LEDs
-;   should be showing while you watch them.  With the identity profile (no
-;   .fpp loaded) LED n = chain bit n, so (../../SIGNAL-CAPTURES.md):
+;   Each dot is one quarter-second of hold (eight per line), so the console
+;   leads the panel by the hold time - which is the point: the line tells you
+;   what the LEDs should be showing while you watch them.  With the identity
+;   profile (no .fpp loaded) LED n = chain bit n, so
+;   (../../SIGNAL-CAPTURES.md):
 ;
 ;       B 64..71    C 72..79    D 96..103   E 104..111
 ;       H 128..135  L 136..143  IX 160..175               IY 176..191
@@ -71,7 +72,7 @@
 ;   free-running 32-bit counter, IN reads the latch back.  Waiting for the ms
 ;   counter's low byte to read zero is therefore a quarter-second (256 ms)
 ;   tick; each call ends on the same boundary, so back-to-back holds are a
-;   steady ~0.5 s and the delay is independent of instruction timing, wait
+;   steady ~2 s and the delay is independent of instruction timing, wait
 ;   states and CPU clock.
 ;
 ; HARDWARE / BUILD
@@ -99,7 +100,7 @@ STACK           equ     3F00h
 PAT1            equ     0AAh          ; the two alternating patterns
 PAT2            equ     055h
 NPAT            equ     4             ; AA/55 alternations per register
-NQ              equ     2             ; quarter-second ticks per hold (~0.5 s)
+NQ              equ     8             ; quarter-second ticks per hold (~2 s)
 
 ; ============================================================================
 ; Presentation macros.  Announce first (free to use any register), then apply
@@ -403,7 +404,7 @@ puthexnib:
 ; ============================================================================
 msg_banner:     db      0Dh,0Ah
                 db      'Front-panel register pattern test',0Dh,0Ah
-                db      'Each register is held ~0.5 s; pattern AA/55 x4.',0Dh,0Ah
+                db      'Each register is held ~2 s; pattern AA/55 x4.',0Dh,0Ah
                 db      'Watch the LED group for the named register.',0Dh,0Ah
                 db      'Chain map: SIGNAL-CAPTURES.md',0Dh,0Ah,0
 msg_pass:       db      '--- pass ',0
