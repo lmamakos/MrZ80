@@ -22,10 +22,12 @@
 #   96..103  D         104..111 E         112..119 D'       120..127 E'
 #   128..135 H         136..143 L         144..151 H'       152..159 L'
 #   160..175 IX       176..191 IY        192..207 PC       208..223 SP
-#   224..243 tied 0
-#   244..247 WR RD MREQ IORQ strobes (stretched)
-#   248..255 fpLatch again (bit 7 first)
-#   256..383 headroom, reads 0 (no segment wired)
+#   224..251 mmu_phys_addr[27:0]
+#   252..259 WR RD INT NMI BUSRQ M1 HALT BUSAK (active-high)
+#   260..279 tied 0
+#   280..283 WR RD MREQ IORQ strobes (stretched)
+#   284..291 fpLatch again (bit 7 first)
+#   292..383 headroom, reads 0 (no segment wired)
 
 chain_bits: 384          # matches the FPGA CHAIN_BITS build (384)
 leds: 256                # matches the default FPGA NUM_LEDS
@@ -40,16 +42,31 @@ signals:                 # named chain groups; a definition may reference
   LATCH:  ["0..7"]       # only EARLIER symbols; repeats are allowed
   ADDR:   ["8..23"]      # A15..A0, chain order left to right
   DATA:   ["24..31"]     # D7..D0
-  REG_AF: ["32..47"]
-  REG_BC: ["64..79"]
-  REG_DE: ["96..111"]
-  REG_HL: ["128..143"]
+  AF:     ["32..47"]
+  BC:     ["64..79"]
+  DE:     ["96..111"]
+  HL:     ["128..143"]
+  altAF:  ["48..63"]
+  altBC:  ["80..85"]
+  altDE:  ["112..127"]
+  altHL:  ["144..159"]
   IX:     ["160..175"]
   IY:     ["176..191"]
   PC:     ["192..207"]
   SP:     ["208..223"]
-  PTRS:   [IX, IY]                 # composed of earlier symbols
-  ALU_HDR: ["REG_AF[7..0]"]        # positional subset: A's 8 bits, MSB first
+  A:      ["AF[7..0]"]        # positional subset: A's 8 bits, MSB first
+  FLAGS:  ["AF[15..8]"]
+  WR:     [280]
+  RD:     [281]
+  MREQ:   [282]
+  IORQ:   [283]
+  INTREQ: [254]
+  NMI:    [255]
+  BUSREQ: [256]
+  M1:     [257]
+  HALT:   [258]
+  BUSAK:  [259]
+  PHYSADDR: ["224..251"]
   
 layout:                  # one global wiring description, all profiles
   rows: 8
@@ -64,30 +81,67 @@ defaults:
 
 profile.0:               # "everything in one frame" overview
   runs:
-    - start: [0, 0]      # bus row: 8 + 16 + 8 = exactly 32 cells
-      signals: [LATCH, ADDR, DATA]   # (dir omitted: defaults to right)
-    - start: [2, 0]
-      signals: [REG_AF]  # 16 of the row; the span tail stays blank
-    - start: [3, 0]
-      dir: right         # explicit, though it is the default
-      signals: [REG_BC]
-    - start: [4, 0]
-      signals: [REG_DE]
-    - start: [5, 0]
-      signals: [REG_HL]
-    - start: [5, 16]
-      signals: [IX]
-      on: hotpink
-    - start: [6, 0]
-      on: amber          # highlight the pointers against the default red
-      signals: [PC, SP]
+    - start: [0, 0]
+      signals: [LATCH]   # (dir omitted: defaults to right)
+    - start: [0, 16]
+      signals: [A]
+    - start: [0,24]
+      signals: ["AF[8..15]"]
 
+    - start: [1,0]
+      signals: [altBC]
+    - start: [1,16]
+      signals: [BC]
+
+    - start: [2,0]
+      signals: [altDE]
+    - start: [2,16]
+      signals: [DE]
+
+    - start: [3,0]
+      signals: [altHL]
+    - start: [3,16]
+      signals: [HL]
+
+    - start: [4,0]
+      signals: [IX]
+    - start: [4,16]
+      signals: [SP]
+
+    - start: [5,0]
+      signals: [IY]
+    - start: [5,16]
+      signals: [PC]
+
+    - start: [6,16]
+      signals: [IORQ]
+    - start: [6,17]
+      signals: [MREQ]
+    - start: [6,18]
+      signals: [RD]
+    - start: [6,19]
+      signals: [WR]
+    - start: [6,20]
+      signals: [HALT]
+    - start: [6,21]
+      signals: [M1]
+    - start: [6,22]
+      signals: [BUSAK]
+    - start: [6,23]
+      signals: [INTREQ]
+    - start: [6,24]
+      signals: [DATA]
+
+    - start: [7, 4]
+      signals: [PHYSADDR]
+
+      
 profile.1:               # pointers and a recoloured data bus
   on: "#00FF40"          # profile colour: every run that doesn't override
   runs:
     - start: [0, 0]
       dir: right
-      signals: [PTRS]                        # IX then IY, 32 cells
+      signals: [IX, IY]                        # IX then IY, 32 cells
     - start: [1, 0]
       signals: [PC, SP]
     - start: [3, 0]
@@ -111,4 +165,4 @@ profile.2:               # one vertical column, then a mixed row
         - {sig: "-", off: "#101010"}
         - LATCH
         - "-"
-        - {sig: ALU_HDR, on: gold}
+        - {sig: A, on: gold}
