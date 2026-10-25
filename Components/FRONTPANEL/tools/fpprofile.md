@@ -7,8 +7,8 @@ see [`../README.md`](../README.md); this document covers the tool and
 its YAML configuration language only.
 
     cd Components/FRONTPANEL/tools
-    python3 fpprofile.py example_profiles.yaml -o profiles.fpp
-    python3 fpprofile.py --dump profiles.fpp
+    python3 fpprofile.py example_profiles.yaml -o example_profiles.fpp
+    python3 fpprofile.py --dump example_profiles.fpp
 
 ## Requirements
 
@@ -295,8 +295,8 @@ blanks: a blank shows no signal.)
 ## Command line
 
 ```
-python3 fpprofile.py config.yaml -o profiles.fpp
-python3 fpprofile.py --dump profiles.fpp
+python3 fpprofile.py config.yaml -o config.fpp
+python3 fpprofile.py --dump config.fpp
 python3 fpprofile.py -o all-defaults.fpp          # no config: 8 identity profiles
 ```
 

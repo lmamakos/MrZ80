@@ -10,8 +10,8 @@ Input is YAML (PyYAML).  The authoritative user guide and validation
 specification is tools/fpprofile.md; this docstring is the working
 reference.
 
-  python3 fpprofile.py example_profiles.yaml -o profiles.fpp
-  python3 fpprofile.py --dump profiles.fpp            (inspect a file)
+  python3 fpprofile.py example_profiles.yaml -o example_profiles.fpp
+  python3 fpprofile.py --dump example_profiles.fpp      (inspect a file)
 
 Command line:
 
@@ -1080,7 +1080,7 @@ def main(argv=None):
                     help="YAML configuration (omit with -o for an "
                          "all-defaults file)")
     ap.add_argument("-o", "--output",
-                    help="output profile file (e.g. profiles.fpp)")
+                    help="output profile file (e.g. profile.fpp)")
     ap.add_argument("--strict", action="store_true",
                     help="treat warnings as errors")
     ap.add_argument("--chain-bits", type=int, metavar="N",

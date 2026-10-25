@@ -1,8 +1,8 @@
 # Front-panel profile build rules for fpprofile.py.
 #
 #   make            regenerate profile.fpp (from the customised
-#                   profile.yaml) and profiles.fpp (from the shipped
-#                   example_profiles.yaml)
+#                   profile.yaml) and example_profiles.fpp (from the
+#                   shipped example_profiles.yaml)
 #   make install    scp both .fpp files to the MiSTer SD card
 #   make test       run the fpprofile unit-test suite
 #   make dump       decode profile.fpp for inspection
@@ -20,7 +20,7 @@ MISTER    := mister
 DESTDIR   := /media/fat/games/MrZ80
 PYTHON    ?= python3
 FPPROFILE := fpprofile.py
-FPPS      := profile.fpp profiles.fpp
+FPPS      := profile.fpp example_profiles.fpp
 
 .PHONY: all install test dump clean
 

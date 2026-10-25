@@ -1,9 +1,9 @@
 # example_profiles.yaml -- front-panel profile configuration for fpprofile.py
 #
-#   python3 fpprofile.py example_profiles.yaml -o profiles.fpp
-#   python3 fpprofile.py --dump profiles.fpp          (inspect a file)
+#   python3 fpprofile.py example_profiles.yaml -o example_profiles.fpp
+#   python3 fpprofile.py --dump example_profiles.fpp   (inspect a file)
 #
-# Copy profiles.fpp to the MiSTer SD card and select it with the OSD item
+# Copy example_profiles.fpp to the MiSTer SD card and select it with the OSD item
 # "Front Panel Profiles".  Profiles that are not listed emit as the default
 # profile: identity map, ON = #FF0001, OFF = #000009 (the hardware's own
 # no-file defaults).  Unknown keys and bad values are errors.  The full

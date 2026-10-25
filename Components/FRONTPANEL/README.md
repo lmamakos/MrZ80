@@ -179,8 +179,8 @@ The full user guide for the Python tool is **[`tools/fpprofile.md`](tools/fpprof
 Quick reference:
 
     cd Components/FRONTPANEL/tools
-    python3 fpprofile.py example_profiles.yaml -o profiles.fpp
-    python3 fpprofile.py --dump profiles.fpp
+    python3 fpprofile.py example_profiles.yaml -o example_profiles.fpp
+    python3 fpprofile.py --dump example_profiles.fpp
 
 Input is YAML (Python ≥ 3.9, PyYAML — Debian `python3-yaml`). Copy the
 output to the MiSTer SD card and load it via the OSD. `tools/example_profiles.yaml`
