@@ -1,9 +1,9 @@
 # profile.yaml -- front-panel profile configuration for fpprofile.py
 #
-#   python3 fpprofile.py example_profiles.yaml -o profiles.fpp
-#   python3 fpprofile.py --dump profiles.fpp          (inspect a file)
+#   python3 fpprofile.py profile.yaml -o profile.fpp
+#   python3 fpprofile.py --dump profile.fpp            (inspect a file)
 #
-# Copy profiles.fpp to the MiSTer SD card and select it with the OSD item
+# Copy profile.fpp to the MiSTer SD card and select it with the OSD item
 # "Front Panel Profiles".  Profiles that are not listed emit as the default
 # profile: identity map, ON = #FF0001, OFF = #000009 (the hardware's own
 # no-file defaults).  Unknown keys and bad values are errors.  The full
@@ -47,7 +47,7 @@ signals:                 # named chain groups; a definition may reference
   DE:     ["96..111"]
   HL:     ["128..143"]
   altAF:  ["48..63"]
-  altBC:  ["80..85"]
+  altBC:  ["80..95"]
   altDE:  ["112..127"]
   altHL:  ["144..159"]
   IX:     ["160..175"]
