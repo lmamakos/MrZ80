@@ -1,5 +1,5 @@
 PROGS=	backtoback.bin	sdramexec.bin  sdramtest.bin  sdramsum.bin  sdramret.bin  timertest.bin  sdramstress.bin  blockdevtest.bin  sdcardtest.bin  fptest.bin
-MISTER=	mister:/media/fat/games/MrZ80//
+MISTER=	mister:/media/fat/games/MrZ80/diags/
 
 all:	${PROGS}
 
