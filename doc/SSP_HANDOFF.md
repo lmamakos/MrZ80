@@ -1,6 +1,6 @@
 # SSP Hand-off — working knowledge not captured elsewhere
 
-Date: 2026-10-26 · Baseline commit: `e41d5fc` (branch `main`, working tree
+Date: 2026-10-26 · Baseline commit: `8b9f192` (branch `main`, working tree
 clean) · Author: design-session agent, rounds R13–R15.
 
 **Scope.** This document holds *only* information that is not already in
@@ -27,10 +27,13 @@ are *not yet* in `SSP_DESIGN.md`; §9 suggests recording them as round R16.
 |---|---|
 | Design docs | Complete through R15 and committed. No RTL for the SSP exists yet |
 | Cores | `picorv32.v` and `femtorv32_gracilis.v` (+`utils.v`) vendored verbatim in `Components/RISCV/`, **not** in `MrZ80.qsf` yet |
-| Phase | **P0** (two-core bake-off). Done: vendoring, license check. Not started: sim flows, regmap generator, stub SoC per core, Mecrisp bring-up, `fit.rpt` ×2 |
+| Phase | **P0** (two-core bake-off). Done: vendoring, license check, **toolchain
+install + smoke test**, **GHDL sim resync + green baseline**. Not started:
+regmap generator, stub SoC per core, Mecrisp bring-up, `fit.rpt` ×2 |
 | Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values). OQ-22/OQ-23 are settled by simulation, not by the owner |
 
-Commit trail for these sessions (newest first): `e41d5fc` R15 review ·
+Commit trail for these sessions (newest first): `8b9f192` sim resync
+(H-1 closed) · `2ed69c3` hand-off doc · `e41d5fc` R15 review ·
 `77208cd` cores vendored · `5e8ae1a` R14 bake-off · `d964f59` R13 ODT→SSP
 rename · `022bb95` R12 · `b86a21d` R11.
 
@@ -40,24 +43,35 @@ rename · `022bb95` R12 · `b86a21d` R11.
 
 ### 2.1 Local workstation (Debian forky/sid)
 
-| Tool | Status | Notes |
+**Toolset install DONE 2026-10-26** (owner-approved):
+`sudo apt-get install gcc-riscv64-unknown-elf verilator iverilog gtkwave yosys`
+— all succeeded. Verified state:
+
+| Tool | Version | Notes |
 |---|---|---|
-| `ghdl` | **installed, 6.0.0** | Existing VHDL sim flow uses it (§3) |
+| `ghdl` | 6.0.0 | existing VHDL sim flow (§3) |
+| `riscv64-unknown-elf-gcc` | **15.3.0** (new) | binutils/`as`/`ld` 2.47 — ≥2.38, so the `_zicsr_zifencei` march suffix is required (already the convention, §5.8 toolchain note) |
+| `verilator` | **5.048** (new) | D-28 Verilator level |
+| `iverilog` | **13.0** (new) | quick Verilog unit sims; version flag is `-V` |
+| `yosys` | **0.66** (new) | early core lint/synth sanity without Quartus |
+| `gtkwave` | **3.3.127** (new) | needs a display; headless invocation fails, expected |
 | `python3` 3.14, `make` 4.4, `curl` | installed | |
-| `riscv64-unknown-elf-gcc` | **missing** | apt candidate `gcc-riscv64-unknown-elf` 15.3.0; `picolibc-riscv64-unknown-elf` 1.8.12 also available (not needed for Mecrisp) |
-| `verilator` | **missing** | apt candidate 5.048 |
-| `iverilog` | missing | apt candidate 13.0 (handy for quick Verilog-only unit tests) |
-| `yosys` | missing | apt candidate 0.66. `ghdl-yosys-plugin` has **no** apt candidate |
-| `gtkwave` | missing | apt candidate 3.3.127 |
-| Questa/ModelSim (`vsim`) | missing | Not needed: GHDL already covers the VHDL side (§3) |
+| Questa/ModelSim (`vsim`) | missing | not needed — GHDL covers VHDL (§3) |
 | `docker` | **missing locally** | Docker exists only on `tycho` (Quartus builds) |
-| `sudo -n true` | succeeded | Package installs appear possible without a password prompt. Nothing was installed in these sessions; **ask the owner before installing** |
 | `pasmo` | present | **Forbidden** for Z80 code (AGENTS.md). Use `tools/z80asm.sh` / `um80.sh` / `ul80.sh` |
 
-Suggested P0 install (owner approval first):
-`sudo apt install gcc-riscv64-unknown-elf verilator iverilog gtkwave`.
-After installing, run `riscv64-unknown-elf-gcc -print-multi-lib` to check
-for rv32 multilibs. Missing multilibs don't block a freestanding Mecrisp build.
+**Toolchain smoke test (passed):** assembling with the exact P0 flags
+`-march=rv32imc_zicsr_zifencei -mabi=ilp32 -nostdlib` produced a 32-bit
+RISC-V/RVC ELF with correct compressed encodings (`c.addi`, `jr`) and
+`csrr t1,mcycle`. Lessons recorded:
+- `riscv64-unknown-elf-ld` default script is a picolibc `flash`/`ram`
+  memory map: **`-nostdlib` alone still picks it up and link fails** —
+  P0 must ship its own linker script defining the MROM/DTCM regions
+  (`SSP_DESIGN.md` §5.2). Smoke-test pattern: `MEMORY { ROM (rx) :
+  ORIGIN = 0, LENGTH = 64K }`.
+- `-print-multi-lib` has `rv32imac/ilp32` but no `rv32imc` entry; linking
+  plain `-march=rv32imc…` resolves to the `rv32imac` multilib — standard,
+  harmless for freestanding code (no libs used).
 
 ### 2.2 Network access from the agent shell
 
@@ -109,20 +123,30 @@ SDRAM investigation; see `sim/STATUS.md`). Key facts:
   `MicrocomputerZ80CPM_sim.vhd`, `bufferedUART_sim.vhd` and
   `sd_controller_sim.vhd` are copies with only the `use` lines redirected.
   `sim/check_sync.sh` enforces this.
-- **H-1 — the top-level sim copy has drifted (verified FAIL today).**
-  `sim/MicrocomputerZ80CPM_sim.vhd` predates the capture-chain extension
-  (bits 224–291) and the `n_INT/n_NMI/n_BUSRQ/n_M1/n_HALT/n_BUSAK` signal
-  wiring. Every full-system testbench (`run.sh`, `run_frontpanel.sh`,
-  `run_perf.sh`, …) runs `check_sync.sh` first and will refuse to start.
-  Fix, as printed by the script: `cp MicrocomputerZ80CPM.vhd
-  sim/MicrocomputerZ80CPM_sim.vhd`, then redirect lines 18–19 to
-  `sim_compat_pkg` (match the `use` lines in the other `_sim` copies).
+- **H-1 — top-level sim copy drift: RESOLVED 2026-10-26, commit
+  `8b9f192`.** `sim/MicrocomputerZ80CPM_sim.vhd` had predated the
+  capture-chain extension (bits 224–291) and the
+  `n_INT/n_NMI/n_BUSRQ/n_M1/n_HALT/n_BUSAK` wiring, blocking every
+  full-system bench. Resynced per the script's recipe. **Gotcha learned
+  (worth remembering for every future resync):** the real top level has
+  *no* `use ieee.numeric_std.all`, so the redirect must be the canonical
+  **pair** — line 18 → `use ieee.numeric_std.all;`, line 19 →
+  `use work.sim_compat_pkg.all;`. Replacing both lines with
+  `sim_compat_pkg` alone loses `numeric_std` and dies on the `unsigned`
+  subtype/conversion uses (`reset_counter` etc.); GHDL's numeric_std with
+  `-fsynopsys` supplies those directly, no new shim declarations needed.
   SSP integration will edit the top level often, so consider replacing
-  the manual copy with a `sed`-generated copy in the runner. That's a small
+  the manual copy with a `sed`-generated copy in the runners. Small
   tooling change; propose it to the owner.
-- **Baseline that passes today:** `sim/run_cpuregs.sh` (T80-only:
+- **Green baseline re-established 2026-10-26 (post-resync, verified
+  runs):** `check_sync.sh` OK ×3 · `tb_cpuregs`: **all 8 cases
+  PASSED** · `tb_frontpanel`: **PASS** (exercises the new 292-bit chain
+  against `FrontPanel_Subsystem`) · `tb_inir_race`: runs; 115 iterations,
+  0 mismatches, DONE-flag timeout at the 20 ms cap — documented
+  known-good partial behaviour (`sim/STATUS.md`).
+- **Harness for D-25 work:** `sim/run_cpuregs.sh` (T80-only:
   `T80*.vhd` + `tb_cpuregs.vhd`, no compat package needed) →
-  `tb_cpuregs: all 8 cases PASSED`. This is the natural harness for the
+  This is the natural harness for the
   D-25 `insn_end` export and boundary-park work: same file set, add cases.
 - Other testbenches available to reuse: `tb_frontpanel.vhd` (panel/chain),
   `tb_inir_race.vhd`, `tb_blockdev_prog.vhd`, `tb_hps_blockdev.vhd`,
@@ -294,10 +318,12 @@ own stacks; leave the default or point at DTCM top) · keep
 
 ## 7. Suggested concrete next steps (P0)
 
-1. Owner approves the tool install (§2.1), then install.
-2. Resync `sim/MicrocomputerZ80CPM_sim.vhd` (H-1), run `sim/check_sync.sh`
-   and one full-system bench (e.g. `sim/run.sh`) to re-establish a green
-   baseline.
+1. ~~Owner approves the tool install (§2.1), then install.~~ **DONE
+   2026-10-26** — approved, installed, smoke-tested (§2.1).
+2. ~~Resync `sim/MicrocomputerZ80CPM_sim.vhd` (H-1), run
+   `sim/check_sync.sh` and one full-system bench (e.g. `sim/run.sh`) to
+   re-establish a green baseline.~~ **DONE** — commit `8b9f192`; all
+   three benches verified (§3).
 3. Decide the language seam (H-4) and gracilis `ADDR_WIDTH`/memory map
    (H-2). Record both as R16 together with H-3/H-5/H-6.
 4. `ssp/regs/ssp_regs.csv` seeded from §6 + `tools/ssp_regmap.py`
@@ -317,19 +343,20 @@ own stacks; leave the default or point at DTCM top) · keep
 
 ## 8. Things deliberately *not* done
 
-- No packages installed; no edits to `tools/`, `sim/`, `MrZ80.qsf`, RTL,
-  or `sys/`.
-- `sim/MicrocomputerZ80CPM_sim.vhd` drift found but **not** fixed (it
-  touches the owner's sim flow; step 2 above).
+- ~~No packages installed~~ **done 2026-10-26 with owner approval**
+  (§2.1). Still no edits to `tools/`, `MrZ80.qsf`, RTL, or `sys/`.
+  `sim/` edited only for the H-1 resync (`8b9f192`).
+- ~~`sim/MicrocomputerZ80CPM_sim.vhd` drift~~ **fixed** (H-1 closed).
 - Mecrisp sources not downloaded (license question H-3 first).
 - riscv-formal (eqy container) not attempted. It's optional and off the
-  critical path.
+  critical path. (`yosys` is now installed locally, which is one of its
+  prerequisites; `sby` is not.)
 
 ## 9. Proposed R16 entries (for the next design session)
 
 | # | Finding | Proposed disposition |
 |---|---|---|
-| H-1 | `MicrocomputerZ80CPM_sim.vhd` drifted; full-system benches blocked | Resync; consider generated copy in runners |
+| H-1 | ~~`MicrocomputerZ80CPM_sim.vhd` drifted; full-system benches blocked~~ **closed `8b9f192`** | Resynced; generated-copy idea still open for R16 |
 | H-2 | gracilis `ADDR_WIDTH=24` aliases the §5.2 map | `ADDR_WIDTH=30`, or compact map, chosen at stub-SoC time |
 | H-3 | Mecrisp-Quintus is GPLv3; factory hex goes into the bitstream | Owner decision; vendor matching source in `ssp/fw/` |
 | H-4 | No mixed-language simulator available | Z80-side SSP logic in VHDL (GHDL), RV side in Verilog (Verilator); pick the bridge seam |
