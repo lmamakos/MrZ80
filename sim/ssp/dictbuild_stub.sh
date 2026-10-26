@@ -3,6 +3,8 @@
 # addresses on the Verilator stub SoC.  Authoritative lane of the pipeline
 # rehearsed on qemu by dictbuild_qemu.sh (R18); the captured merged image is
 # the OSD MROM artifact form (rom@0, dict window 0x4400..0x10000).
+# Cores: TAG=picorv32 (default) | gracilis (MODEL + obj dir selected by
+# the Makefile wrappers); artifacts carry the tag.
 #
 # Flow:
 #   1. make -C ssp/fw ssp                     kernel hex (silicon map)
@@ -18,14 +20,15 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT" || exit 1
-MODEL=sim/ssp/obj_dir/ssp_stub
+TAG=${TAG:-picorv32}
+MODEL=${MODEL:-sim/ssp/obj_dir/ssp_stub}
 FW=ssp/fw
 BUILD=$FW/build
-WORK=/tmp/opencode/dictbuild-stub; mkdir -p "$WORK"
+WORK=/tmp/opencode/dictbuild-stub-$TAG; mkdir -p "$WORK"
 DICT_OFF=0x4400
 DICT_LEN=$((0x10000 - 0x4400))
 
-[ -x "$MODEL" ] || make -C sim stub || { echo "FAIL: model build"; exit 1; }
+[ -x "$MODEL" ] || { echo "FAIL: model $MODEL missing (make -C sim stub${TAG:+-$TAG}?)"; exit 1; }
 make -C "$FW" ssp >/dev/null || { echo "FAIL: fw build"; exit 1; }
 KHEX=$BUILD/mecrisp-ssp.hex
 KBIN=$BUILD/mecrisp-ssp.bin
@@ -69,17 +72,21 @@ print("kernel integrity: ok (%d bytes identical)" % lim)
 PYEOF
 
 # ---- artifacts ---------------------------------------------------------------
-cp "$WORK/stub-rom.bin" "$BUILD/mecrisp-ssp-stub-app.bin"
-python3 tools/bin2hex.py "$BUILD/mecrisp-ssp-stub-app.bin" \
-  "$BUILD/mecrisp-ssp-stub-app.hex" 0x10000 >/dev/null
-dd if="$WORK/stub-rom.bin" of="$BUILD/dict-stub.bin" bs=1 seek=$((DICT_OFF)) \
+cp "$WORK/stub-rom.bin" "$BUILD/mecrisp-ssp-$TAG-app.bin"
+python3 tools/bin2hex.py "$BUILD/mecrisp-ssp-$TAG-app.bin" \
+  "$BUILD/mecrisp-ssp-$TAG-app.hex" 0x10000 >/dev/null \
+  || { echo "FAIL: bin2hex merged image"; exit 1; }
+dd if="$WORK/stub-rom.bin" of="$BUILD/dict-$TAG.bin" bs=1 skip=$((DICT_OFF)) \
    count=$((DICT_LEN)) status=none
-python3 tools/bin2hex.py "$BUILD/dict-stub.bin" "$BUILD/dict-stub.hex" \
-  "$DICT_LEN" "$DICT_OFF" >/dev/null
+python3 tools/bin2hex.py "$BUILD/dict-$TAG.bin" "$BUILD/dict-$TAG.hex" \
+  "$DICT_LEN" "$DICT_OFF" >/dev/null \
+  || { echo "FAIL: bin2hex dict fragment"; exit 1; }
+[ -s "$BUILD/dict-$TAG.hex" ] && [ -s "$BUILD/mecrisp-ssp-$TAG-app.hex" ] \
+  || { echo "FAIL: artifact hex files missing/empty"; exit 1; }
 
 # ---- cold-boot residency proof (artifact-as-shipped) ------------------------
 printf 'cpu-hello\r42answer . cr\rreg-id hex. cr\r' \
-  | timeout 120 "$MODEL" +ROM="$BUILD/mecrisp-ssp-stub-app.hex" +IDLE=2000000 \
+  | timeout 120 "$MODEL" +ROM="$BUILD/mecrisp-ssp-$TAG-app.hex" +IDLE=2000000 \
   > "$WORK/console_cold.log" 2> "$WORK/info_cold.log"
 rc=$?
 [ $rc -eq 0 ] || { echo "FAIL: cold boot exit $rc"; tail -2 "$WORK/info_cold.log"; exit 1; }
@@ -94,5 +101,5 @@ expect 'reg-id hex\. cr'
 expect '4d525a03'      # bridge ID via app word reg-id (stub decode == CSV)
 grep -qi 'not found' "$WORK/console_cold.log" && { echo "  FAIL: unknown word at cold boot"; rc=1; }
 echo "--- cold console ---"; cat "$WORK/console_cold.log"
-[ $rc -eq 0 ] && echo "dictbuild_stub: PASS" || echo "dictbuild_stub: FAIL"
+[ $rc -eq 0 ] && echo "dictbuild_stub($TAG): PASS" || echo "dictbuild_stub($TAG): FAIL"
 exit $rc

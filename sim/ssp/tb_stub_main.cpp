@@ -1,12 +1,15 @@
-// tb_ssp_stub.cpp -- Verilator harness for ssp_stub_top (P0 RV-side sim).
+// tb_stub_main.cpp -- generic Verilator harness for the SSP stub SoCs.
+//
+// One harness, both bake-off cores (OQ-20): compile with
+//   -DSTUB_INC=Vssp_stub_top.h       -DSTUB_CLASS=Vssp_stub_top       (picorv32)
+//   -DSTUB_INC=Vssp_stub_gracilis.h -DSTUB_CLASS=Vssp_stub_gracilis   (gracilis)
+// The two tops share the port contract (clk/rst_n/dump_req + dbg_*/trap).
 //
 // Console: model TX bytes -> stdout (flushed per byte); stdin -> RX queue.
-// Local echo reproduces terminal behaviour so captured console logs match
-// the qemu-lane format (assertions like "cmd -> result" keep working).
-//
 // RX pacing is structural: the RTL calls tb_rx_poll() only while its 8-byte
 // FIFO has room, and this harness releases bytes one poll at a time --
-// firmware-paced by construction, no host-side sleeps required.
+// firmware-paced by construction, no host-side sleeps required.  (Mecrisp
+// echoes received characters itself; harness echo is +ECHO=1 opt-in only.)
 //
 // Plusargs: +ROM=<hex> (default ssp/fw/build/mecrisp-ssp.hex)
 //           +DUMP=<hex> (dump rom[] at end of run; omit to skip)
@@ -15,7 +18,15 @@
 //
 // Exit codes: 0 normal, 2 core trap, 3 nothing ever transmitted (boot dead).
 
-#include "Vssp_stub_top.h"
+#ifndef STUB_INC
+#error "STUB_INC must name the generated model header, e.g. Vssp_stub_top.h"
+#endif
+#ifndef STUB_CLASS
+#error "STUB_CLASS must name the generated model class"
+#endif
+#define TB_STRIZE_(s) #s
+#define TB_STRIZE(s) TB_STRIZE_(s)
+#include TB_STRIZE(STUB_INC)
 #include "verilated.h"
 
 #include <cstdio>
@@ -27,7 +38,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-static Vssp_stub_top *g_top = nullptr;
+static STUB_CLASS *g_top = nullptr;
 static int g_argc = 0;
 static char **g_argv = nullptr;
 static long long g_cycle = 0;
@@ -35,8 +46,7 @@ static long long g_first_tx = -1;          // cycle of FW's first TX byte
 static long long g_last_tx = 0;
 static long g_tx_bytes = 0, g_rx_bytes = 0;
 static bool g_eof = false;
-static bool g_echo = false;                // FW echoes received chars itself
-                                          // (Mecrisp key); +ECHO=1 adds tty-style echo
+static bool g_echo = false;
 
 static unsigned char g_buf[4096];
 static int g_b0 = 0, g_bn = 0;
@@ -111,7 +121,7 @@ int main(int argc, char **argv) {
         tcsetattr(0, TCSANOW, &raw); }
     fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) | O_NONBLOCK);
 
-    g_top = new Vssp_stub_top;
+    g_top = new STUB_CLASS;
 
     // 5 cycles of reset
     g_top->clk = 0; g_top->rst_n = 0; g_top->dump_req = 0;

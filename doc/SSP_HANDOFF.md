@@ -40,11 +40,16 @@ Verilator stub SoC live at hardware addresses** (`sim/ssp/ssp_stub_top.v` =
 picorv32+ROM/DTCM+bridge-subset; `make -C sim stub smoke-stub dict-stub`
 all PASS — authoritative D-35 capture `build/mecrisp-ssp-stub-app.{bin,hex}`,
 kernel-integrity + cold-boot residency + determinism verified; ID read-back
-4D525A03 proves decode vs CSV; new `tools/hex2bin.py`). Not started:
-gracilis twin stub + `fit.rpt` ×2 (OQ-20 bake-off) |
+4D525A03 proves decode vs CSV; new `tools/hex2bin.py`), **R20: gracilis
+twin stub live** (`ssp_stub_gracilis.v`, ADDR_WIDTH=30 + rstrb/wmask
+protocol shim; `make -C sim stub-gracilis smoke-gracilis dict-gracilis` all
+PASS; harness deduped to `tb_stub_main.cpp`; artifacts core-tagged; dict +
+merged images byte-identical across both hardware-map cores -- dictionary is
+core-neutral). Remaining OQ-20: `fit.rpt` ×2 on tycho (owner confirm
+required, §2.3) |
 | Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values). OQ-22/OQ-23 are settled by simulation, not by the owner |
 
-Commit trail for these sessions (newest first): **R19 Verilator stub SoC + authoritative dict pipeline (this commit)** · **R18 compiletoflash dict-build pipeline (qemu)** · `1d0a502` postfix-`CONSTANT` fix · **R17 flash-free Mecrisp port + qemu smoke** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
+Commit trail for these sessions (newest first): **R20 gracilis twin stub + bake-off sim lane complete (this commit)** · `ef9867d` R19 Verilator stub SoC + authoritative dict pipeline · **R18 compiletoflash dict-build pipeline (qemu)** · `1d0a502` postfix-`CONSTANT` fix · **R17 flash-free Mecrisp port + qemu smoke** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
 (H-1 closed) · `2ed69c3` hand-off doc · `e41d5fc` R15 review ·
 `77208cd` cores vendored · `5e8ae1a` R14 bake-off · `d964f59` R13 ODT→SSP
 rename · `022bb95` R12 · `b86a21d` R11.

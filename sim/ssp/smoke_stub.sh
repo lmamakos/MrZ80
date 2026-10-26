@@ -8,9 +8,10 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT" || exit 1
-MODEL=sim/ssp/obj_dir/ssp_stub
+TAG=${TAG:-picorv32}
+MODEL=${MODEL:-sim/ssp/obj_dir/ssp_stub}
 HEX=ssp/fw/build/mecrisp-ssp.hex
-WORK=/tmp/opencode/stub-smoke; mkdir -p "$WORK"
+WORK=/tmp/opencode/stub-smoke-$TAG; mkdir -p "$WORK"
 
 [ -x "$MODEL" ] || { echo "FAIL: model missing -- run: make -C sim stub"; exit 1; }
 [ -f "$HEX" ]  || { echo "FAIL: FW hex missing -- run: make -C ssp/fw ssp"; exit 1; }
@@ -41,5 +42,5 @@ echo "$norm" | grep -qi 'not found' && { echo "  FAIL: unknown word"; fail=1; }
 grep -E 'trap=1|bus_errs=[1-9]|rom_core_writes=[1-9]' "$WORK/info.log" \
   && { echo "  FAIL: stub diagnostics flagged"; fail=1; }
 
-[ $fail -eq 0 ] && echo "smoke_stub: PASS" || echo "smoke_stub: FAIL"
+[ $fail -eq 0 ] && echo "smoke_stub($TAG): PASS" || echo "smoke_stub($TAG): FAIL"
 exit $fail

@@ -441,12 +441,17 @@ sticky `rx_overrun`), `UART_CTRL` 0x12C (`en`, self-clearing `rx_clr`/
 5. Reproducibility rule (CI, sibling of R-45): same kernel hex + same
    `.fs` + pinned `$MECRISP` commit => byte-identical merged image.
 Lanes implemented: `make -C sim dict-qemu` -> **PASS R18** (rehearsal);
-`make -C sim dict-stub` -> **PASS R19** (authoritative, hardware-true:
-harness `$writememh` dump of `rom[]` -> `build/mecrisp-ssp-stub-app.{bin,hex}`
-= OSD MROM-loadable form; kernel bytes below `0x4400` verified identical to
-the shipped kernel image; cold boot of the artifact hex runs the app words,
-incl. `reg-id hex. -> 4D525A03` through the stub's bridge decode; demo dict
-196 B; determinism double-run produced identical SHA-1s, §17 R19).
+`make -C sim dict-stub` / `dict-gracilis` -> **PASS R19/R20**
+(authoritative, hardware-true: harness `$writememh` dump of `rom[]` ->
+`build/mecrisp-ssp-<core>-app.{bin,hex}` = OSD MROM-loadable form; kernel
+bytes below `0x4400` verified identical to the shipped kernel image; cold
+boot of the artifact hex runs the app words, incl. `reg-id hex. ->
+4D525A03` through the stub's bridge decode; demo dict 196 B). Determinism
+double-run identical SHA-1s on every lane §17 R19-R20 -- and the two
+hardware-map cores produce **byte-identical dict + merged artifacts**
+(dict `dd250da5…`, merged `c43b230a…`): dictionary content is
+core-neutral as predicted (same ISA + same map); the qemu-lane image differs
+only because its map is DRAM-based.)
 
 ### 5.5 Firmware structure (Mecrisp-Quintus)
 
@@ -1588,7 +1593,9 @@ word def/call, and `$20000000 @ hex. -> 4D525A03` (bridge decode verified
 against `ssp_regs.csv`). dict-stub PASS: hardware-address D-35 pipeline —
 compiletoflash + demo.fs session, ROM dump -> merged artifact
 `build/mecrisp-ssp-stub-app.{bin,hex}` (OSD MROM form), kernel-integrity
-check (bytes <0x4400 identical to shipped kernel), cold-boot residency from
+check [R20 erratum: dict fragment capture had a dd seek/skip bug -- fixed
+R20; R19's dict-stub.bin was the full-64 KiB sparse file, fragment now
+correct], cold-boot residency from
 the artifact hex (`cpu-hello`/`42answer`/`reg-id` live; `reg-id` proves the
 real-map bridge read). Demo dict 196 B — identical size to the qemu lane
 (bytes differ: absolute refs are map-relative, as designed). Determinism
@@ -1603,3 +1610,35 @@ the ROM in/dump path needs no public-signal access. Lessons (5)-(7) in 5.5.1
 · **Next**: gracilis twin stub (`FemtoRV32` ADDR_WIDTH=30, rstrb/rbusy/
 wmask/wbusy fabric timing) + throwaway Quartus synth tops -> `fit.rpt` x2
 (OQ-20 evidence; owner confirm for tycho synth per handoff 2.3).
+
+R20 **gracilis twin stub live; bake-off sim-lane complete both cores
+(2026-10-26)**: `sim/ssp/ssp_stub_gracilis.v` (FemtoRV32, D-34
+`ADDR_WIDTH=30`) boots the identical FW hex and passes the same benches as
+the picorv32 lane.
+· **Protocol shim learned** (FemtoRV vs picorv32, handoff 4.1 confirmed):
+reads announced by one-cycle `mem_rstrb` with data expected next cycle ->
+registered `mem_rdata`, `mem_rbusy` tied 0 (registered-output M10K model);
+writes by non-zero `mem_wmask`, `mem_wbusy` tied 0; NO valid/instr
+qualifier exists -- fetch vs data discriminated by address (fetch always
+< 0x10000, so UART/DTCM pops/writes are unambiguous); reset active-low;
+NO trap output (top ties `trap`=0; WDG/idle-exit covers rv-hang for the
+bake-off, real design keeps `STATUS.rv_trap` from picorv32 only -- worth a
+footnote at bake-off writeup). Vendored gracilis verified to contain HW M
+(mul/div ALU) + unconditional RVC decompressor -> RV32IMC confirmed.
+· **Harness dedup**: `tb_ssp_stub.cpp` -> `tb_stub_main.cpp`, core selected
+via `-DSTUB_INC=… -DSTUB_CLASS=…` + stringize include (nested-quote
+versions get stripped through verilator->make->shell; token stringize is the
+robust form). Makefile: `stub-gracilis`, `smoke-gracilis`, `dict-gracilis`;
+scripts take `TAG`/`MODEL` env; artifacts now core-tagged
+(`mecrisp-ssp-<core>-app.*`, `dict-<core>.*`).
+· **Bench results**: smoke-gracilis PASS (arith, word def/call, ID read-back
+4D525A03); dict-gracilis PASS (compiletoflash window writes land; kernel
+integrity; cold-boot residency from artifact hex incl. reg-id). Cross-core
+byte-identity of dict + merged artifacts (see 5.4.1) — the shipped MROM
+image is core-neutral at the same map, strengthening D-35. Determinism
+double-run identical SHA-1s both cores.
+· **Fixed**: R19 dict-fragment `dd seek=` produced a sparse 64 KiB file
+(bin2hex PADTO error was silent -- script lacks `set -e`; now explicit rc
+checks on every artifact step). Fragment capture uses `skip=`.
+· **Remaining OQ-20 evidence**: Quartus `fit.rpt` x2 on `5CSEBA6U23I7`
+(ALUT/M10K/fmax table) -- needs tycho synth (owner confirm per handoff 2.3).
