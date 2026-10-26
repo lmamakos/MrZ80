@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub smoke-stub dict-stub
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -31,3 +31,21 @@ smoke-qemu:
 # QMP pmemsave capture, kernel+dict merge, cold-boot residency proof
 dict-qemu:
 	$(ROOT)/sim/ssp/dictbuild_qemu.sh
+
+# ---- Verilator stub SoC (RV side, hardware-true addresses; OQ-20 lane) -----
+# picorv32 + ROM(hex)/DTCM + minimal ssp_bridge w/ console UART (D-33 RV side)
+stub:
+	cd $(ROOT) && verilator --cc --exe --build -CFLAGS "-std=c++17" \
+	  --top-module ssp_stub_top -o ssp_stub \
+	  sim/ssp/tb_ssp_stub.cpp sim/ssp/ssp_stub_top.v \
+	  Components/RISCV/picorv32.v -Mdir sim/ssp/obj_dir
+
+# REPL smoke on the stub SoC (picorv32 twin of smoke-qemu; ID read-back
+# $2000_0000 -> 4D525A03 proves the bridge decode against ssp_regs.csv)
+smoke-stub: stub
+	$(ROOT)/sim/ssp/smoke_stub.sh
+
+# D-35 authoritative dictionary build at hardware addresses: harness-side
+# rom[] capture -> merged OSD MROM artifact + cold-boot residency proof
+dict-stub: stub
+	$(ROOT)/sim/ssp/dictbuild_stub.sh

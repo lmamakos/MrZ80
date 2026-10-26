@@ -35,13 +35,16 @@ and REPL-verified on qemu** (`ssp/fw/` + `make -C sim smoke-qemu` PASS;
 UART regs in CSV; `tools/bin2hex.py`), **R18: `compiletoflash` dictionary
 build pipeline proven on qemu** (D-35; `make -C sim dict-qemu` PASS — app
 dict built, `pmemsave`-captured, merged, cold-boot residency proven; dict
-window now `0x4400..0x10000`; `flash!`/`hflash!` plain stores). Not started:
-stub SoC per core (`sim/ssp/`, Verilator — consumes
-`ssp/fw/build/mecrisp-ssp.hex`, inherits the dict-build script shape),
-`fit.rpt` ×2 |
+window now `0x4400..0x10000`; `flash!`/`hflash!` plain stores), **R19:
+Verilator stub SoC live at hardware addresses** (`sim/ssp/ssp_stub_top.v` =
+picorv32+ROM/DTCM+bridge-subset; `make -C sim stub smoke-stub dict-stub`
+all PASS — authoritative D-35 capture `build/mecrisp-ssp-stub-app.{bin,hex}`,
+kernel-integrity + cold-boot residency + determinism verified; ID read-back
+4D525A03 proves decode vs CSV; new `tools/hex2bin.py`). Not started:
+gracilis twin stub + `fit.rpt` ×2 (OQ-20 bake-off) |
 | Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values). OQ-22/OQ-23 are settled by simulation, not by the owner |
 
-Commit trail for these sessions (newest first): **R18 compiletoflash dict-build pipeline (this commit)** · `1d0a502` postfix-`CONSTANT` fix · **R17 flash-free Mecrisp port + qemu smoke** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
+Commit trail for these sessions (newest first): **R19 Verilator stub SoC + authoritative dict pipeline (this commit)** · **R18 compiletoflash dict-build pipeline (qemu)** · `1d0a502` postfix-`CONSTANT` fix · **R17 flash-free Mecrisp port + qemu smoke** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
 (H-1 closed) · `2ed69c3` hand-off doc · `e41d5fc` R15 review ·
 `77208cd` cores vendored · `5e8ae1a` R14 bake-off · `d964f59` R13 ODT→SSP
 rename · `022bb95` R12 · `b86a21d` R11.
@@ -346,9 +349,12 @@ own stacks; leave the default or point at DTCM top) · keep
    (D-29)~~ **DONE `e6c83f9`** — CSV canonical (68 regs/129 fields);
    generator emits `.vh`/`.vhd`/`.fs`/Markdown; `make -C sim
    regmap-check` = R-45, green.
-5. `sim/ssp/`: Verilator stub SoC per core (core + ROM/DTCM + UART MMIO +
-   `TICK_US`). First milestone: a hand-written RV32 "hello" over the UART
-   model. Second: Mecrisp REPL (needs H-3 cleared for vendoring sources).
+5. ~~`sim/ssp/`: Verilator stub SoC per core~~ **DONE for picorv32 at R19**
+   (`ssp_stub_top.v` + `tb_ssp_stub.cpp`; REPL + ID read-back + full D-35
+   dict capture PASS; `TICK_US` still absent — FW `milliseconds` lands P1a).
+   Remaining: gracilis twin (`FemtoRV32` ADDR_WIDTH=30; its rstrb/rbusy/
+   wmask/wbusy timing differs from picorv32 — new fabric shim, same console
+   contract).
 6. Add `insn_end` cases to `tb_cpuregs` (or a sibling `tb_insn_end.vhd`)
    before modifying `T80s`. The existing passing bench is the regression
    guard.

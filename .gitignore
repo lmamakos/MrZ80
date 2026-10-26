@@ -17,3 +17,4 @@ __pycache__/
 # AI assistant session transcripts
 session-ses_*.md
 .Xauthority
+sim/ssp/obj_dir/

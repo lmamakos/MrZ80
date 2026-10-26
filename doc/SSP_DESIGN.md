@@ -440,8 +440,13 @@ sticky `rx_overrun`), `UART_CTRL` 0x12C (`en`, self-clearing `rx_clr`/
 4. Merge `kernel.bin + dict.bin` at `0x4400` -> OSD-loadable hex.
 5. Reproducibility rule (CI, sibling of R-45): same kernel hex + same
    `.fs` + pinned `$MECRISP` commit => byte-identical merged image.
-Rehearsal implemented: `make -C sim dict-qemu` -> **PASS at R18**
-(196 B demo dict; app words resident at cold boot, §17 R18).
+Lanes implemented: `make -C sim dict-qemu` -> **PASS R18** (rehearsal);
+`make -C sim dict-stub` -> **PASS R19** (authoritative, hardware-true:
+harness `$writememh` dump of `rom[]` -> `build/mecrisp-ssp-stub-app.{bin,hex}`
+= OSD MROM-loadable form; kernel bytes below `0x4400` verified identical to
+the shipped kernel image; cold boot of the artifact hex runs the app words,
+incl. `reg-id hex. -> 4D525A03` through the stub's bridge decode; demo dict
+196 B; determinism double-run produced identical SHA-1s, §17 R19).
 
 ### 5.5 Firmware structure (Mecrisp-Quintus)
 
@@ -494,6 +499,19 @@ packs/EVAL'd tools (D-21), not the kernel; (4) `CONSTANT` is **postfix**
 fixed in `tools/ssp_regmap.py`, and the regenerated `ssp-regs.fs` live-load
 verified on the qemu REPL (constants define and read back; `hex.` prints
 zero-padded 8 digits; generated lines stay under the 200-char TIB).
+
+**Stub-SoC bench lessons `[R19]`** (picorv32 twin `sim/ssp/`,
+`make -C sim smoke-stub` PASS): (5) picorv32 `mem_la_*` are **look-ahead**
+outputs -- asserted *before* `mem_valid`, so gating them with `mem_valid`
+never fires; discriminate read vs write data-phase with `mem_instr` +
+`mem_wstrb` (load = `!mem_instr && wstrb==0`); (6) the console harness must
+**gate input release until firmware is alive** (first TX byte + grace) --
+FW `uart_init` writes CTRL `rx_clr`, which otherwise flushes keystrokes the
+harness pushed during boot (real operators type after the prompt; structural
+FIFO-room RX pacing was already proven); (7) **Mecrisp echoes received
+characters itself** (`key` echoes) -- console logs are "echo + reply on one
+line" (`"."` emits *leading* space, `cr` emits LF `\n`); harness-local
+echo is therefore OFF by default.
 
 `crt0.S` trap vector → Forth dispatcher; stack-register convention verified
 against the chosen port during P0 (was OQ-09b — P0 checklist item, carried).
@@ -1551,3 +1569,37 @@ operator MPKG stays source-only; binary dicts are build-system artifacts.
 · **Next**: stub SoC (`sim/ssp/`) absorbs this script shape with hardware-
 true addresses (its merged hex = the real OSD artifact); then gracilis
 wrapper + `fit.rpt` ×2 (OQ-20).
+
+R19 **Verilator stub SoC live at hardware addresses; authoritative dict
+pipeline passes (2026-10-26)**: `sim/ssp/` RV-side stub SoC lands (D-33
+Verilog side; OQ-20 picorv32 lane of the bake-off).
+· **`ssp_stub_top.v`**: picorv32 `COMPRESSED_ISA+MUL+DIV, IRQ off` +
+64 KiB ROM (`$readmemh` +RAM; dict window writable = build harness, kernel
+region write-counted) + 64 KiB byte-enable DTCM + `ssp_bridge` STUB subset
+decode (`ID`=4D525A03 per CSV + UART 0x120-0x12C with 8-byte RX FIFO,
+structural FIFO-room pacing, sticky-overrun plumbing) + decoder-error slave
+(counted, first address logged). `+ROM=`/`+DUMP=` plusargs; harness dump via
+`$writememh` — no DPI exports needed (DPI imports carry TX/RX/err logging).
+· **`tb_ssp_stub.cpp`**: stdin/stdout console (DPI), non-blocking stdin,
+raw-tty handling, first-TX input-release gate, idle/EOF exit + cycle budget,
+exit codes (trap/no-output/diag-flagged), `TXTRACE=1` byte log.
+· **`make -C sim stub|smoke-stub|dict-stub`**. smoke-stub PASS: REPL arith,
+word def/call, and `$20000000 @ hex. -> 4D525A03` (bridge decode verified
+against `ssp_regs.csv`). dict-stub PASS: hardware-address D-35 pipeline —
+compiletoflash + demo.fs session, ROM dump -> merged artifact
+`build/mecrisp-ssp-stub-app.{bin,hex}` (OSD MROM form), kernel-integrity
+check (bytes <0x4400 identical to shipped kernel), cold-boot residency from
+the artifact hex (`cpu-hello`/`42answer`/`reg-id` live; `reg-id` proves the
+real-map bridge read). Demo dict 196 B — identical size to the qemu lane
+(bytes differ: absolute refs are map-relative, as designed). Determinism
+double-run: identical SHA-1s for dict + merged artifacts (CI rule now
+demonstrated on both lanes).
+· New tool `tools/hex2bin.py` ($readmemh/$writememh-word hex -> flat bin,
+inverse of bin2hex). Verilator gotchas banked: lint warnings are fatal by
+default (picorv32 self-suppresses; keep our files clean); DPI spelling is
+"DPI-C"; runtime-string $readmemh/$writememh + $value$plusargs all work —
+the ROM in/dump path needs no public-signal access. Lessons (5)-(7) in 5.5.1
+(mem_la look-ahead gating; input-release gate; FW self-echo console format).
+· **Next**: gracilis twin stub (`FemtoRV32` ADDR_WIDTH=30, rstrb/rbusy/
+wmask/wbusy fabric timing) + throwaway Quartus synth tops -> `fit.rpt` x2
+(OQ-20 evidence; owner confirm for tycho synth per handoff 2.3).
