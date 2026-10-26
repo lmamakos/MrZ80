@@ -42,9 +42,12 @@
 .equ RamEnde,               0x10010000 # 64 KiB DTCM
 .equ FlashAnfang,           0x00000000 # MROM base (RV read-only, D-10)
 .equ FlashEnde,             0x00010000 # 64 KiB MROM
-# Empty "flash dictionary" pad at ROM top: the EndOfCore dictionary entry
-# links here and the boot scan sees erased bytes 8 bytes in. Keep >= 16 B.
-.equ FlashDictionaryAnfang, 0x0000FF00
+# Application-dictionary window (D-35): contiguous above the kernel (~16 KiB
+# at 0x3F70; margin to 0x4400 mirrors the ulx3s convention). In sim this
+# window is writable and `compiletoflash` builds the app dictionary here;
+# the build pipeline captures it into the shipped MROM image. Empty until
+# then: the EndOfCore entry links here and the boot scan sees erased bytes.
+.equ FlashDictionaryAnfang, 0x00004400
 .equ FlashDictionaryEnde,   0x00010000
 .endif
 

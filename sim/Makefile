@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -26,3 +26,8 @@ fw:
 # RV-side FW REPL smoke on qemu (D-28 companion; no RTL required)
 smoke-qemu:
 	$(ROOT)/sim/ssp/smoke_qemu.sh
+
+# D-35 build-pipeline rehearsal on qemu: compiletoflash dictionary build,
+# QMP pmemsave capture, kernel+dict merge, cold-boot residency proof
+dict-qemu:
+	$(ROOT)/sim/ssp/dictbuild_qemu.sh

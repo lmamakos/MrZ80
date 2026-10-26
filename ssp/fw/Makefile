@@ -44,7 +44,7 @@ $(OBJROOT)/mecrisp-ssp.hex: $(SRCS) memmap-ssp | $(OBJROOT)
 QEMU_DEFS := --defsym QEMU_NS16550=1 \
              --defsym RamAnfang=0x80010000 --defsym RamEnde=0x80020000 \
              --defsym FlashAnfang=0x80000000 --defsym FlashEnde=0x80010000 \
-             --defsym FlashDictionaryAnfang=0x8000FF00 \
+             --defsym FlashDictionaryAnfang=0x80004400 \
              --defsym FlashDictionaryEnde=0x80010000
 
 $(OBJROOT)/mecrisp-ssp-qemu.elf: $(SRCS) memmap-qemu | $(OBJROOT)

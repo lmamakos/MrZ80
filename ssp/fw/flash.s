@@ -1,36 +1,45 @@
 #
-#    MrZ80 SSP: flash primitives stub -- there is no flash memory device in
-#    this system (D-32, owner ruling R17: no SPI flash, no MappedSPIFlash).
+#    MrZ80 SSP flash primitives -- there is NO flash memory device in this
+#    system (D-32 rev R17/R18: no SPI flash, no MappedSPIFlash).
 #
-#    The kernel boots straight into the RAM dictionary (catchflashpointers
-#    sets dictionarypointer := RamDictionaryAnfang); persistence is the OSD
-#    MROM image plus MPKG packs re-EVAL'd at boot (D-21).
+#    "Flash" here means the MROM window [FlashDictionaryAnfang..FlashEnde)
+#    that sits contiguously above the kernel in the OSD-loaded image (D-35).
+#    flash!/hflash! are plain stores:
+#      * in sim (qemu DRAM, Verilator stub rom[] array) the window is
+#        writable, so `compiletoflash` builds the application dictionary
+#        contiguously with the kernel -- the build pipeline captures that
+#        window into the shipped MROM hex;
+#      * on silicon MROM ignores RV writes, so the same words are inert and
+#        `compiletoflash` there is harmless (dictionary lost at reset).
+#    The dictionary build is therefore a build-system/stub procedure; the
+#    operator-visible persistence path stays source packs (D-21, OSD MPKG).
 #
-#    flash! / hflash! accept and discard their arguments: writes to the MROM
-#    window are bus no-ops on silicon, and this stub keeps them harmless in
-#    RAM-mapped positions. They stay visible so a stray user program finds
-#    *something* answering rather than an unknown-word error mid-edit.
-#    The initflash hook is deliberately absent: boot.s skips its call (.ifdef).
+#    The initflash hook is deliberately absent: boot.s skips its call (.ifdef),
+#    there is no controller to bring up.
 #
 
 # -----------------------------------------------------------------------------
-  Definition Flag_visible, "flash!" # ( x 32-addr -- )  not available: discarded
+  Definition Flag_visible, "flash!" # ( x 32-addr -- )  plain store, see header
 # -----------------------------------------------------------------------------
 flashstore:
-  popda x15 # value
-  popda x15 # address
+  lw x15, 0(x9)  # value
+  sw x15, 0(x8)
+  lw x8, 4(x9)   # consume both stack items
+  addi x9, x9, 8
   ret
 
 # -----------------------------------------------------------------------------
-  Definition Flag_visible, "hflash!" # ( x 16-addr -- )  not available: discarded
+  Definition Flag_visible, "hflash!" # ( x 16-addr -- )  plain store
 # -----------------------------------------------------------------------------
 hflashstore:
-  popda x15
-  popda x15
+  lw x15, 0(x9)
+  sh x15, 0(x8)
+  lw x8, 4(x9)
+  addi x9, x9, 8
   ret
 
 # -----------------------------------------------------------------------------
-  Definition Flag_visible, "flushflash" # ( -- )  no-op: no flash to flush
+  Definition Flag_visible, "flushflash" # ( -- )  no-op: nothing to flush
 # -----------------------------------------------------------------------------
 flushflash:
   ret

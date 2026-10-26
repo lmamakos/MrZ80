@@ -32,12 +32,16 @@ install + smoke test**, **GHDL sim resync + green baseline**, **R16
 decisions logged**, **D-29 regmap pipeline live** (CSV + generator +
 `make -C sim regmap-check`), **R17: minimal flash-free Mecrisp port built
 and REPL-verified on qemu** (`ssp/fw/` + `make -C sim smoke-qemu` PASS;
-UART regs in CSV; `tools/bin2hex.py`). Not started: stub SoC per core
-(`sim/ssp/`, Verilator — ready to consume `ssp/fw/build/mecrisp-ssp.hex`),
+UART regs in CSV; `tools/bin2hex.py`), **R18: `compiletoflash` dictionary
+build pipeline proven on qemu** (D-35; `make -C sim dict-qemu` PASS — app
+dict built, `pmemsave`-captured, merged, cold-boot residency proven; dict
+window now `0x4400..0x10000`; `flash!`/`hflash!` plain stores). Not started:
+stub SoC per core (`sim/ssp/`, Verilator — consumes
+`ssp/fw/build/mecrisp-ssp.hex`, inherits the dict-build script shape),
 `fit.rpt` ×2 |
 | Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values). OQ-22/OQ-23 are settled by simulation, not by the owner |
 
-Commit trail for these sessions (newest first): **R17 flash-free Mecrisp port + qemu smoke (this commit)** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
+Commit trail for these sessions (newest first): **R18 compiletoflash dict-build pipeline (this commit)** · `1d0a502` postfix-`CONSTANT` fix · **R17 flash-free Mecrisp port + qemu smoke** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
 (H-1 closed) · `2ed69c3` hand-off doc · `e41d5fc` R15 review ·
 `77208cd` cores vendored · `5e8ae1a` R14 bake-off · `d964f59` R13 ODT→SSP
 rename · `022bb95` R12 · `b86a21d` R11.

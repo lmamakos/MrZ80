@@ -190,9 +190,10 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-29 | `[decided, new R15]` **Single-source register map**: `ssp/regs/ssp_regs.csv` (offset, name, access, fields, reset, doc) → generator `tools/ssp_regmap.py` emits `ssp_regs.vh` (RTL), `ssp-regs.fs` (Forth constants), and the §6 Markdown table; TBs include the `.vh`. Hand-editing generated outputs forbidden. | hand-maintained parallel copies |
 | D-30 | `[decided, new R15]` **Panel engine = micro-op sequencer.** Primitives `LOAD_AR, LOAD_PR, MEM_RD, MEM_WR, IO_RD, IO_WR, INC_AR, STEP, RESET_VENT, INJECT, TAP_RD, PAGE_SET`; each panel op (EXAM-NEXT, DEP-NEXT, START-AT-A, MMU-DEPOSIT two-OUT, …) is a short sequence in a small table; FW `MEM_CTL` kicks enter the **same queue**. Arbitration is **per macro** (atomic — no FW cycle between MMU-DEPOSIT's two OUTs); panel wins simultaneity. | hand-coded per-op FSM states |
 | D-31 | `[decided, new R15]` **Profile-7 hardware interlock**: guest `$A0–$A7` writes targeting LED profile 7 are dropped in hardware; profile 7 is SSP-owned (supersedes §11.5's by-convention rule). | convention-only (v0.3) |
-| D-32 | `[decided, new R15]` **RAM-only Forth — no flash emulation.** Mecrisp-Quintus runs `compiletoram` only: kernel executes from the OSD-loaded MROM image (RV-read-only, D-10); all compiled words live in DTCM; flash-write primitives stubbed (error); persistence = MROM image + MPKG packs re-`EVAL`'d at boot (D-21); OQ-13 stays deferred. | RV-writable upper-ROM `compiletoflash` region (offered R15, declined: unnecessary at this stage) |
+| D-32 | `[decided, new R15]` **RAM-only Forth — no flash emulation.** Mecrisp-Quintus runs `compiletoram` only: kernel executes from the OSD-loaded MROM image (RV-read-only, D-10); all compiled words live in DTCM; flash-write primitives are **plain stores** (rev R18: writable in sim where the MROM window's backing store accepts writes, inert on silicon; see D-35); operator persistence = OSD MROM image + MPKG source packs re-`EVAL`'d at boot (D-21); OQ-13 stays deferred. | RV-writable upper-ROM `compiletoflash` region (offered R15, declined: unnecessary at this stage) |
 | D-33 | `[decided, new R16]` **Language seam (H-4).** Simulation has no mixed-language path (GHDL reads VHDL only; Verilator reads Verilog only; no `ghdl-yosys-plugin` packaged). Rule: **Z80-side SSP logic = VHDL** — `z80_bus_mux`, boundary-park logic, escape recognizer, `fp_capture`, `fp_engine`, `ssp_mem_client`, and the bridge **client side** (the ssp_bridge port that crosses the seam) live at the CPM-core boundary in VHDL, testable in GHDL against the real T80/MMU/SDRAM FSM. **RV-side = Verilog** — vendored cores, MROM/DTCM, decoder, `ssp_uart`, register file. The seam is a plain signal bundle across the `ssp_top`/CPM boundary (register strobes + data + event bits), crossed in **Verilog at `ssp_top`** by instantiating the VHDL units by entity (Quartus handles the mix; simulation stubs the far side at each level). | mixed-language sim hosts; all-VHDL (costs the vendored Verilog cores' zero-touch import); all-Verilog (costs the proven GHDL T80/SDRAM benches) |
 | D-34 | `[decided, new R16]` **gracilis `ADDR_WIDTH = 30`** in all our instances (default 24 would alias the §5.2 map: DTCM `0x1000_0000`/bridge `0x2000_0000` fold toward 0). §5.2 map unchanged. Parameterized at instantiation; verified in the P0 stub-SoC decode test. | compacting the map into 24 bits (FemtoSoC style — rejected: the 30/32-bit map is core-neutral and already documented) |
+| D-35 | `[decided, new R18]` **Application-dictionary build = Mecrisp `compiletoflash` into a contiguous MROM window** (owner ruling). Dictionary window `FlashDictionaryAnfang..FlashDictionaryEnde` = `0x4400..0x10000` on the silicon map (~47 KiB above the 15.8 KiB kernel; ulx3s-style margin), same geometry on the qemu map offset to DRAM. Dictionary builds run **only in sim**: qemu for pipeline rehearsal (`sim/ssp/dictbuild_qemu.sh`, DONE R18 — app dict built via serial-fed `compiletoflash`, captured by QMP `pmemsave`, merged with kernel, cold-boot residency proven); authoritative captures on the `sim/ssp` Verilator stub SoC (hardware-true addresses; firmware-paced feed). Shipped OSD `MROM` artifact = kernel + dict merged hex (idx6, D-21). No boot-time restore logic: the existing `catchflashpointers` walk consumes the contiguous dictionary natively. Consequences: shipped factory image = build-pipeline output (release-hex rule); cold boot re-inits RAM variables from embedded init data (code persists, live state does not); dictionary must be compiled against the exact kernel hex shipped. | DTCM-snapshot + restore pack (rejected R18: needs new boot restore path + pointer-capture manifest; the contiguous flash-dict machinery already exists and is proven by R18) |
 | D-21 | `[decided, session R1]` **Code is data lifecycle**: monitor boots before/independent of guest image; ROM image (index 6) and FORTH pack (index 7: text source staged in DTCM, auto-`EVAL`'d at boot, magic+length trailer; position-independent, survives kernel rebuilds) both OSD-loadable; serial upload path (P2) reuses the same "eval a buffer" primitive. No NVRAM machinery in v1. | refit-per-change; battery-backed dict (deferred OQ-13) |
 | D-22 | `[decided, session R5]` Addressing is **modal** on both surfaces: logical (MMU-translated, 16-bit) ⟷ physical (28-bit). FW keeps a live MMU shadow from the `mmu_frame` HW tap (state-neutral) and can translate/report either view; serial mode command (`PHY`/`LOG`); panel physical mode = **S31 = '1'** (§11.2). | single addressing mode |
 | D-23 | `[decided, new v0.5 (R8)]` Panel UX package (full spec `SSP_PANEL_UX.md`): sovereignty-with-`PANEL_LOCK` (G-8) · S28=**BP ARM** (LOAD-ADDR also sets BP at encoder-cursor slot), S29=**FREEZE**, S30=**START-AT-A** (hardware trampoline start, firmware-free — closes D-07 panel gap) · per-page lamp remap with pinned chrome + page-ID lamps (G-9; cold default = identity ⇒ CLASSIC) · encoder: hold-cursor after commit, rapid double-press zeroes (no commit) · hybrid `*` commentary · colour conventions · WDG-dead ⇒ page forced to CLASSIC, lock cleared. | static-map/paged-content (rejected R8 in favour of per-page layout); unconditional RUN; zero-after-commit; queue-only or silent commentary |
@@ -398,20 +399,49 @@ owns it.
 sticky `rx_overrun`), `UART_CTRL` 0x12C (`en`, self-clearing `rx_clr`/
 `tx_clr`) — canonical rows in `ssp/regs/ssp_regs.csv`.
 
-### 5.4 Downloadable ROM & packs (D-21)
-- `MROM` (index 6): RV32 image `ssp/fw` build output (`forth.bin`→
-  `forth_rom.hex` factory-committed; `.bin` mountable at runtime). Mount
+### 5.4 Downloadable ROM, dictionary window & packs (D-21; D-35 rev R18)
+- `MROM` (index 6): RV32 image = **kernel + application dictionary merged**
+  (`forth_rom.hex` factory-committed; `.bin` mountable at runtime). Mount
   streams over ioctl into the ROM-RAM; **on mount-complete: monitor-
   subsystem reset pulse only** — RV boots new image; guest untouched (D-16).
-  Image self-ID via header at ROM+0 (`'MRZM'`, version, CRC); FW `V` reports.
+  Image self-ID header `[rev R18: relocated]` — ROM+0 is the reset jump
+  vector, so the header lives at the **pack-window tail** `0xFFF0..0xFFFF`
+  (`'MRZM'`, version, CRC); dictionary builds must stop 16 B short of
+  `FlashDictionaryEnde`. FW `V` reports it.
+- **Dictionary window `[new R18, D-35]`** `0x4400..0x10000`: contiguous
+  above the kernel. Build pipeline (§5.4.1) compiles application Forth there
+  via `compiletoflash` *in sim*; `catchflashpointers` picks the dictionary up
+  natively at every subsequent cold boot -- no restore mechanism, no pointer
+  manifest. Empty window (kernel-only image) is a valid artifact and already
+  boot-proven (R17).
 - `MPKG` (index 7): **FORTH source pack** staged to a reserved DTCM region
   (top-of-RAM staging, default 8 KiB, final size at P0), trailer
   `{magic 'FPAK', len, name[8]}`; FW boot scan auto-`EVAL`s packs present
   (position-independent text; robust across kernel rebuilds). Same primitive
-  backs serial paste/XModem upload (P2). Binary dictionary overlays possible,
-  not v1.
+  backs serial paste/XModem upload (P2). **Operator-visible packs stay
+  source-only** `[rev R18]` — binary dictionary content is strictly the
+  build system's product (MROM image), keeping operator packs human-editable
+  and machine dicts reproducible.
 - Dictionary (RAM) contents lost on monitor reset; recovery = re-mount packs
   or serial re-upload; "workstation" persistence ideas → OQ-13 (deferred).
+  `[R18]` cold boot re-initialises RAM variables from each definition's
+  embedded init data (flash-dict walk semantics): application *code* persists
+  in MROM, live variable *state* does not.
+
+#### 5.4.1 Dictionary build pipeline (D-35)
+
+1. `make -C ssp/fw qemu` (or the silicon-map build for stub runs).
+2. REPL session (qemu now; stub SoC authoritative): send `compiletoflash`,
+   then application `.fs` sources — firmware-paced byte feed, no FIFO
+   overruns by construction.
+3. Capture window: qemu via QMP `pmemsave` (this QEMU's schema:
+   `{filename, val=phys-addr, size}`); stub SoC via harness dump of the
+   `rom[]` array. Fragment artifacts: `build/dict-qemu.{bin,hex}`.
+4. Merge `kernel.bin + dict.bin` at `0x4400` -> OSD-loadable hex.
+5. Reproducibility rule (CI, sibling of R-45): same kernel hex + same
+   `.fs` + pinned `$MECRISP` commit => byte-identical merged image.
+Rehearsal implemented: `make -C sim dict-qemu` -> **PASS at R18**
+(196 B demo dict; app words resident at cold boot, §17 R18).
 
 ### 5.5 Firmware structure (Mecrisp-Quintus)
 
@@ -1493,3 +1523,31 @@ name`) -- first `.fs` emitter draft had it prefix; fixed + live-load verified
 · **Next**: `sim/ssp/` stub SoC (picorv32 `COMPRESSED_ISA` + ROM(hex)/DTCM
 + UART/bridge decode per §5.2 — the hex is ready today), then gracilis
 wrapper, then Quartus `fit.rpt` ×2 for the OQ-20 bake-off.
+
+R18 **compiletoflash dictionary-build pipeline proven on qemu (2026-10-26)**:
+owner endorsed building the application dictionary **contiguous with the
+kernel** via Mecrisp `compiletoflash` as the build-pipeline shape (D-35).
+· **FW**: `flash!`/`hflash!` now plain stores (writable in sim, inert on
+silicon — D-32 rev); dictionary window enlarged `0xFF00`-pad →
+**`0x4400..0x10000`** (both maps; kernel 0x3F68 leaves margin);
+`apps/demo.fs` added as pipeline-rehearsal content.
+· **New `sim/ssp/dictbuild_qemu.sh` (`make -C sim dict-qemu`)**: boots the
+qemu FW, sends `compiletoflash`, feeds `demo.fs` over paced serial, captures
+the window via QMP `pmemsave`, merges kernel+dict, and **cold-boots the
+merged image**: `cpu-hello` prints, `42answer . → 42`, `reg-id hex. →
+00000000`, zero unknown words — application dictionary resident from
+power-on with **no restore logic** (the `catchflashpointers` walk consumes it
+natively). Dict captured at 196 B; window ~47 KiB available.
+· **QMP gotchas banked**: this qemu's `pmemsave` args are
+`{filename, val=phys-addr, size}` (no `offset`; `val` is the address), and
+replies interleave with async events — skip lines until `return`/`error`.
+· **Release-hex rule** coined: shipped factory image = pipeline output
+(dictionary links resolve at compile time against the exact kernel bytes).
+· **§5.4 revised**: pack-window-tail header `0xFFF0` (`'MRZM'` id/CRC —
+ROM+0 is the reset vector, the old "header at ROM+0" idea was infeasible);
+operator MPKG stays source-only; binary dicts are build-system artifacts.
+· **Regressions green**: `smoke-qemu` PASS (kernel-only image, empty window);
+`regmap-check` PASS (map unchanged at 72/137).
+· **Next**: stub SoC (`sim/ssp/`) absorbs this script shape with hardware-
+true addresses (its merged hex = the real OSD artifact); then gracilis
+wrapper + `fit.rpt` ×2 (OQ-20).
