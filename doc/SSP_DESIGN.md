@@ -194,6 +194,7 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-33 | `[decided, new R16]` **Language seam (H-4).** Simulation has no mixed-language path (GHDL reads VHDL only; Verilator reads Verilog only; no `ghdl-yosys-plugin` packaged). Rule: **Z80-side SSP logic = VHDL** — `z80_bus_mux`, boundary-park logic, escape recognizer, `fp_capture`, `fp_engine`, `ssp_mem_client`, and the bridge **client side** (the ssp_bridge port that crosses the seam) live at the CPM-core boundary in VHDL, testable in GHDL against the real T80/MMU/SDRAM FSM. **RV-side = Verilog** — vendored cores, MROM/DTCM, decoder, `ssp_uart`, register file. The seam is a plain signal bundle across the `ssp_top`/CPM boundary (register strobes + data + event bits), crossed in **Verilog at `ssp_top`** by instantiating the VHDL units by entity (Quartus handles the mix; simulation stubs the far side at each level). | mixed-language sim hosts; all-VHDL (costs the vendored Verilog cores' zero-touch import); all-Verilog (costs the proven GHDL T80/SDRAM benches) |
 | D-34 | `[decided, new R16]` **gracilis `ADDR_WIDTH = 30`** in all our instances (default 24 would alias the §5.2 map: DTCM `0x1000_0000`/bridge `0x2000_0000` fold toward 0). §5.2 map unchanged. Parameterized at instantiation; verified in the P0 stub-SoC decode test. | compacting the map into 24 bits (FemtoSoC style — rejected: the 30/32-bit map is core-neutral and already documented) |
 | D-35 | `[decided, new R18]` **Application-dictionary build = Mecrisp `compiletoflash` into a contiguous MROM window** (owner ruling). Dictionary window `FlashDictionaryAnfang..FlashDictionaryEnde` = `0x4400..0x10000` on the silicon map (~47 KiB above the 15.8 KiB kernel; ulx3s-style margin), same geometry on the qemu map offset to DRAM. Dictionary builds run **only in sim**: qemu for pipeline rehearsal (`sim/ssp/dictbuild_qemu.sh`, DONE R18 — app dict built via serial-fed `compiletoflash`, captured by QMP `pmemsave`, merged with kernel, cold-boot residency proven); authoritative captures on the `sim/ssp` Verilator stub SoC (hardware-true addresses; firmware-paced feed). Shipped OSD `MROM` artifact = kernel + dict merged hex (idx6, D-21). No boot-time restore logic: the existing `catchflashpointers` walk consumes the contiguous dictionary natively. Consequences: shipped factory image = build-pipeline output (release-hex rule); cold boot re-inits RAM variables from embedded init data (code persists, live state does not); dictionary must be compiled against the exact kernel hex shipped. | DTCM-snapshot + restore pack (rejected R18: needs new boot restore path + pointer-capture manifest; the contiguous flash-dict machinery already exists and is proven by R18) |
+ | D-36 | `[decided, new R21]` **SSP block memories = explicit altsyncram IP instances, never inference-dependent** (owner ruling after the R21 inference saga: gracilis failed Quartus 17 M10K inference 5 ways on its combinational address bus — `Error 276003`; picorv32 inferred only with 2× pass-through duplication). House pattern: hand-written MegaWizard-style wrappers à la `Components/INTERNALRAM/InternalRam64K.vhd` / `Components/TERMINAL/DisplayRam1K.vhd`; P0 bake-off proved the wrapper (`bakeoff/ssp_sdp_ram.vhd`, DUAL_PORT 16K×32, port-A byteenable, `ADDRESS_REG_B=CLOCK0`, `OUTDATA_REG_B=UNREGISTERED` — exact usage per §5.8.1). Consequence: launch+1 read latency is the fabric truth (native for gracilis `rstrb`; picorv32 bridge adds one wait state). | inference + `ramstyle` attributes (rejected: tool-version-fragile, silently core-specific — proven this round) |
 | D-21 | `[decided, session R1]` **Code is data lifecycle**: monitor boots before/independent of guest image; ROM image (index 6) and FORTH pack (index 7: text source staged in DTCM, auto-`EVAL`'d at boot, magic+length trailer; position-independent, survives kernel rebuilds) both OSD-loadable; serial upload path (P2) reuses the same "eval a buffer" primitive. No NVRAM machinery in v1. | refit-per-change; battery-backed dict (deferred OQ-13) |
 | D-22 | `[decided, session R5]` Addressing is **modal** on both surfaces: logical (MMU-translated, 16-bit) ⟷ physical (28-bit). FW keeps a live MMU shadow from the `mmu_frame` HW tap (state-neutral) and can translate/report either view; serial mode command (`PHY`/`LOG`); panel physical mode = **S31 = '1'** (§11.2). | single addressing mode |
 | D-23 | `[decided, new v0.5 (R8)]` Panel UX package (full spec `SSP_PANEL_UX.md`): sovereignty-with-`PANEL_LOCK` (G-8) · S28=**BP ARM** (LOAD-ADDR also sets BP at encoder-cursor slot), S29=**FREEZE**, S30=**START-AT-A** (hardware trampoline start, firmware-free — closes D-07 panel gap) · per-page lamp remap with pinned chrome + page-ID lamps (G-9; cold default = identity ⇒ CLASSIC) · encoder: hold-cursor after commit, rapid double-press zeroes (no commit) · hybrid `*` commentary · colour conventions · WDG-dead ⇒ page forced to CLASSIC, lock cleared. | static-map/paged-content (rejected R8 in favour of per-page layout); unconditional RUN; zero-after-commit; queue-only or silent commentary |
@@ -761,6 +762,59 @@ instructions) — a multilib-less chain still builds it;
 (d) one toolchain covers both candidate cores — the PicoRV32 fallback adds
 zero further tooling.
 
+**Measured bake-off — Quartus 17.0 Lite, `5CSEBA6U23I7` `[R21, fit.rpt ×2].**
+Both cores wrapped in an **identical** fabric (MROM+DTCM as explicit
+`ssp_sdp_ram` altsyncram IP, §5.8.1; console UART + decoder-error shim +
+DTCM guard), one 50 MHz clock, throwaway projects `bakeoff/` (README has the
+run recipe + inference findings):
+
+| Metric (fit) | picorv32 | gracilis | Δ | 50 MHz target |
+|---|---|---|---|---|
+| ALMs / 41,910 | 1,482 (4 %) | **1,128 (3 %)** | −354 (−24 %) | pass both |
+| registers | 1,251 | **540** | −711 | — |
+| block memory bits | 1,050,624 | 1,050,624 | 0 (identical IP) | — |
+| RAM blocks / 553 | 130 | 130 | 0 | — |
+| Fmax @ slow-1100mV-85C | **72.06 MHz** | 64.13 MHz | −11 % | pass both |
+| Fmax @ slow-1100mV-0C  | 71.42 MHz  | 63.67 MHz | −11 % | pass both |
+
+Read: **both entrants clear the 50 MHz budget with ≥ 28 % margin**, so speed
+is *not* a discriminator (owner: "slow is fine for a support processor").
+gracilis is ~24 % smaller and carries ~700 fewer registers; picorv32 buys its
+extra ~350 ALMs with higher fmax headroom and the riscv-formal pedigree
+(§5.8 weight "highest"). **Neither core is disqualified on area or timing** —
+OQ-20 is not decided by these numbers alone; it comes down to trust/pedigree +
+bus-fit, which are the higher-weighted criteria. Time-to-REPL in Verilator
+(sim-lane evidence, R19/R20): both boot the identical FW hex and pass the same
+benches; the FW image is core-neutral (§5.4.1) so the FW bet survives either
+pick.
+
+### 5.8.1 Memory-fabric implementation note (R21, owner ruling)
+
+The bake-off (and the production `ssp_top`) **instantiates block RAM explicitly
+rather than relying on Quartus inference.** For picorv32 inference happened to
+work, but its "pass-through duplication" inflated the reported usage 2×
+(258 blocks / 2.1 Mbit → honest 130 / 1.05 Mbit); for gracilis inference
+failed outright (`Error 276003`, rom/dtcm as ~1M raw registers) because FemtoRV
+drives a **combinational** address bus and Quartus 17 wants a registered read
+address to absorb into M10K. A staged probe (`bakeoff/ramprobe.v`, v1–v4 — full
+findings in `bakeoff/README.md`) isolated the discriminator. Rather than
+continue reverse-engineering the tool's acceptance rules, the fabric now uses a
+hand-written MegaWizard-style `altsyncram` wrapper `bakeoff/ssp_sdp_ram.vhd`
+(DUAL_PORT 16K×32, port-A byteenable, `ADDRESS_REG_B=CLOCK0`,
+`OUTDATA_REG_B=UNREGISTERED`), matching the wrappers already shipping here —
+`Components/INTERNALRAM/InternalRam64K.vhd` (SINGLE_PORT 64K×8, the general
+memory system) and `Components/TERMINAL/DisplayRam1K.vhd` (BIDIR_DUAL_PORT
+1K×8). **Decided as D-36: SSP block memories are explicit altsyncram IP
+instances.**
+
+Consequence (honest, both entrants): the IP's registered read address makes
+**launch+1 read latency** the fabric truth — which is natively FemtoRV's
+`rstrb` protocol (no `mem_rbusy` needed for RAM reads) and costs picorv32's
+zero-latency valid/ready bus one wait-state per access. FW/boot sees the same
+single-cycle-latency memories either way; `sim/ssp/` twins keep behavioral
+memories (gracilis lane protocol-identical; picorv32 lane FW is
+handshake-driven so a wait state is invisible to FW).
+
 ---
 
 ## 6. Debug Bridge (`ssp_bridge`) — MMIO map (v0.3)
@@ -1215,7 +1269,7 @@ OQ-18)**.
 | OQ-11 | vid-port **writes** revisit gate (D-15-B): after R-26 passes with reads; scope = `sdram2.sv` DQM mod; alternative = physical writes stay parked-only forever | revisit P3+ |
 | OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 54–67) future use; **MMU-switch (D-24) silkscreen labels + 9th-SPDT mounting; live-re-query-on-`S1:S0` policy; deposit valid-bit encoding check vs `MMU.vhd`** | board design time; `SSP_PANEL_UX.md` §11 checklist |
 | OQ-19 | Milestone-B scheduling: formal `sd_arb` extraction approved (R9) but unscheduled — proposal: dedicated refactor milestone after P2 green, before P3 polish work; confirm at P3 planning | `SDRAM_REWORK_PLAN.md` §6/§10 |
-| OQ-20 | **P0 core bake-off** (R14): **PicoRV32 (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** — same wrapper, both vendored (2026-10-26); decide at P0 exit on the §5.8 criteria table (trust/pedigree weighted highest; optional riscv-formal eqy-container run as evidence; ~~license check~~ closed — ISC / BSD-3; `fit.rpt` ×2; time-to-REPL in Verilator) | P0, critical path — evidence decides; polled FW (D-27) ⇒ only `crt0.S` differs ⇒ late reversibility |
+| OQ-20 | **P0 core bake-off** (R14): **PicoRV32 (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** — same wrapper, both vendored (2026-10-26); decide at P0 exit on the §5.8 criteria table (trust/pedigree weighted highest; optional riscv-formal eqy-container run as evidence; ~~license check~~ closed — ISC / BSD-3; ~~`fit.rpt` ×2~~ **done R21 §5.8: both pass 50 MHz, gracilis −24 % ALM, picorv32 +11 % fmax, neither disqualified**; ~~time-to-REPL in Verilator~~ **done R19/R20: both boot identical FW hex, dict/merged images byte-identical**) | P0, critical path — evidence complete; residual discriminator = trust/pedigree (+ bus-fit nuance §5.8.1); polled FW (D-27) ⇒ only `crt0.S` differs ⇒ late reversibility |
 | OQ-21 | **VexRiscv reopen conditions** (shelved R12): reopen the §5.7 container path only on (a) measured FW cycle-budget shortfall in P1/P2 (dump/disassemble/REPL responsiveness vs §4.3-class arithmetic), or (b) a new capability need not met by the family (`individua` covers atomics; nothing else on the horizon). Record measured numbers with any reopen request | dormant until drivers |
 | OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1. R15: flash emulation explicitly **not** pursued (D-32) |
 | OQ-22 | `[new R15]` **Escape-byte consumption mechanism** (D-14): when the guest owns the SNAC link and `OM` is On, the escape byte must not reach the guest ACIA, but recognition completes only at the stop bit. Options: (a) byte-level relay (deserialize → filter → re-serialize at the `O9B` rate; adds one character time of latency, only while `OM` On; RTS/CTS passed through), (b) let the byte through and accept the guest sees it, (c) inject into the ACIA receive path instead of the wire | lean **(a)**: exact semantics, and `OM` Off keeps the raw wire (true transparency); decide at P1a RTL |
@@ -1642,3 +1696,41 @@ double-run identical SHA-1s both cores.
 checks on every artifact step). Fragment capture uses `skip=`.
 · **Remaining OQ-20 evidence**: Quartus `fit.rpt` x2 on `5CSEBA6U23I7`
 (ALUT/M10K/fmax table) -- needs tycho synth (owner confirm per handoff 2.3).
+
+R21 **OQ-20 fit evidence complete both cores; memory fabric -> explicit RAM IP
+(2026-10-26)**: throwaway bake-off projects `bakeoff/` (README = recipe +
+findings; device settings mirrored from `MrZ80.qsf`, shared `bakeoff.sdc`
+50 MHz, separate output dirs, gitignored products) fit on tycho
+(Quartus 17.0 Lite, `5CSEBA6U23I7`; owner-confirmed same-files mount, no sync
+-- handoff §2.3 updated).
+· **Results table now in 5.8**: both entrants pass 50 MHz with >=28 % margin
+(picorv32 72.06/71.42 MHz, 1,482 ALM, 1,251 reg; gracilis 64.13/63.67 MHz,
+1,128 ALM, 540 reg; memory identical by construction: 130 M10K blocks,
+1,050,624 bits). gracilis -24 % ALM / -711 regs; picorv32 +11 % fmax.
+Neither disqualified -- OQ-20 remains for the P0-exit decision on the
+weighted criteria (trust/pedigree highest; FW bet core-neutral per 5.4.1).
+· **Owner ruling (implemented): explicit RAM IP, no inference reliance.**
+Gracilis failed synthesis 5 ways (Error 276003, rom/dtcm as ~1M raw registers;
+variants: async mux, rstrb-gated capture, captured-address mux, canonical
+q-pipeline + per-bit byteenable, rstrb-gated-q) while the identical fabric
+around picorv32 inferred first try (picorv32's registered `mem_addr` gets
+absorbed -- `ADDRESS_REG_B=CLOCK0`). Staged probe `bakeoff/ramprobe.v` v1-v4
+(v1 lesson: arrays declared 16K but indexed [13:2] -- silently pruned to 4K,
+"wins" vacated; v2: standalone true-16K templates infer fine; v3/v4: femto-
+driven fabric never reaches the RAM classifier). Rather than keep auditing
+tool acceptance rules -> new wrapper `bakeoff/ssp_sdp_ram.vhd` (hand-written
+MegaWizard-style altsyncram, DUAL_PORT 16Kx32 -- 17.0 Lite has no
+SIMPLE_DUAL_PORT keyword; port-A byteenable, ADDRESS_REG_B=CLOCK0,
+OUTDATA_REG_B=UNREGISTERED), house pattern per Components/INTERNALRAM/
+InternalRam64K.vhd (general 64Kx8 RAM) & Components/TERMINAL/DisplayRam1K.vhd.
+Both tops now instantiate it; picorv32 numbers cleaned of inference
+duplication (258 blk/2.1 Mbit -> 130 blk/1.05 Mbit). **Recorded as D-36.**
+· **Latency truth**: registered-address IP => launch+1 reads; native match for
+FemtoRV rstrb (rbusy never needed for RAM), one wait-state FSM added to
+picorv32 top (its sim lane unaffected -- handshake-driven FW).
+· Sim parity: `sim/ssp/ssp_stub_gracilis.v` canonical q-pipeline + per-bit
+byteenable rewrite; smoke-gracilis + dict-gracilis re-PASS; cross-core dict/
+merged byte-identity holds (dd250da5.../c43b230a...).
+· **Next**: owner review of OQ-20 evidence + D-36 ruling; then P1a prep
+(TICK_US/mmilliseconds, ssp_bridge RTL vs CSV, trap/WDG semantics §5.8
+footnote if gracilis wins).

@@ -45,11 +45,19 @@ twin stub live** (`ssp_stub_gracilis.v`, ADDR_WIDTH=30 + rstrb/wmask
 protocol shim; `make -C sim stub-gracilis smoke-gracilis dict-gracilis` all
 PASS; harness deduped to `tb_stub_main.cpp`; artifacts core-tagged; dict +
 merged images byte-identical across both hardware-map cores -- dictionary is
-core-neutral). Remaining OQ-20: `fit.rpt` ×2 on tycho (owner confirm
-required, §2.3) |
-| Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values). OQ-22/OQ-23 are settled by simulation, not by the owner |
+core-neutral), **R21: OQ-20 fit.rpt ×2 DONE on tycho** (both entrants fit +
+pass 50 MHz with >=28 % margin; gracilis 1,128 ALM/540 reg/64.13 MHz,
+picorv32 1,482 ALM/1,251 reg/72.06 MHz, memory identical 130 blocks /
+1,050,624 bits; table in SSP_DESIGN §5.8; throwaway projects `bakeoff/`).
+Bake-off memory fabric rewritten to **explicit altsyncram IP** (`D-36`) after
+Quartus 17 inference failed gracilis 5 ways (`Error 276003`, ~1M raw regs) --
+wrapper `bakeoff/ssp_sdp_ram.vhd`, house pattern per
+`Components/INTERNALRAM/InternalRam64K.vhd`. sim/ gracilis twin rewritten to the
+same q-pipeline; smoke-gracilis + dict-gracilis re-PASS, cross-core byte
+identity holds. |
+| Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values), **OQ-20 core pick (evidence complete R21 §5.8: neither core disqualified, residual discriminator = trust/pedigree)**. OQ-22/OQ-23 are settled by simulation, not by the owner. **D-36 (RAM IP) taken R21** |
 
-Commit trail for these sessions (newest first): **R20 gracilis twin stub + bake-off sim lane complete (this commit)** · `ef9867d` R19 Verilator stub SoC + authoritative dict pipeline · **R18 compiletoflash dict-build pipeline (qemu)** · `1d0a502` postfix-`CONSTANT` fix · **R17 flash-free Mecrisp port + qemu smoke** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
+Commit trail for these sessions (newest first): **R21 bake-off fit.rpt ×2 + explicit-RAM-IP fabric / D-36 (this commit)** · `c84da00` R20 gracilis twin stub + bake-off sim lane complete · `ef9867d` R19 Verilator stub SoC + authoritative dict pipeline · **R18 compiletoflash dict-build pipeline (qemu)** · `1d0a502` postfix-`CONSTANT` fix · **R17 flash-free Mecrisp port + qemu smoke** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
 (H-1 closed) · `2ed69c3` hand-off doc · `e41d5fc` R15 review ·
 `77208cd` cores vendored · `5e8ae1a` R14 bake-off · `d964f59` R13 ODT→SSP
 rename · `022bb95` R12 · `b86a21d` R11.
@@ -116,9 +124,12 @@ RISC-V/RVC ELF with correct compressed encodings (`c.addi`, `jr`) and
 
 - `tools/quartus_build.sh` runs `ssh -t tycho "cd Projects/z80fp/MrZ80 &&
   docker run --rm -v .:/build ghcr.io/raetro/quartus:17.0 quartus_sh …"`.
-  There is **no rsync step**, so the remote tree must already reflect local
-  edits; the setup implies a shared/synced checkout. Confirm with the owner
-  before the first P0 synth.
+  **Owner-confirmed 2026-10-26: there is no sync — the files are the same**
+  (this workspace and tycho's `Projects/z80fp/MrZ80` are the same tree,
+  mounted into the container at `/build`); local edits are instantly the
+  remote inputs. Agent-shell probe: `ssh tycho 'docker --version'` -> OK
+  (Docker 29.4.1), tree listing matches. First real synth invocations land
+  with the R21 bake-off fits (`--flow compile bakeoff/bakeoff_*`).
 - The script header comment names `Projects/z80fp/RomWBW_MrZ80_MiSTer`, but
   the command uses `Projects/z80fp/MrZ80`. The comment is stale.
 - `ssh -t` asks for a TTY. In a non-interactive agent shell this may warn or

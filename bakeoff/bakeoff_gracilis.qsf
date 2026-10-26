@@ -1,0 +1,20 @@
+# bakeoff_gracilis.qsf -- OQ-20 bake-off entrant B (throwaway fit, see README)
+set_global_assignment -name FAMILY "Cyclone V"
+set_global_assignment -name DEVICE 5CSEBA6U23I7
+set_global_assignment -name DEVICE_FILTER_PACKAGE UFBGA
+set_global_assignment -name DEVICE_FILTER_PIN_COUNT 672
+set_global_assignment -name DEVICE_FILTER_SPEED_GRADE 7
+set_global_assignment -name TOP_LEVEL_ENTITY bakeoff_gracilis
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_gracilis
+set_global_assignment -name MIN_CORE_JUNCTION_TEMP 0
+set_global_assignment -name MAX_CORE_JUNCTION_TEMP 85
+set_global_assignment -name ERROR_CHECK_FREQUENCY_DIVISOR 256
+set_global_assignment -name EDA_SIMULATION_TOOL "<None>"
+set_global_assignment -name POWER_PRESET_COOLING_SOLUTION "23 MM HEAT SINK WITH 200 LFPM AIRFLOW"
+set_global_assignment -name POWER_BOARD_THERMAL_MODEL "NONE (CONSERVATIVE)"
+set_global_assignment -name SDC_FILE bakeoff.sdc
+set_global_assignment -name VHDL_FILE ssp_sdp_ram.vhd
+set_global_assignment -name VERILOG_FILE bakeoff_gracilis.v
+set_global_assignment -name VERILOG_FILE ../Components/RISCV/femtorv32_gracilis.v
+
+set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"

@@ -19,3 +19,9 @@ session-ses_*.md
 .Xauthority
 sim/ssp/obj_dir/
 sim/ssp/obj_grac/
+bakeoff/db/
+bakeoff/incremental_db/
+bakeoff/output_picorv32/
+bakeoff/output_gracilis/
+bakeoff/output_ramprobe/
+bakeoff/c5_pin_model_dump.txt
