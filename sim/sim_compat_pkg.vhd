@@ -31,6 +31,25 @@
 -- counterpart and fails if anything beyond the expected `use`-line
 -- redirect differs, so none of these copies can silently drift from the
 -- real synthesis source. Run it after ANY edit to any of these files.
+--
+-- RESYNC 2026-10-26 (P0, H-1): the top level grew since this shim was
+-- written (capture-chain segments, reset_counter, sdram_gap_cnt,
+-- serialClkCount) and now also uses the STD_LOGIC_ARITH `unsigned`
+-- SUBTYPE in signal declarations and the `unsigned(std_logic_vector)`
+-- conversion. No new shim declarations are needed for those: GHDL's
+-- ieee.numeric_std (with -fsynopsys) provides the `unsigned` subtype and
+-- the `unsigned()` conversion directly. The resync only had to restore
+-- the canonical redirect PAIR in sim/MicrocomputerZ80CPM_sim.vhd --
+--   use ieee.numeric_std.all;      (was IEEE.STD_LOGIC_ARITH)
+--   use work.sim_compat_pkg.all;   (was IEEE.STD_LOGIC_UNSIGNED)
+-- which mirrors the original pattern; an intermediate attempt that
+-- replaced BOTH lines with sim_compat_pkg alone lost numeric_std and
+-- failed exactly these `unsigned` references. The top level has no
+-- explicit `use ieee.numeric_std.all` of its own, so the sim copy must
+-- supply it via this redirect. Operators verified present after resync:
+-- slv+/-integer, slv</>=integer (here), unsigned subtype + conversion
+-- (here), and the bufferedUART/sd_controller uses -- no additions to
+-- this package body were required.
 -- ============================================================================
 
 library ieee;
