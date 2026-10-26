@@ -65,6 +65,12 @@ register map** (D-29), panel engine as a **micro-op sequencer** (D-30),
 **serial escape = one specific character, gated by OSD switch `OM`**
 (D-14 rev), **RAM-only Forth, no flash emulation** (D-32), profile-7
 hardware interlock (D-31), **P1 split into P1a "first light" / P1b**.
+**R16** (2026-10-26, P0 kickoff): toolchain installed + smoke-tested; GHDL
+sim resynced to a green baseline; **language seam decided** — Z80-side
+logic in VHDL, RV-side in Verilog (D-33); **gracilis `ADDR_WIDTH=30`**
+(D-34); **Mecrisp-Quintus 1.1.2a source in-tree at `~/mecrisp-quintus`**
+(GPL-3.0+ compliance path closed, H-3); capture-chain facts corrected
+(292/384 used).
 
 Tags: `[verified]` (re-confirmed against source; anchors are hints — grep the
 name) · `[decided]` (locked, see §2) · `[proposed]` (review target) ·
@@ -180,11 +186,13 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-25 | `[decided, new R15]` **Instruction-boundary parking.** The T80 grants BUSRQ at *any* M-cycle `T_Res` (`T80.vhd:~1033-1042`), so a raw BUSRQ can freeze mid-instruction (PC/temporaries half-advanced). The D-08 `T80s` mod additionally exports **`insn_end`** (last M-cycle of the instruction ∧ `T_Res`); the bridge passes park requests (FW hold, panel STOP, STEP INSN, escape, BP) to `BUSRQ_n` only aligned to `insn_end`. Rules: **prefixes are not boundaries** (no park between DD/FD/CB/ED and the opcode they modify); HALT state parks anywhere (PC = HALT+1); INT/NMI acknowledge completes before park; EI's one-instruction shadow honoured; block instructions park per iteration (PC re-points at the instruction). M-cycle/T-state step modes deliberately park off-boundary. `STATUS.at_boundary` tags every park; register snapshots are architectural only when set (`R` warns otherwise). **Breakpoints**: stop-*before*-execute via **self-loop injection** — on BP M1 match, the trampoline data mux feeds `18 FE` (`JR $`) in place of the opcode/displacement fetches, then park at its `insn_end` ⇒ PC = BP address, flags/regs untouched, only R +1 (already-accepted drift). Evaluation in sim (OQ-23). | raw BUSRQ park (v0.1–v1.0: unsafe); stop-after-BP-instruction (reports wrong PC) |
 | D-26 | `[decided, new R15]` **Single `z80_bus_mux`** at the T80 output boundary, one select, flips only with `BusAck` confirmed (P-A): address, data-out, `MREQ/IORQ/RD/WR`, **`MRD_T1`** (the SDRAM speculative-read trigger, `MicrocomputerZ80CPM.vhd:~1090`), **`M1_n`** (capture chain `:~764`), plus engine-side **sensing of `cpu_wait_n`** (MMU + SDRAM waits — the parked T80 no longer consumes them). The engine emits **cycle-faithful Z80 bus cycles** on `cpu_cen` (T1–T3 + Tw, `MRD_T1` timing as T80s), so every peripheral and the SDRAM client FSM see "a Z80"; guest-path tests are reused for engine cycles. | per-signal ad-hoc muxes; engine-native (non-Z80) strobe timing |
 | D-27 | `[decided, new R15]` **Polled v1 firmware.** Every bridge event is a **sticky status bit** (W1C), so FW is correct by polling its main loop; the IRQ line is an optional later optimization. Makes the two P0 cores FW-interchangeable despite their different IRQ models, and keeps interrupt races out of the debugger. | IRQ-driven dispatch as baseline (v0.3 §5.5) |
-| D-28 | `[decided, new R15]` **Two-level simulation**: (1) **SSP-only, Verilator** — core + ROM/DTCM + UART + bridge + engine against a behavioural Z80-bus model (BFM); fast enough for the Mecrisp REPL (10⁷–10⁸ cycles); (2) **integration, Questa-Intel Starter or GHDL** — real T80/MMU/SDRAM client FSM (VHDL) for D-25/D-26, wait handling, R-21 pass-through. Both under `sim/` with a Makefile; the §13 TB names become runnable targets. Set up in P0. | single-simulator flow (Verilator can't read VHDL; mixed-language Icarus too slow for Mecrisp) |
+| D-28 | `[decided, new R15; R16 amendment]` **Two-level simulation**: (1) **SSP-only, Verilator** — core + ROM/DTCM + UART + bridge + engine against a behavioural Z80-bus model (BFM); fast enough for the Mecrisp REPL (10⁷–10⁸ cycles); (2) **integration, GHDL** *(R16: GHDL is installed and the established flow with a green baseline — Questa dropped)* — real T80/MMU/SDRAM client FSM (VHDL) for D-25/D-26, wait handling, R-21 pass-through. Integration benches follow the existing `sim/run_*.sh` + `sim/tb_*.vhd` pattern (`run_ssp_*.sh`); Verilator work in `sim/ssp/`; shared Makefile; the §13 TB names become runnable targets. Set up in P0. | single-simulator flow (Verilator can't read VHDL; mixed-language Icarus too slow for Mecrisp); Questa (unneeded — GHDL covers VHDL) |
 | D-29 | `[decided, new R15]` **Single-source register map**: `ssp/regs/ssp_regs.csv` (offset, name, access, fields, reset, doc) → generator `tools/ssp_regmap.py` emits `ssp_regs.vh` (RTL), `ssp-regs.fs` (Forth constants), and the §6 Markdown table; TBs include the `.vh`. Hand-editing generated outputs forbidden. | hand-maintained parallel copies |
 | D-30 | `[decided, new R15]` **Panel engine = micro-op sequencer.** Primitives `LOAD_AR, LOAD_PR, MEM_RD, MEM_WR, IO_RD, IO_WR, INC_AR, STEP, RESET_VENT, INJECT, TAP_RD, PAGE_SET`; each panel op (EXAM-NEXT, DEP-NEXT, START-AT-A, MMU-DEPOSIT two-OUT, …) is a short sequence in a small table; FW `MEM_CTL` kicks enter the **same queue**. Arbitration is **per macro** (atomic — no FW cycle between MMU-DEPOSIT's two OUTs); panel wins simultaneity. | hand-coded per-op FSM states |
 | D-31 | `[decided, new R15]` **Profile-7 hardware interlock**: guest `$A0–$A7` writes targeting LED profile 7 are dropped in hardware; profile 7 is SSP-owned (supersedes §11.5's by-convention rule). | convention-only (v0.3) |
 | D-32 | `[decided, new R15]` **RAM-only Forth — no flash emulation.** Mecrisp-Quintus runs `compiletoram` only: kernel executes from the OSD-loaded MROM image (RV-read-only, D-10); all compiled words live in DTCM; flash-write primitives stubbed (error); persistence = MROM image + MPKG packs re-`EVAL`'d at boot (D-21); OQ-13 stays deferred. | RV-writable upper-ROM `compiletoflash` region (offered R15, declined: unnecessary at this stage) |
+| D-33 | `[decided, new R16]` **Language seam (H-4).** Simulation has no mixed-language path (GHDL reads VHDL only; Verilator reads Verilog only; no `ghdl-yosys-plugin` packaged). Rule: **Z80-side SSP logic = VHDL** — `z80_bus_mux`, boundary-park logic, escape recognizer, `fp_capture`, `fp_engine`, `ssp_mem_client`, and the bridge **client side** (the ssp_bridge port that crosses the seam) live at the CPM-core boundary in VHDL, testable in GHDL against the real T80/MMU/SDRAM FSM. **RV-side = Verilog** — vendored cores, MROM/DTCM, decoder, `ssp_uart`, register file. The seam is a plain signal bundle across the `ssp_top`/CPM boundary (register strobes + data + event bits), crossed in **Verilog at `ssp_top`** by instantiating the VHDL units by entity (Quartus handles the mix; simulation stubs the far side at each level). | mixed-language sim hosts; all-VHDL (costs the vendored Verilog cores' zero-touch import); all-Verilog (costs the proven GHDL T80/SDRAM benches) |
+| D-34 | `[decided, new R16]` **gracilis `ADDR_WIDTH = 30`** in all our instances (default 24 would alias the §5.2 map: DTCM `0x1000_0000`/bridge `0x2000_0000` fold toward 0). §5.2 map unchanged. Parameterized at instantiation; verified in the P0 stub-SoC decode test. | compacting the map into 24 bits (FemtoSoC style — rejected: the 30/32-bit map is core-neutral and already documented) |
 | D-21 | `[decided, session R1]` **Code is data lifecycle**: monitor boots before/independent of guest image; ROM image (index 6) and FORTH pack (index 7: text source staged in DTCM, auto-`EVAL`'d at boot, magic+length trailer; position-independent, survives kernel rebuilds) both OSD-loadable; serial upload path (P2) reuses the same "eval a buffer" primitive. No NVRAM machinery in v1. | refit-per-change; battery-backed dict (deferred OQ-13) |
 | D-22 | `[decided, session R5]` Addressing is **modal** on both surfaces: logical (MMU-translated, 16-bit) ⟷ physical (28-bit). FW keeps a live MMU shadow from the `mmu_frame` HW tap (state-neutral) and can translate/report either view; serial mode command (`PHY`/`LOG`); panel physical mode = **S31 = '1'** (§11.2). | single addressing mode |
 | D-23 | `[decided, new v0.5 (R8)]` Panel UX package (full spec `SSP_PANEL_UX.md`): sovereignty-with-`PANEL_LOCK` (G-8) · S28=**BP ARM** (LOAD-ADDR also sets BP at encoder-cursor slot), S29=**FREEZE**, S30=**START-AT-A** (hardware trampoline start, firmware-free — closes D-07 panel gap) · per-page lamp remap with pinned chrome + page-ID lamps (G-9; cold default = identity ⇒ CLASSIC) · encoder: hold-cursor after commit, rapid double-press zeroes (no commit) · hybrid `*` commentary · colour conventions · WDG-dead ⇒ page forced to CLASSIC, lock cleared. | static-map/paged-content (rejected R8 in favour of per-page layout); unconditional RUN; zero-after-commit; queue-only or silent commentary |
@@ -271,7 +279,7 @@ numbers are hints — grep the name.
 | No boot ROM / `n_RomActive` (removed); CPU held in reset until HPS BIN load — trampoline sequencing only interacts with the reset *hold* | `REQUIREMENTS.md:~598-601`; `MicrocomputerZ80CPM.vhd:~98, 143, 337-343, 385` |
 | I/O windows in use: $70-71, $80-83, $88-97, $A0-A7, $B0-BF, $C0-CF, $FF ⇒ $D0-D3 (now mailbox, D-04), rest of $D0–$DF/$E0–$EF/$F0–$FE free. **$FF read path currently returns `fpLatchDataOut`** (`cpuDataIn` mux `:~879`) — repurposed to the sense top byte per D-05/R7 (read-safe: no existing guest reader, verified); `$FF` **write** latch behavior preserved | decode `MicrocomputerZ80CPM.vhd:~841-850` |
 | SDRAM `sdram_32r8w`: refresh > **cpu** > **vid**; vid port read-only (no DQM), 16-bit granularity (`A0` lane on cpu path); ack/ready mirrors cpu port; existing clk_sys↔clk_ram client-FSM pattern to copy | `sdram2.sv:~300-359, 67-76, 321-334`; `MrZ80.sv:~261-326`; vid tied off `MrZ80.sv:~354-356` |
-| Capture chain **output-only**, `CHAIN_BITS => 384`, head 24 bits = `cpuAddress & cpuDataIn` — ample headroom for the 64-bit monitor export (§11.4) `[new v0.3]`; no switch-input HDL yet (OQ-09) | `MicrocomputerZ80CPM.vhd:~650, 713`; `Hardware/README.md:~28` |
+| Capture chain **output-only**, `CHAIN_BITS => 384`, **292 bits in use** — map per `SIGNAL-CAPTURES.md` (authoritative; update it in the same change as any chain edit); the 64-bit SSP export fits at **292–355**, 28 spare (R15/H-5, R16). No switch-input HDL yet (OQ-09) | `MicrocomputerZ80CPM.vhd:~800`; `SIGNAL-CAPTURES.md`; `Hardware/README.md:~28` |
 | `FP_RAM_Store`: 8 profiles × (color 48b / map 8b) + global fb bit; Port A = single R/W owner (today Z80 `$A0–$A7`), Port B = refresh controller; `pri_ram` profile-file shadow precedent; OSD profile override `fp_osd_profile` | `FP_RAM_Store.vhd:~45-80`; `MrZ80.sv:~981-985` |
 | SNAC io0/io1 = RX/TX (existing mux `status[12]`), io2/io3 RTS/CTS, io6 = WS2812, **io4/io5 free both directions** (SW[1] I2S caveat); open-drain mechanics | `MrZ80.sv:~212-221, 698-750`; `sys/sys_top.v:1634-1640` |
 | CONF_STR bits in use 0, 9–11, 12, 13, **14 (`OE` flow — bit14 not free)**, 15, 16–19; download idx 1/2/5 used, 3/4 reserved ⇒ **6/7 allocate for MROM/MPKG (D-21)**; `OK`=bit20 valid | `MrZ80.sv:~382-408` |
@@ -328,10 +336,10 @@ numbers are hints — grep the name.
 | `ssp/rtl/ssp_uart.v` | 8N1 UART, divider select from `O9B` table index (session R4, §5.3); RX FIFO (8) `[proposed]`; **escape-character recognizer** on the SNAC RX stream (`ESC_CHAR`, OSD `OM`-gated, D-14 rev R15) → boundary park + console hand-over; sticky `rx`/`esc` status bits |
 | `ssp/rtl/z80_bus_mux.vhd` | `[new R15]` D-26 single mux at the T80 output boundary (A, D-out, strobes, `MRD_T1`, `M1_n`; `cpu_wait_n` sense back to the sequencer); select BusAck-gated (P-A); lives at the CPM-core boundary (VHDL, beside the T80) |
 | `ssp/regs/ssp_regs.csv` + `tools/ssp_regmap.py` | `[new R15]` D-29 single-source register map → `ssp_regs.vh`, `ssp-regs.fs`, §6 Markdown table |
-| `sim/` | `[new R15]` D-28: `sim/ssp/` (Verilator: cores + bridge + BFM, Mecrisp REPL) and `sim/integ/` (Questa-Intel Starter / GHDL: T80 + MMU + SDRAM client FSM + mux); Makefile targets = §13 TB names |
-| `ssp/rtl/fp_capture.v` | 68-bit shift-in, debounce (4-sample ~2 ms), quadrature/press decode, menu-counter (+commit latch), frame-error detect; single source of truth feeding `fp_engine`, bridge mirror regs, **and** the guest sense-port mux ($FC–$FF/$FB, §11.6) |
-| `ssp/rtl/fp_engine.v` | **Hardware classic-console executor** (D-18, §11.3): SPDT command decode → **macro index into the shared micro-op sequencer** (D-30, R15); AR/DR/MD/PR state, auto-increment, lamp-state outputs; event+log to FW |
-| `ssp/rtl/ssp_mem_client.v` | Parked physical SDRAM/BRAM client (D-15-P): drives existing client interface + BRAM mux while guest-parked ∧ primary client idle; native DQM byte lanes |
+| `sim/` | `[new R15; R16 pattern]` D-28: `sim/ssp/` (Verilator: cores + bridge + BFM, Mecrisp REPL); integration = new `sim/run_ssp_*.sh` + `sim/tb_ssp_*.vhd` in the existing GHDL flow (T80 + MMU + SDRAM client FSM + VHDL-side units per D-33); Makefile targets = §13 TB names |
+| `ssp/rtl/fp_capture.vhd` | `[R16: VHDL — D-33]` 68-bit shift-in, debounce (4-sample ~2 ms), quadrature/press decode, menu-counter (+commit latch), frame-error detect; single source of truth feeding `fp_engine`, bridge mirror regs, **and** the guest sense-port mux ($FC–$FF/$FB, §11.6) |
+| `ssp/rtl/fp_engine.vhd` | `[R16: VHDL — D-33]` **Hardware classic-console executor** (D-18, §11.3): SPDT command decode → **macro index into the shared micro-op sequencer** (D-30, R15); AR/DR/MD/PR state, auto-increment, lamp-state outputs; event+log to FW |
+| `ssp/rtl/ssp_mem_client.vhd` | `[R16: VHDL — D-33]` Parked physical SDRAM/BRAM client (D-15-P): drives existing client interface + BRAM mux while guest-parked ∧ primary client idle; native DQM byte lanes |
 | `ssp/rtl/ssp_sd.v` | (P2) vid-port background READ client; clk_ram CDC per existing pattern |
 | `ssp/fw/*` | Mecrisp-Quintus build: `crt0.S`, linker, kernel glue, ODT app sources → `forth_rom.hex` (factory ROM init image) + pack files |
 
@@ -364,6 +372,8 @@ external IRQ input wired (level from `|IRQ_PENDING`) but **unused by v1 FW**
 contract, D-11) · reset = `locked ∧ core_reset ∧ !ssp_subsystem_reset`
 (monitor up **before** any guest image). No JTAG (UART *is* the debugger).
 Core = P0 bake-off pick (picorv32 `COMPRESSED_ISA` or gracilis, §5.6/§5.8).
+gracilis instances set `ADDR_WIDTH=30` (D-34). RV-side RTL is Verilog,
+Z80-side VHDL (D-33).
 
 ### 5.2 Memory map
 | Range | Content |
@@ -400,6 +410,23 @@ owns it.
   or serial re-upload; "workstation" persistence ideas → OQ-13 (deferred).
 
 ### 5.5 Firmware structure (Mecrisp-Quintus)
+
+**Reference distribution `[R16, H-3 closed]:** Mecrisp-Quintus **1.1.2a**
+source is held in-tree at `~/mecrisp-quintus` (GPL-3.0-or-later — the
+compliance vehicle for the shipped `forth_rom.hex`). Directly reusable
+material: `mecrisp-quintus-source/` (full core as `.s` sections +
+`common/` tools incl. RV32IMC disassembler/assembler), the per-target
+pattern `mecrisp-quintus-<t>.s` + `memmap` + `Makefile` + `terminal.s`
+(→ our `ssp/fw/` skeleton mirrors `hx1k/`), `common-verilog/` (FemtoRV
+variants incl. `femtorv32_gracilis.v` — whitespace-only diff vs our
+vendored learn-fpga copy — plus `uart.v`, `MappedSPIFlash.v`, `celement.v`
+= serial-CPU element for lamp-style arrays), `release/quintusemu-*` host
+emulators for running `.bin` images without hardware, and
+`linux-rv32imc/` native runtimes. FW glue: `interrupt-femtorv.s` shows
+the gracilis IRQ idiom (unused in v1, D-27). Our builds use
+`riscv64-unknown-elf-*` with the §5.8 march flags (the release Makefiles
+cite older `riscv64-linux-gnu` invocations — adapt, don't copy verbatim).
+
 `crt0.S` trap vector → Forth dispatcher; stack-register convention verified
 against the chosen port during P0 (was OQ-09b — P0 checklist item, carried).
 Glue primitives: `serial-key?`, `serial-key`, `serial-emit`, `milliseconds`
@@ -652,13 +679,19 @@ Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 **R15 (D-29):** this table becomes a *generated* artefact of
 `ssp/regs/ssp_regs.csv` once RTL starts; until then it is the seed for that
 CSV. All event bits are **sticky W1C** so polled FW is correct (D-27).
+**R16:** the CSV now exists — `ssp/regs/ssp_regs.csv` is **canonical**;
+generated outputs are `ssp/rtl/ssp_regs.vh`, `ssp/rtl/ssp_regs_pkg.vhd`
+(VHDL side, D-33) and `ssp/fw/ssp-regs.fs`; check with
+`make -C sim regmap-check`. One map addition (H-8): `STATUS` gains
+**`rv_trap`** — picorv32's `trap` output (core halted on
+illegal/misaligned access) as a "SSP FW crashed" chrome/WDG indicator.
 
 | Off | Reg | Acc | Description |
 |---|---|---|---|
 | 0x00 | `ID` | R | `0x4D52_5A03` rev-stamped |
 | 0x04 | `CTRL` | RW | bit0 `z_rst_n` · bit1 `z_busreq_n`(FW hold) · bit2 `z_wait_n` · bit3 `cen_gate` · bit4 `tramp_en` · bit5 `esc_break_en` (reset 1; effective only with OSD `OM` On — FW can disable, never override the OSD, D-14) · bit8 `console_own` · bit9 `panel_lock` (G-8: gates panel RUN/START only; auto-clears on WDG_PARK expiry/escape/OK-off/MROM mount); **forced inactive when `!ssp_active`**; park sources = FW hold ∨ engine stop-latch (D-13) |
 | 0x08 | `TRAMP_ADDR` | RW | `G aaaa`/START target |
-| 0x0C | `STATUS` | R | `BusAck, HALT_n, M1_n, MC, TS, ALT (new P1), cpu_running, ssp_active, s32, fw_console_ok, eng_stop_latch, seq_busy, wdg_dead`, **`at_boundary`** (R15/D-25: park landed on an instruction boundary ⇒ snapshot architectural), **`osd_esc_en`** (live OSD `OM`) |
+| 0x0C | `STATUS` | R | `BusAck, HALT_n, M1_n, MC, TS, ALT (new P1), cpu_running, ssp_active, s32, fw_console_ok, eng_stop_latch, seq_busy, wdg_dead`, **`at_boundary`** (R15/D-25: park landed on an instruction boundary ⇒ snapshot architectural), **`osd_esc_en`** (live OSD `OM`), **`rv_trap`** (R16/H-8: picorv32 halted on illegal/misaligned access — "SSP FW crashed") |
 | 0x10 | `HALT_REASON` | R/clr | §10.4 codes (+`wdg`) |
 | 0x14 | `PC_LATCH` | R | match/park PC |
 | 0x18–0x30 | `SNAP_REG0..6` | R | `REG` frozen at park/match instant (R-snapshot discipline) |
@@ -1102,7 +1135,7 @@ OQ-18)**.
 
 | Phase | Scope | Exit |
 |---|---|---|
-| **P0 — two-core bake-off (R14)** | Vendored `picorv32.v` (`COMPRESSED_ISA`) **and** `femtorv32_gracilis.v` (+`utils.v`); Quartus 17.0 synth on `5CSEBA6U23I7` for **both**; **Mecrisp REPL live in sim and on the stub SoC** (UART console, per core); toolchain package verified (`riscv64-unknown-elf`, `-print-multi-lib`, `-march=rv32imc_zicsr_zifencei -mabi=ilp32`); downloadable-ROM write path sim; `fit.rpt` headroom recorded ×2; crt0 convention verified; §5.8 verify items closed (bridge `TICK_US` timer — common to both; ~~IRQ glue smoke~~ moot under polled FW, D-27; ~~learn-fpga license~~ closed). **R15 additions:** **simulation infrastructure** (D-28: `sim/ssp` Verilator + `sim/integ` Questa-Intel/GHDL, Makefile) — Mecrisp REPL in Verilator per core; **register-map generator** (D-29: CSV → `.vh`/`.fs`/Markdown, `make regmap-check`); Mecrisp RAM-only build confirmed (D-32: `compiletoram`, flash primitives stubbed). Optional: riscv-formal on picorv32 (eqy container, off critical path). **VexRiscv/vexgen shelved** (§5.7; reopen = OQ-21) | clean synth ×2; headroom logged; REPL live on harness; **one core selected per §5.8 table**; sim flows + regmap generator runnable; no day-to-day container dependency |
+| **P0 — two-core bake-off (R14)** | Vendored `picorv32.v` (`COMPRESSED_ISA`) **and** `femtorv32_gracilis.v` (+`utils.v`); Quartus 17.0 synth on `5CSEBA6U23I7` for **both**; **Mecrisp REPL live in sim and on the stub SoC** (UART console, per core); toolchain package verified (`riscv64-unknown-elf`, `-print-multi-lib`, `-march=rv32imc_zicsr_zifencei -mabi=ilp32`); downloadable-ROM write path sim; `fit.rpt` headroom recorded ×2; crt0 convention verified; §5.8 verify items closed (bridge `TICK_US` timer — common to both; ~~IRQ glue smoke~~ moot under polled FW, D-27; ~~learn-fpga license~~ closed). **R15 additions:** **simulation infrastructure** (D-28: `sim/ssp` Verilator + GHDL integration benches `sim/run_ssp_*.sh`, Makefile) — Mecrisp REPL in Verilator per core; **register-map generator** (D-29: CSV → `.vh`/`.fs`/Markdown, `make regmap-check`); Mecrisp RAM-only build confirmed (D-32: `compiletoram`, flash primitives stubbed). Optional: riscv-formal on picorv32 (eqy container, off critical path). **VexRiscv/vexgen shelved** (§5.7; reopen = OQ-21) | clean synth ×2; headroom logged; REPL live on harness; **one core selected per §5.8 table**; sim flows + regmap generator runnable; no day-to-day container dependency |
 | **P1a — "first light"** `[new R15]` | Minimum vertical slice that exercises the riskiest RTL on real hardware: bridge `ID/CTRL/STATUS/TICK_US/ESC_CHAR/IRQ_PENDING/MEM_CTL/MEM_ADDR/MEM_DATA/SNAP_REG`, **`insn_end` export + boundary parking** (D-25), **`z80_bus_mux` + cycle-faithful engine (logical mem + I/O)** (D-26), micro-op sequencer core (D-30, FW kicks only), `ssp_uart` + **OSD `OM` escape recognizer** (D-14, OQ-22 resolved), SNAC console mux; FW (polled, D-27): `E D G H R X` + `ESC` | R-40, R-42, R-43, R-45, R-46, R-23, R-25 + the R-01…R-09 subset covering halt/examine/deposit/go green; **on hardware**: escape into the SSP, examine/deposit guest memory, resume — with `OM` Off proven bit-transparent |
 | **P1b — console complete** | Remaining P1 scope: `MD/AR/DR/PR` shared regs, `MAP0..3`, `MBX`, WDG×2, STEP assist (INSN/MCYCLE/TSTATE), reset stretcher, trampoline / `G aaaa`, **`ssp_mem_client`** (physical P/W), MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export completion; FW: ODT skin + `S T K I O A W V ? U F ODT PHY LOG MB` | rest of R-01…R-09, R-12, R-19…R-22, R-24, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired. **Bridge board (OQ-09) designed in parallel with P1a/P1b** |
 | **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`SSP_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, panel macros on the D-30 sequencer, profile-7 interlock (D-31, R-44), BP/`C` with **self-loop stop-before-execute** (D-25, R-41/OQ-23) (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `ssp_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
@@ -1341,3 +1374,41 @@ fallback text; §5.6→5.7→5.8 order restored; `monitor/rtl` and `tb_mon_*`
 rename residue; `ssp_uart` row mis-cited D-22; §3 `clk_ram` corrected to
 100 MHz live; R11/R14 IRQ text kept with explicit errata markers (log
 history preserved, not rewritten).
+
+R16 **P0 kickoff — toolchain in, sim baseline green, seam + map decisions
+(2026-10-26)**: owner "proceed as recommended" + pointer to new local
+repo `~/mecrisp-quintus`.
+· **Toolset installed** (approved): gcc-riscv64-unknown-elf 15.3.0
+(binutils 2.47), verilator 5.048, iverilog 13.0, yosys 0.66, gtkwave
+3.3.127. Smoke test passed: `-march=rv32imc_zicsr_zifencei
+-mabi=ilp32 -nostdlib` → RVC ELF, `csrr mcycle` OK. Gotchas: distro
+default ldscript = picolibc flash/ram (`-nostdlib` alone still uses it)
+⇒ **P0 ships its own linker script** for the §5.2 map; `rv32imc` links
+the `rv32imac` multilib (harmless, freestanding).
+· **H-1 closed** (commit `8b9f192`): top-level sim copy resynced
+(capture-chain + control-signal era); canonical redirect **pair** restored
+(`numeric_std.all` + `sim_compat_pkg.all` — the real top has no
+`numeric_std` of its own). Green baseline re-verified: `check_sync` ×3,
+`tb_cpuregs` 8/8, `tb_frontpanel` PASS (292-bit chain simulates),
+`tb_inir_race` known-good partial per `sim/STATUS.md`.
+· **D-33 language seam**: Z80-side units VHDL (GHDL-testable against real
+T80/MMU/SDRAM FSM), RV-side Verilog; seam crossed at `ssp_top`
+(Quartus mixes; each sim level stubs the far side). Module table
+suffixes updated.
+· **D-34**: gracilis `ADDR_WIDTH=30` at instantiation (default 24 aliases
+the §5.2 map); map unchanged.
+· **H-3 closed**: Mecrisp-Quintus **1.1.2a** in-tree at
+`~/mecrisp-quintus` (GPL-3.0+ = compliance vehicle for the factory hex).
+Assets noted in §5.5: per-target `.s`+`memmap`+Makefile pattern (mirrors
+into `ssp/fw/`), `common-verilog/` (gracilis copy = whitespace-only diff
+vs vendored; `uart.v`, `MappedSPIFlash.v`, `celement.v`), `release/`
+host emulators (`quintusemu-*`), `common/` RV32IMC disassembler/
+assembler tools, `linux-rv32imc/` native runtime.
+· **H-7**: D-28 amended — GHDL is the integration simulator (Questa
+dropped); integration benches follow the `sim/run_*.sh` pattern.
+· **H-8**: `STATUS.rv_trap` added (picorv32 `trap` ⇒ "FW crashed" bit).
+· **H-5/H-6**: §3 chain fact corrected to 292/384 with `SIGNAL-CAPTURES.md`
+as authority; SSP export allocated 292–355 (map entry lands with P2 chain
+edit).
+· **Next**: register-map generator (D-29) → stub SoC per core (`sim/ssp/`,
+Verilator) → Mecrisp REPL bring-up using the in-tree distribution.
