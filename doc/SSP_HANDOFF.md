@@ -62,9 +62,9 @@ knob on picorv32 stub models D-36 launch+1 fabric). Gracilis wins every op
 111/140; boot->banner 196k vs 252k/322k cyc). Table + method:
 SSP_DESIGN 5.8.2; FW observations (dict-lookup cost, RECURSE-fold quirk,
 variable-via-CREATE) 5.8.3. |
-| Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values), **OQ-20 core pick (evidence complete: area+timing R21 §5.8, performance R22 §5.8.2 -- gracilis wins every op; residual discriminator = trust/pedigree)**. OQ-22/OQ-23 are settled by simulation, not by the owner. **D-36 (RAM IP) taken R21** |
+| Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values). **OQ-20 CLOSED R23 -- owner selected FemtoRV32-gracilis (D-37)**; **D-36 (RAM IP) taken R21**. OQ-22/OQ-23 are settled by simulation, not by the owner |
 
-Commit trail for these sessions (newest first): **R22 cycle-level perf benchmarks (gracilis wins all ops) (this commit)** · `da181a3` R21 bake-off fit.rpt ×2 + explicit-RAM-IP fabric / D-36 · `c84da00` R20 gracilis twin stub + bake-off sim lane complete · `ef9867d` R19 Verilator stub SoC + authoritative dict pipeline · **R18 compiletoflash dict-build pipeline (qemu)** · `1d0a502` postfix-`CONSTANT` fix · **R17 flash-free Mecrisp port + qemu smoke** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
+Commit trail for these sessions (newest first): **R23 OQ-20 closed -- gracilis selected (D-37) (this commit)** · `864903c` R22 cycle-level perf benchmarks (gracilis wins all ops) · `da181a3` R21 bake-off fit.rpt ×2 + explicit-RAM-IP fabric / D-36 · `c84da00` R20 gracilis twin stub + bake-off sim lane complete · `ef9867d` R19 Verilator stub SoC + authoritative dict pipeline · **R18 compiletoflash dict-build pipeline (qemu)** · `1d0a502` postfix-`CONSTANT` fix · **R17 flash-free Mecrisp port + qemu smoke** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
 (H-1 closed) · `2ed69c3` hand-off doc · `e41d5fc` R15 review ·
 `77208cd` cores vendored · `5e8ae1a` R14 bake-off · `d964f59` R13 ODT→SSP
 rename · `022bb95` R12 · `b86a21d` R11.

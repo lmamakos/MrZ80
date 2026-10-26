@@ -1,5 +1,11 @@
 # bakeoff/ — OQ-20 two-core bake-off synthesis projects (throwaway)
 
+**VERDICT (R23, owner ruling — D-37): FemtoRV32-gracilis selected.**
+gracilis won the performance axis outright (R22 §5.8.2: every op — loops,
+calls, stack ops, MUL, memory — at equal fabric latency), is −24 % ALM
+(R21), and carries Mecrisp-co-design lineage; picorv32 retained as
+documented fallback.
+
 Purpose: apples-to-apples synthesis data for the P0 core selection decision
 (`doc/SSP_DESIGN.md` §5.8 criteria, OQ-20): picorv32 vs gracilis (FemtoRV32)
 on `5CSEBA6U23I7`, both wrapped in an **identical fabric** (ROM/DTCM arrays +
