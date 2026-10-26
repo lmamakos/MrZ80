@@ -815,6 +815,72 @@ single-cycle-latency memories either way; `sim/ssp/` twins keep behavioral
 memories (gracilis lane protocol-identical; picorv32 lane FW is
 handshake-driven so a wait state is invisible to FW).
 
+### 5.8.2 Cycle-level performance benchmarks (R22, `sim/ssp` Verilator lanes)
+
+Owner-directed follow-up to the fit numbers: identical Mecrisp FW image run on
+both stub SoCs, timed at the console with EMIT-marker brackets and
+TXTRACE cycle stamps (`sim/ssp/bench_stub.sh`; lanes
+`make -C sim bench-stub` / `bench-stub-fab` / `bench-gracilis`).
+Method (R22 refinements banked in the script header):
+
+* production-shape workloads only — resident words in resident loops;
+  interactive dictionary token lookup (~10^5 cyc, see §5.8.3) sits outside
+  the brackets; no `RECURSE` (rare in production Forth, owner note);
+* each loop timed at N=200000 and N=100000 (equal digit counts) — the
+  difference divided by 100000 cancels every fixed FW cost (parse, echo,
+  `ok.`), leaving pure per-iteration core execution (results are exact
+  integers — the cancellation is clean);
+* `+FABWAIT` knob added to the picorv32 stub models the D-36 explicit-IP
+  fabric (launch+1 on every access incl. instruction fetch). The bare
+  picorv32 stub is zero-wait and therefore *flattering*; the gracilis stub
+  has launch+1 natively (`rstrb`), so **picorv32-fab vs gracilis is the
+  silicon-predictive pairing**.
+
+Measured, core cycles/iteration (all goldens passed: L3/L4/L5/L7 all reduce
+to Σ(0..N-1) mod 2^32):
+
+| op (isolated by ladder delta) | picorv32 zero-wait | picorv32 +FABWAIT (silicon) | gracilis (native launch+1) |
+|---|---|---|---|
+| bare `DO…LOOP` control | 10 | 13 | **8** |
+| near-no-op subroutine call | 7 | 9 | **4** |
+| marginal call (×3 check) | 8.3 | 10.3 | **5.3** |
+| `I` fetch + accumulate | 22 | 27 | **16** |
+| stack-op unit call (`DUP DUP 7 + + DROP`) | 45 | 56 | **34** |
+| MUL replaces ADD in unit | 41 | 42 | **3** |
+| `VARIABLE` store + retrieve | 111 | 140 | **82** |
+| boot → banner | 252,422 | 322,305 | **195,756** |
+
+Read: **gracilis wins every op against both picorv32 configurations** —
+~1.25–1.75× on loop/call/stack/memory ops while already paying the fabric
+latency picorv32 doesn't in the bare stub; at equal-fabric conditions
+picorv32-fab vs gracilis the gap is 1.6–2.3×. The standouts: FemtoRV's
+hardware multiplier (+3 cyc vs picorv32's +41 — consistent with the
+Mecrisp-co-designed datapath; picorv32's +41 deserves a config follow-up
+but is directionally irrelevant: even zero-wait picorv32 loses 13.7×) and
+native launch+1 costing gracilis ~0 while costing picorv32 +30 % per loop.
+Combined with R21 (gracilis −24 % ALM/−711 regs at 50 MHz-equivalent
+timing margin), **the performance axis of OQ-20 now favors gracilis
+decisively**; the residual discriminator is trust/pedigree (§5.8 weights).
+Caveats: Verilator functional sim (cycle-exact RTL, no gate delays);
+`+FABWAIT` models D-36 IP read latency only (no future peripheral skew);
+fmax-adjusted absolute throughput is a wash at the 50 MHz budget — both
+cores run the same FW comfortably.
+
+### 5.8.3 FW observations from benchmarking (R22, informational)
+
+* Interactive token lookup costs ~10^5 core cycles per word reference on the
+  current kernel (O(dictionary) search, grows with dictionary size) —
+  dominates REPL round-trips (~0.3 ms/op at 50 MHz: acceptable for a
+  support console). Excluded from core scoring (owner: production code
+  does not re-lookup).
+* Kernel quirk banked: `RECURSE` definitions whose IF-condition uses a
+  constant-folded comparison (`DUP 1 <= IF`, `DUP 2 < IF`, `DUP 0= IF`)
+  produce wrong results (`(n-1)!` or 0) in this kernel — investigate
+  constant-fold/RECURSE interaction at FW level before shipping any
+  recursive FW word; non-recursive FW unaffected (all R17–R20 suites pass).
+* `variable` is not in the kernel (it lives in Mecrisp `compiler-flash.s`,
+  excluded by D-32) — provide via `CREATE` (proven pattern in bench).
+
 ---
 
 ## 6. Debug Bridge (`ssp_bridge`) — MMIO map (v0.3)
@@ -1269,7 +1335,7 @@ OQ-18)**.
 | OQ-11 | vid-port **writes** revisit gate (D-15-B): after R-26 passes with reads; scope = `sdram2.sv` DQM mod; alternative = physical writes stay parked-only forever | revisit P3+ |
 | OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 54–67) future use; **MMU-switch (D-24) silkscreen labels + 9th-SPDT mounting; live-re-query-on-`S1:S0` policy; deposit valid-bit encoding check vs `MMU.vhd`** | board design time; `SSP_PANEL_UX.md` §11 checklist |
 | OQ-19 | Milestone-B scheduling: formal `sd_arb` extraction approved (R9) but unscheduled — proposal: dedicated refactor milestone after P2 green, before P3 polish work; confirm at P3 planning | `SDRAM_REWORK_PLAN.md` §6/§10 |
-| OQ-20 | **P0 core bake-off** (R14): **PicoRV32 (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** — same wrapper, both vendored (2026-10-26); decide at P0 exit on the §5.8 criteria table (trust/pedigree weighted highest; optional riscv-formal eqy-container run as evidence; ~~license check~~ closed — ISC / BSD-3; ~~`fit.rpt` ×2~~ **done R21 §5.8: both pass 50 MHz, gracilis −24 % ALM, picorv32 +11 % fmax, neither disqualified**; ~~time-to-REPL in Verilator~~ **done R19/R20: both boot identical FW hex, dict/merged images byte-identical**) | P0, critical path — evidence complete; residual discriminator = trust/pedigree (+ bus-fit nuance §5.8.1); polled FW (D-27) ⇒ only `crt0.S` differs ⇒ late reversibility |
+| OQ-20 | **P0 core bake-off** (R14): **PicoRV32 (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** — same wrapper, both vendored (2026-10-26); decide at P0 exit on the §5.8 criteria table (trust/pedigree weighted highest; optional riscv-formal eqy-container run as evidence; ~~license check~~ closed — ISC / BSD-3; ~~`fit.rpt` ×2~~ **done R21 §5.8: both pass 50 MHz, gracilis −24 % ALM, picorv32 +11 % fmax, neither disqualified**; ~~time-to-REPL in Verilator~~ **done R19/R20: both boot identical FW hex, dict/merged images byte-identical**; ~~cycle-level performance~~ **done R22 §5.8.2: gracilis wins every op (loops/calls/stackops/MUL/mem) at equal fabric latency — perf axis decisively favors gracilis**) | P0, critical path — evidence complete (area ✓ timing ✓ FW-compat ✓ performance ✓); single residual discriminator = trust/pedigree (+ bus-fit nuance §5.8.1); polled FW (D-27) ⇒ only `crt0.S` differs ⇒ late reversibility |
 | OQ-21 | **VexRiscv reopen conditions** (shelved R12): reopen the §5.7 container path only on (a) measured FW cycle-budget shortfall in P1/P2 (dump/disassemble/REPL responsiveness vs §4.3-class arithmetic), or (b) a new capability need not met by the family (`individua` covers atomics; nothing else on the horizon). Record measured numbers with any reopen request | dormant until drivers |
 | OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1. R15: flash emulation explicitly **not** pursued (D-32) |
 | OQ-22 | `[new R15]` **Escape-byte consumption mechanism** (D-14): when the guest owns the SNAC link and `OM` is On, the escape byte must not reach the guest ACIA, but recognition completes only at the stop bit. Options: (a) byte-level relay (deserialize → filter → re-serialize at the `O9B` rate; adds one character time of latency, only while `OM` On; RTS/CTS passed through), (b) let the byte through and accept the guest sees it, (c) inject into the ACIA receive path instead of the wire | lean **(a)**: exact semantics, and `OM` Off keeps the raw wire (true transparency); decide at P1a RTL |
@@ -1734,3 +1800,29 @@ merged byte-identity holds (dd250da5.../c43b230a...).
 · **Next**: owner review of OQ-20 evidence + D-36 ruling; then P1a prep
 (TICK_US/mmilliseconds, ssp_bridge RTL vs CSV, trap/WDG semantics §5.8
 footnote if gracilis wins).
+
+R22 **OQ-20 cycle-level performance evidence complete -- gracilis wins every
+op (2026-10-26)**: new bench lane `sim/ssp/bench_stub.sh` + make targets
+bench-stub / bench-stub-fab / bench-gracilis (owner spec: real work --
+no-op subroutine calls, DUP/DROP arithmetic units, MUL unit, VARIABLE
+store/retrieve loops; NO empty loops, no RECURSE -- owner note that it is
+rare in production; dictionary-lookup cost excluded from scoring, see 5.8.3).
+Timed via EMIT control-byte markers + TXTRACE stamps; per-iteration cost by
+equal-digit N differencing (200k vs 100k) cancels all fixed FW overhead
+(results exact integers); goldens = sum(0..N-1) mod 2^32 on four accumulate
+loops, verified all lanes. New +FABWAIT knob on the picorv32 stub models the
+D-36 launch+1 IP fabric (bare stub was flattering picorv32; gracilis stub is
+natively launch+1) => picorv32-fab vs gracilis = silicon-predictive pairing.
+Results (cyc/iter, 5.8.2): bare loop 10/13/8, call 7/9/4, I+add 22/27/16,
+stack-op unit 45/56/34, MUL-vs-ADD +41/+42/+3, var st+ld 111/140/82
+(picorv32-zero / picorv32-fab / gracilis). Gracilis wins every op at equal
+fabric latency (1.6-2.3x vs fab), incl. boot-to-banner 196k vs 322k cycles.
+With R21 area (gracilis -24 % ALM) + R19/R20 FW neutrality + R22 perf, the
+only residual OQ-20 discriminator is trust/pedigree. Follow-ups banked:
+picorv32 +41 MUL path worth a config check (does not change direction);
+kernel RECURSE x constant-fold miscompilation (5.8.3) must be understood
+before any recursive FW word ships; `variable` provided via CREATE (D-32
+trim). Harness lessons: +IDLE/+MAXCYCLES must exceed longest silent workload
+stretch (loops emit no TX -- three truncation rounds diagnosed); harness
+"cycles" are 2 ticks/clock (numbers halved). Artifacts:
+/tmp/opencode/stub-bench-<lane>/bench-*.tsv (regenerable).

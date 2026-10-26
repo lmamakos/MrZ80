@@ -68,7 +68,7 @@ module ssp_stub_top (
     wire        mem_valid, mem_instr, mem_ready;
     wire [31:0] mem_addr, mem_wdata;
     wire [3:0]  mem_wstrb;
-    reg  [31:0] mem_rdata;
+    wire [31:0] mem_rdata;
     wire        mem_la_read, mem_la_write;
     wire [31:0] mem_la_addr;
 
@@ -109,7 +109,24 @@ module ssp_stub_top (
         .trace_data   ()
     );
 
-    assign mem_ready = rst_n;   // no wait states in the stub
+    // D-36 fabric-wait knob (R22 perf bench): +FABWAIT models the silicon
+    // memory fabric built from explicit altsyncram IP (D-36: registered read
+    // address => every access completes launch+1, so picorv32's zero-latency
+    // valid/ready bus pays one wait state per access, instruction fetches
+    // included).  Default off: zero-wait behavioral memories -- all existing
+    // stub lanes unchanged.  (The gracilis stub is natively launch+1 at all
+    // times: FemtoRV's rstrb protocol matches the IP, no knob needed.)
+    logic fab_wait;
+    initial fab_wait = $test$plusargs("FABWAIT");
+    reg   pend;                          // access in flight, completes next cycle
+    wire  launch = mem_valid && !(fab_wait && pend) && rst_n;
+
+    assign mem_ready = rst_n && (!fab_wait || pend);
+
+    always @(posedge clk) begin
+        if (!rst_n) pend <= 1'b0;
+        else        pend <= fab_wait && launch;
+    end
 
     // ---------------------------------------------------------- UART model
     logic       uart_en;
@@ -139,8 +156,10 @@ module ssp_stub_top (
     // Read vs write discrimination: data-phase access (mem_instr=0) with no
     // byte strobes is a load. (mem_la_read is LOOK-AHEAD -- asserted before
     // mem_valid, so it must not be combined with mem_valid here.)
-    wire rd_fire  = mem_valid && !mem_instr && (mem_wstrb == 4'b0) && rst_n;
-    wire wr_fire  = mem_valid && !mem_instr && (mem_wstrb != 4'b0) && rst_n;
+    // Fire once per access at the LAUNCH edge (identical to plain mem_valid
+    // when the +FABWAIT knob is off; under FABWAIT valid persists 2 cycles).
+    wire rd_fire  = launch && !mem_instr && (mem_wstrb == 4'b0);
+    wire wr_fire  = launch && !mem_instr && (mem_wstrb != 4'b0);
 
     always @(posedge clk) begin
         if (rst_n && rd_fire && is_uart && at_rx && rx_avail) begin
@@ -165,7 +184,7 @@ module ssp_stub_top (
                 dbg_rom_core_writes <= dbg_rom_core_writes + 32'd1;
                 if (dbg_on) $display("[dbg %0t] CORE-ROM WR %08x", $time, mem_addr);
             end
-            if (mem_valid && !(is_rom || is_dtcm || is_uart)) begin
+            if (launch && !(is_rom || is_dtcm || is_uart)) begin
                 dbg_bus_errs <= dbg_bus_errs + 32'd1;
                 if (err_addr_latched == 32'h0) begin
                     err_addr_latched <= mem_addr;
@@ -178,17 +197,24 @@ module ssp_stub_top (
     assign rx_fifo_level = {4'd0, rx_count};
 
     // ---------------------------------------------------- read (combinational)
+    logic [31:0] rdata_now;             // same-cycle behavioral read value
     always @(*) begin
-        if (is_rom)          mem_rdata = rom[mem_addr[15:2]];
-        else if (is_dtcm)    mem_rdata = dtcm[mem_addr[15:2]];
+        if (is_rom)          rdata_now = rom[mem_addr[15:2]];
+        else if (is_dtcm)    rdata_now = dtcm[mem_addr[15:2]];
         else if (is_uart) begin
-            if (at_stat) mem_rdata = {29'd0, rx_overrun_sticky, rx_avail, 1'b1};
-            else if (at_rx)   mem_rdata = {24'd0, rxfifo[rx_rp[2:0]]};
-            else if (mem_addr[11:2] == 10'h000) mem_rdata = 32'h4D52_5A03; // ID
-            else mem_rdata = 32'h0;         // stub subset: unimplemented regs read 0
+            if (at_stat) rdata_now = {29'd0, rx_overrun_sticky, rx_avail, 1'b1};
+            else if (at_rx)   rdata_now = {24'd0, rxfifo[rx_rp[2:0]]};
+            else if (mem_addr[11:2] == 10'h000) rdata_now = 32'h4D52_5A03; // ID
+            else rdata_now = 32'h0;         // stub subset: unimplemented regs read 0
         end
-        else                 mem_rdata = 32'h0;   // decoder error payload
+        else                 rdata_now = 32'h0;   // decoder error payload
     end
+
+    // Under +FABWAIT the value presented at the complete cycle is the one
+    // sampled at the launch edge (D-36 IP: q valid at launch+1).
+    reg [31:0] rdata_lat;
+    always @(posedge clk) rdata_lat <= rdata_now;
+    assign mem_rdata = fab_wait ? rdata_lat : rdata_now;
 
     // -------------------------------------------------- write (byte strobes)
     wire [31:0] wmask = { {8{mem_wstrb[3]}}, {8{mem_wstrb[2]}},

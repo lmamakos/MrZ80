@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -66,3 +66,17 @@ dict-stub: stub
 dict-gracilis: stub-gracilis
 	TAG=gracilis MODEL=sim/ssp/obj_grac/ssp_gracilis \
 	$(ROOT)/sim/ssp/dictbuild_stub.sh
+
+# Cycle-level performance benchmarks (OQ-20 evidence, R22): EMIT-marker
+# bracketed workloads over the console, TXTRACE cycle stamps -> CPI.
+# bench-stub-fab models the D-36 launch+1 IP fabric (silicon-predictive
+# pairing vs the natively-launch+1 gracilis stub).
+bench-stub: stub
+	$(ROOT)/sim/ssp/bench_stub.sh
+
+bench-stub-fab: stub
+	TAG=picorv32-fab EXTRA="+FABWAIT" $(ROOT)/sim/ssp/bench_stub.sh
+
+bench-gracilis: stub-gracilis
+	TAG=gracilis MODEL=sim/ssp/obj_grac/ssp_gracilis \
+	$(ROOT)/sim/ssp/bench_stub.sh
