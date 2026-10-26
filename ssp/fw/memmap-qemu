@@ -1,0 +1,22 @@
+/*
+ * MrZ80 SSP -- Mecrisp memory layout, qemu-system-riscv32 -M virt smoke
+ * variant ONLY (not the silicon map; see memmap-ssp for that).
+ * Runs entirely in qemu DRAM at 0x8000_0000; console via ns16550 (-D
+ * QEMU_NS16550 + -DRamAnfang=... flags, see Makefile target `qemu`).
+ */
+
+MEMORY
+{
+  rom (RX)   : ORIGIN = 0x80000000, LENGTH = 0x10000
+  ram (RWX)  : ORIGIN = 0x80010000, LENGTH = 0x10000
+}
+
+SECTIONS
+{
+  .text : { *(.text*) } > rom
+
+  .bss (NOLOAD) : {
+    *(.bss*)
+    *(COMMON)
+  } > ram
+}

@@ -246,6 +246,22 @@ constant SSP_ESC_CHAR_CHAR  $000000FF  ( field 7:0 )
 constant SSP_TICK_US  $20000114  ( R | free-running 1 MHz counter (D-20 time base) )
 constant SSP_TICK_US_CNT  $FFFFFFFF  ( field 31:0 )
 
+constant SSP_UART_TXDATA  $20000120  ( WO | write TX holding (SNAC); honored only while STAT.tx_ready (FW polls; no RTS/CTS, R4) )
+constant SSP_UART_TXDATA_DATA  $000000FF  ( field 7:0 )
+
+constant SSP_UART_RXDATA  $20000124  ( RC | pop RX FIFO head; clears rx_avail when FIFO empties )
+constant SSP_UART_RXDATA_DATA  $000000FF  ( field 7:0 )
+
+constant SSP_UART_STAT  $20000128  ( R | UART status; rx_overrun sticky, cleared by CTRL.rx_clr )
+constant SSP_UART_STAT_TX_READY  $00000001  ( field 0:0 )
+constant SSP_UART_STAT_RX_AVAIL  $00000002  ( field 1:1 )
+constant SSP_UART_STAT_RX_OVERRUN  $00000004  ( field 2:2 )
+
+constant SSP_UART_CTRL  $2000012C  ( RW | UART enable (default on); rx_clr/tx_clr self-clearing FIFO flushes (P0) )
+constant SSP_UART_CTRL_EN  $00000001  ( field 0:0 )
+constant SSP_UART_CTRL_RX_CLR  $00000002  ( field 1:1 )
+constant SSP_UART_CTRL_TX_CLR  $00000004  ( field 2:2 )
+
 constant SSP_DEC_ERR_COUNT  $20000FF0  ( R | unimplemented-offset counter (saturating) )
 constant SSP_DEC_ERR_COUNT_COUNT  $000000FF  ( field 7:0 )
 

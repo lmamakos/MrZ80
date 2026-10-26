@@ -1,0 +1,21 @@
+/*
+ * MrZ80 SSP -- Mecrisp memory layout, silicon/stub-SoC map (SSP_DESIGN 5.2).
+ * rom = MROM (OSD-downloadable, RV read-only, D-10), ram = DTCM.
+ * Keep the .s map equates (mecrisp-quintus-ssp.s) in sync with this file.
+ */
+
+MEMORY
+{
+  rom (RX)   : ORIGIN = 0x00000000, LENGTH = 0x10000   /* 64 KiB MROM  */
+  ram (RWX)  : ORIGIN = 0x10000000, LENGTH = 0x10000   /* 64 KiB DTCM  */
+}
+
+SECTIONS
+{
+  .text : { *(.text*) } > rom
+
+  .bss (NOLOAD) : {
+    *(.bss*)
+    *(COMMON)
+  } > ram
+}

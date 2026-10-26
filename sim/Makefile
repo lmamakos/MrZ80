@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync
+.PHONY: regmap regmap-check sync fw smoke-qemu
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -18,3 +18,11 @@ regmap-check:
 
 sync:
 	$(ROOT)/sim/check_sync.sh
+
+# Mecrisp SSP firmware (needs $MECRISP, see ssp/fw/Makefile)
+fw:
+	$(MAKE) -C $(ROOT)/ssp/fw all
+
+# RV-side FW REPL smoke on qemu (D-28 companion; no RTL required)
+smoke-qemu:
+	$(ROOT)/sim/ssp/smoke_qemu.sh

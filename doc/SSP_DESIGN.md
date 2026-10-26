@@ -393,6 +393,10 @@ RX byte with `ESC_CHAR` (reset default `0x1D` = `^]`) only while OSD `OM`
 instruction boundary (reason=escape), hands the console to the SSP and
 consumes the byte. With `OM` Off the link is bit-transparent to whoever
 owns it.
+**FW-visible registers `[new R17]`:** `UART_TXDATA` 0x120 (WO),
+`UART_RXDATA` 0x124 (RC pop), `UART_STAT` 0x128 (`tx_ready`, `rx_avail`,
+sticky `rx_overrun`), `UART_CTRL` 0x12C (`en`, self-clearing `rx_clr`/
+`tx_clr`) — canonical rows in `ssp/regs/ssp_regs.csv`.
 
 ### 5.4 Downloadable ROM & packs (D-21)
 - `MROM` (index 6): RV32 image `ssp/fw` build output (`forth.bin`→
@@ -411,21 +415,51 @@ owns it.
 
 ### 5.5 Firmware structure (Mecrisp-Quintus)
 
-**Reference distribution `[R16, H-3 closed]:** Mecrisp-Quintus **1.1.2a**
-source is held in-tree at `~/mecrisp-quintus` (GPL-3.0-or-later — the
-compliance vehicle for the shipped `forth_rom.hex`). Directly reusable
+**Reference distribution `[R16, H-3 closed; R17 build model]:** Mecrisp-Quintus
+**1.1.2a** lives as **its own repository** at `~/mecrisp-quintus`
+(GPL-3.0-or-later — the compliance vehicle for the shipped `forth_rom.hex`).
+**R17: reference, don't vendor** — the FW build consumes the common core *in
+place* through `$MECRISP` (`…/mecrisp-quintus-source`; verified by
+`make -C ssp/fw check-tools`); only our target files live in `ssp/fw/`.
+Directly reusable
 material: `mecrisp-quintus-source/` (full core as `.s` sections +
 `common/` tools incl. RV32IMC disassembler/assembler), the per-target
 pattern `mecrisp-quintus-<t>.s` + `memmap` + `Makefile` + `terminal.s`
-(→ our `ssp/fw/` skeleton mirrors `hx1k/`), `common-verilog/` (FemtoRV
+(→ our `ssp/fw/` skeleton mirrors `ulx3s-pipeline-compressed/`, the closest
+ancestor: ROM@0 + RV32IMC + compressed dictionary), `common-verilog/`
+(FemtoRV
 variants incl. `femtorv32_gracilis.v` — whitespace-only diff vs our
 vendored learn-fpga copy — plus `uart.v`, `MappedSPIFlash.v`, `celement.v`
-= serial-CPU element for lamp-style arrays), `release/quintusemu-*` host
+= serial-CPU element for lamp-style arrays; MappedSPIFlash is **not** used,
+D-32/R17), `release/quintusemu-*` host
 emulators for running `.bin` images without hardware, and
 `linux-rv32imc/` native runtimes. FW glue: `interrupt-femtorv.s` shows
 the gracilis IRQ idiom (unused in v1, D-27). Our builds use
 `riscv64-unknown-elf-*` with the §5.8 march flags (the release Makefiles
-cite older `riscv64-linux-gnu` invocations — adapt, don't copy verbatim).
+cite older `riscv64-linux-gnu` invocations — adapt, don't copy verbatim;
+`ld` additionally needs `-m elf32lriscv` for the ELF32 objects).
+**Built and REPL-verified in sim at R17** — see §5.5.1.
+
+#### 5.5.1 P0 FW bring-up results (R17)
+
+`ssp/fw/` builds `mecrisp-ssp.{elf,bin,hex}` (RV32IMC, `.option norelax`
++ `rvc`, `erasedflashcontainszero` — our ROM images are zero-filled, HW M
+(no `softwaremultiply`), RAM dictionary at DTCM, `FlashDictionary*` = 1 KiB
+zeroed pad reserved at ROM top for future MPKG packs (D-21); kernel
+≈ 15.9 KiB of the 64 KiB MROM). `terminal.s` drives the bridge UART
+(0x120–0x12C) with a `-DQEMU_NS16550` variant for qemu virt; `flash.s`
+stubs `flash!`/`hflash!`/`flushflash` (accept-and-discard; no flash device
+exists). Smoke: `make -C sim smoke-qemu` drives the REPL on
+`qemu-system-riscv32` and asserts `1 2 + . → 3`, `: sq dup * ; 5 sq → 25`,
+`hex FF . → FF` — **PASS**.
+Lessons banked: (1) terminal hooks are **tail-dispatched**, so the driver
+must manage the stack itself — `emit`/`qemit`/`key`/`qkey` end with
+`drop`/`pushdatos` (the `drop` in `emit` is what restores the string pointer
+`type` had duplicated; missing it faults exactly one character into the
+banner); (2) instantaneous pipe bursts overrun the ns16550 RX FIFO — sim
+harnesses must pace input (real SNAC traffic is baud-paced); (3) `FOR`/`NEXT`
+are absent from the Mecrisp core by design — loop words arrive later as
+packs/EVAL'd tools (D-21), not the kernel.
 
 `crt0.S` trap vector → Forth dispatcher; stack-register convention verified
 against the chosen port during P0 (was OQ-09b — P0 checklist item, carried).
@@ -724,6 +758,10 @@ illegal/misaligned access) as a "SSP FW crashed" chrome/WDG indicator.
 | 0x10C | `FP_ENC_STAT` | R/W1C | `{committed[7:0](15:8), page_id[2:0], dbl_zero_evt, commit_evt, press_evt}` — press commits page (cursor **held**, D-23); rapid double-press zeroes cursor w/o commit; FW may subscribe instead of polling |
 | 0x110 | `ESC_CHAR` | RW | `[new R15]` serial escape character (reset `0x1D` = `^]`); recognizer active only with OSD `OM` On ∧ `CTRL.esc_break_en` (D-14) |
 | 0x114 | `TICK_US` | R | `[new R15]` free-running 32-bit 1 MHz counter (D-20; `milliseconds` glue) |
+| 0x120 | `UART_TXDATA` | WO | `[new R17]` TX holding (SNAC); honored while `UART_STAT.tx_ready` (§5.3) |
+| 0x124 | `UART_RXDATA` | RC | `[new R17]` RX FIFO pop; clears `rx_avail` when empty |
+| 0x128 | `UART_STAT` | R | `[new R17]` `tx_ready, rx_avail, rx_overrun` (sticky; `CTRL.rx_clr`) |
+| 0x12C | `UART_CTRL` | RW | `[new R17]` `en` (reset 1), self-clearing `rx_clr`/`tx_clr` |
 | 0xFF0 | `DEC_ERR_COUNT` | R | unimplemented-offset counter |
 
 `SSP_CHAIN[63:0]` is a structural output of `ssp_bridge` (not MMIO-readable
@@ -1412,3 +1450,40 @@ as authority; SSP export allocated 292–355 (map entry lands with P2 chain
 edit).
 · **Next**: register-map generator (D-29) → stub SoC per core (`sim/ssp/`,
 Verilator) → Mecrisp REPL bring-up using the in-tree distribution.
+
+R17 **Minimal flash-free Mecrisp port built and REPL-verified in sim
+(2026-10-26)**: owner "proceed to the next step" + two rulings — generate a
+**very minimal Mecrisp configuration with no flash memory and no
+MappedSPIFlash device** (hardware-side restatement/extension of D-32: nothing
+SPI-flash lives anywhere in the SSP), and Mecrisp stays **its own repository,
+referenced not vendored** (build consumes `$MECRISP` in place; only target
+files in-tree).
+· **Regmap**: UART block added to the canonical CSV — `UART_TXDATA` 0x120,
+`UART_RXDATA` 0x124, `UART_STAT` 0x128 (tx_ready/rx_avail/sticky
+rx_overrun), `UART_CTRL` 0x12C (en, self-clearing flushes); map now **72 regs
+/ 137 fields**, regenerated + `regmap-check` green (§5.3, §6 updated).
+· **`ssp/fw/`**: `mecrisp-quintus-ssp.s` (RV32IMC; `.option norelax` +
+`rvc`; `compressed_isa`; **`erasedflashcontainszero`** — our ROM images are
+zero-filled, not SPI-0xFF; HW M, no `softwaremultiply`; `FlashDictionary*`
+= 1 KiB zeroed pad at ROM top `0xFF00`, reserved-empty per D-21 — the
+EndOfCore link + boot scan terminate correctly against zero fill);
+`terminal.s` (bridge UART + `-DQEMU_NS16550` twin); `flash.s` stub —
+`flash!`/`hflash!`/`flushflash` accept-and-discard, `initflash` absent so
+boot skips flash init entirely; `memmap-ssp` (rom@0 + DTCM@0x1000_0000) /
+`memmap-qemu` (smoke map in DRAM); Makefile (`MECRISP` guard +
+`check-tools`, `ld -m elf32lriscv`). Image: **15.9 KiB kernel**, entry 0x0,
+zero-padded 64 KiB hex via new `tools/bin2hex.py` (word `$readmemh` form).
+· **QEMU lane** (assets installed: qemu-system-riscv32 11.1.2,
+gdb-multiarch): `make -C sim smoke-qemu` → **PASS** — `1 2 + . → 3`,
+`: sq dup * ; 5 sq . cr → 25`, `hex FF . cr decimal → FF`.
+· **Banked lessons**: (1) terminal hooks are tail-dispatched
+(`jalr zero,x15`) — drivers own the data stack: `emit` ends with `drop`
+(it is what restores the pointer `type` duplicated; missing it faults at
+character #2 — this exact bug cost one bring-up cycle), `key`/`qkey`/`qemit`
+with `pushdatos`; (2) unpaced pipe input overruns the ns16550 RX FIFO —
+harnesses must pace bytes (real SNAC traffic is baud-paced); (3) `FOR`/`NEXT`
+not in the Mecrisp core by design — such loop words arrive later as
+packs/EVAL'd tools (D-21).
+· **Next**: `sim/ssp/` stub SoC (picorv32 `COMPRESSED_ISA` + ROM(hex)/DTCM
++ UART/bridge decode per §5.2 — the hex is ready today), then gracilis
+wrapper, then Quartus `fit.rpt` ×2 for the OQ-20 bake-off.

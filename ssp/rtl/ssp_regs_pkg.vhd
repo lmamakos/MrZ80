@@ -253,6 +253,22 @@ package ssp_regs_pkg is
     constant C_SSP_TICK_US        : natural := 536871188;  -- 0x20000114 R | free-running 1 MHz counter (D-20 time base)
     constant C_SSP_TICK_US_CNT          : natural range 0 to 31 := 31;  -- field 31:0
 
+    constant C_SSP_UART_TXDATA    : natural := 536871200;  -- 0x20000120 WO | write TX holding (SNAC); honored only while STAT.tx_ready (FW polls; no RTS/CTS, R4)
+    constant C_SSP_UART_TXDATA_DATA         : natural range 0 to 31 := 7;  -- field 7:0
+
+    constant C_SSP_UART_RXDATA    : natural := 536871204;  -- 0x20000124 RC | pop RX FIFO head; clears rx_avail when FIFO empties
+    constant C_SSP_UART_RXDATA_DATA         : natural range 0 to 31 := 7;  -- field 7:0
+
+    constant C_SSP_UART_STAT      : natural := 536871208;  -- 0x20000128 R | UART status; rx_overrun sticky, cleared by CTRL.rx_clr
+    constant C_SSP_UART_STAT_TX_READY     : natural range 0 to 31 := 0;  -- field 0:0
+    constant C_SSP_UART_STAT_RX_AVAIL     : natural range 0 to 31 := 1;  -- field 1:1
+    constant C_SSP_UART_STAT_RX_OVERRUN   : natural range 0 to 31 := 2;  -- field 2:2
+
+    constant C_SSP_UART_CTRL      : natural := 536871212;  -- 0x2000012C RW | UART enable (default on); rx_clr/tx_clr self-clearing FIFO flushes (P0)
+    constant C_SSP_UART_CTRL_EN           : natural range 0 to 31 := 0;  -- field 0:0
+    constant C_SSP_UART_CTRL_RX_CLR       : natural range 0 to 31 := 1;  -- field 1:1
+    constant C_SSP_UART_CTRL_TX_CLR       : natural range 0 to 31 := 2;  -- field 2:2
+
     constant C_SSP_DEC_ERR_COUNT  : natural := 536874992;  -- 0x20000FF0 R | unimplemented-offset counter (saturating)
     constant C_SSP_DEC_ERR_COUNT_COUNT        : natural range 0 to 31 := 7;  -- field 7:0
 

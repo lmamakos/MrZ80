@@ -1,6 +1,6 @@
 # SSP Hand-off — working knowledge not captured elsewhere
 
-Date: 2026-10-26 · Baseline commit: `e6c83f9` (branch `main`, working tree
+Date: 2026-10-26 · Baseline: R17 (this commit), prev `e6c83f9` (branch `main`, working tree
 clean) · Author: design-session agent, rounds R13–R15.
 
 **Scope.** This document holds *only* information that is not already in
@@ -25,16 +25,19 @@ are *not yet* in `SSP_DESIGN.md`; §9 suggests recording them as round R16.
 
 | Area | State |
 |---|---|
-| Design docs | Complete through R15 and committed. No RTL for the SSP exists yet |
+| Design docs | Complete through R17 and committed. No RTL for the SSP exists yet |
 | Cores | `picorv32.v` and `femtorv32_gracilis.v` (+`utils.v`) vendored verbatim in `Components/RISCV/`, **not** in `MrZ80.qsf` yet |
 | Phase | **P0** (two-core bake-off). Done: vendoring, license check, **toolchain
 install + smoke test**, **GHDL sim resync + green baseline**, **R16
 decisions logged**, **D-29 regmap pipeline live** (CSV + generator +
-`make -C sim regmap-check`). Not started: stub SoC per core (`sim/ssp/`,
-Verilator), Mecrisp REPL bring-up, `fit.rpt` ×2 |
+`make -C sim regmap-check`), **R17: minimal flash-free Mecrisp port built
+and REPL-verified on qemu** (`ssp/fw/` + `make -C sim smoke-qemu` PASS;
+UART regs in CSV; `tools/bin2hex.py`). Not started: stub SoC per core
+(`sim/ssp/`, Verilator — ready to consume `ssp/fw/build/mecrisp-ssp.hex`),
+`fit.rpt` ×2 |
 | Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values). OQ-22/OQ-23 are settled by simulation, not by the owner |
 
-Commit trail for these sessions (newest first): `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
+Commit trail for these sessions (newest first): **R17 flash-free Mecrisp port + qemu smoke (this commit)** · `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
 (H-1 closed) · `2ed69c3` hand-off doc · `e41d5fc` R15 review ·
 `77208cd` cores vendored · `5e8ae1a` R14 bake-off · `d964f59` R13 ODT→SSP
 rename · `022bb95` R12 · `b86a21d` R11.
@@ -58,6 +61,11 @@ rename · `022bb95` R12 · `b86a21d` R11.
 | `yosys` | **0.66** (new) | early core lint/synth sanity without Quartus |
 | `gtkwave` | **3.3.127** (new) | needs a display; headless invocation fails, expected |
 | `python3` 3.14, `make` 4.4, `curl` | installed | |
+| `qemu-system-riscv32` | **11.1.2** (new, R17) | `-M virt -cpu rv32
+  -bios none -kernel <elf>` runs the FW smoke variant (`make -C sim
+  smoke-qemu`) |
+| `gdb-multiarch` | installed (new, R17) | attach: qemu `-s -S`,
+  `target remote :1234` (no riscv-specific gdb needed) |
 | Questa/ModelSim (`vsim`) | missing | not needed — GHDL covers VHDL (§3) |
 | `docker` | **missing locally** | Docker exists only on `tycho` (Quartus builds) |
 | `pasmo` | present | **Forbidden** for Z80 code (AGENTS.md). Use `tools/z80asm.sh` / `um80.sh` / `ul80.sh` |

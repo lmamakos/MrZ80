@@ -79,4 +79,8 @@ W1C, RCW (shared FW/engine, G-3).
 | 0x10C | `FP_ENC_STAT` | R | `00000000` | COMMITTED 7:0; PAGE_ID 10:8; DBL_ZERO_EVT 11:11; COMMIT_EVT 12:12 | encoder status (D-23); read clears event strobes |
 | 0x110 | `ESC_CHAR` | RW | `0000001D` | CHAR 7:0 | serial escape character; recognizer active with OSD OM on (D-14) |
 | 0x114 | `TICK_US` | R | `00000000` | CNT 31:0 | free-running 1 MHz counter (D-20 time base) |
+| 0x120 | `UART_TXDATA` | WO | `00000000` | DATA 7:0 | write TX holding (SNAC); honored only while STAT.tx_ready (FW polls; no RTS/CTS, R4) |
+| 0x124 | `UART_RXDATA` | RC | `00000000` | DATA 7:0 | pop RX FIFO head; clears rx_avail when FIFO empties |
+| 0x128 | `UART_STAT` | R | `00000000` | TX_READY 0:0; RX_AVAIL 1:1; RX_OVERRUN 2:2 | UART status; rx_overrun sticky, cleared by CTRL.rx_clr |
+| 0x12C | `UART_CTRL` | RW | `00000001` | EN 0:0; RX_CLR 1:1; TX_CLR 2:2 | UART enable (default on); rx_clr/tx_clr self-clearing FIFO flushes (P0) |
 | 0xFF0 | `DEC_ERR_COUNT` | R | `00000000` | COUNT 7:0 | unimplemented-offset counter (saturating) |

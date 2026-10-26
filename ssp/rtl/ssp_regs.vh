@@ -250,6 +250,22 @@
 `define SSP_TICK_US          32'h20000114  // R reset 32'h00000000 | free-running 1 MHz counter (D-20 time base)
 `define SSP_TICK_US_CNT            32'hFFFFFFFF  // 31:0
 
+`define SSP_UART_TXDATA      32'h20000120  // WO reset 32'h00000000 | write TX holding (SNAC); honored only while STAT.tx_ready (FW polls; no RTS/CTS, R4)
+`define SSP_UART_TXDATA_DATA           32'h000000FF  // 7:0
+
+`define SSP_UART_RXDATA      32'h20000124  // RC reset 32'h00000000 | pop RX FIFO head; clears rx_avail when FIFO empties
+`define SSP_UART_RXDATA_DATA           32'h000000FF  // 7:0
+
+`define SSP_UART_STAT        32'h20000128  // R reset 32'h00000000 | UART status; rx_overrun sticky, cleared by CTRL.rx_clr
+`define SSP_UART_STAT_TX_READY       32'h00000001  // 0:0
+`define SSP_UART_STAT_RX_AVAIL       32'h00000002  // 1:1
+`define SSP_UART_STAT_RX_OVERRUN     32'h00000004  // 2:2
+
+`define SSP_UART_CTRL        32'h2000012C  // RW reset 32'h00000001 | UART enable (default on); rx_clr/tx_clr self-clearing FIFO flushes (P0)
+`define SSP_UART_CTRL_EN             32'h00000001  // 0:0
+`define SSP_UART_CTRL_RX_CLR         32'h00000002  // 1:1
+`define SSP_UART_CTRL_TX_CLR         32'h00000004  // 2:2
+
 `define SSP_DEC_ERR_COUNT    32'h20000FF0  // R reset 32'h00000000 | unimplemented-offset counter (saturating)
 `define SSP_DEC_ERR_COUNT_COUNT          32'h000000FF  // 7:0
 
