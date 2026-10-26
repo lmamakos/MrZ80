@@ -19,6 +19,8 @@ from the core.
 Support Processor**) for the FPGA-resident
 debug/console/assist subsystem: a compact RV32IMC support CPU (P0 two-core
 bake-off since R14: PicoRV32 `COMPRESSED_ISA` vs FemtoRV32 `gracilis`;
+R15 design review: boundary parking, single bus mux, polled FW, OSD-gated
+serial escape character, RAM-only Forth, P1a/P1b split;
 VexRiscv shelved) running
 Mecrisp-Quintus FORTH, a cycle-accurate `ssp_bridge` MMIO interface, and a
 hardware classic-console front-panel engine (halt/step/examine/deposit,

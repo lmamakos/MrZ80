@@ -55,6 +55,16 @@ mirror → later exclusive HDMI+keyboard console).
 **co-candidate** on external research (riscv-formal pedigree, ecosystem
 depth, simpler bus — with its RV32C/timer/atomics asymmetries corrected in
 §5.8); **P0 becomes a two-core bake-off** (D-09/OQ-20).
+**R15** (2026-10-26, design review): **instruction-boundary parking**
+(the T80 grants BUSRQ at *any* M-cycle `T_Res` — D-25), a single
+**`z80_bus_mux`** that also synthesizes `MRD_T1`/`M1_n` and senses
+`cpu_wait_n` (D-26), **R14 IRQ claim corrected** — gracilis uses standard
+CSRs, picorv32 custom instructions — so **v1 FW is polled** over sticky
+status (D-27), two-level **simulation strategy** (D-28), **single-source
+register map** (D-29), panel engine as a **micro-op sequencer** (D-30),
+**serial escape = one specific character, gated by OSD switch `OM`**
+(D-14 rev), **RAM-only Forth, no flash emulation** (D-32), profile-7
+hardware interlock (D-31), **P1 split into P1a "first light" / P1b**.
 
 Tags: `[verified]` (re-confirmed against source; anchors are hints — grep the
 name) · `[decided]` (locked, see §2) · `[proposed]` (review target) ·
@@ -155,18 +165,26 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-06 | `[decided]` Jump-history ring P2: T80 `CTEV*` side-band + 16-entry HW ring + FW `J` + lamps. | SW-only trace (can't keep up, §4.3) |
 | D-07 | `[decided]` Panel START runs at the live switch-set address. | two-phase LOAD-then-RUN |
 | D-08 | `[decided]` MC/TS port-out on `T80s` + bundled **`Alternate` export** (session R3; closes OQ-01) in the same P1 mod; `CEN` already ported. T-state/Mcycle step via bridge `STEP_CTL`. | BUSRQ-only stepping |
-| D-09 | `[decided, session R1; revised R11/R12/R14]` Support core: **P0 = two-core bake-off (R14): PicoRV32 (`COMPRESSED_ISA`) ⟷ FemtoRV32 `gracilis`** — both pure-Verilog vendored files, zero generation toolchain, same `ssp_top` wrapper; decision at P0 exit on the §5.8 criteria (trust/verification weighted first for a debug host). Common ground that neutralizes most deltas: RV32C available on both (parameter vs native); no standard `mtime` on either ⇒ bridge MMIO 1 MHz tick is common design; same PicoRV32-lineage custom-IRQ idiom on both; atomics absent on both (Mecrisp doesn't need them). **VexRiscv shelved** (R12; reopen = OQ-21 measured drivers). Baseline if both P0 entries somehow fail: plain PicoRV32 without C (already an entry member). | v0.1 "femtoRV primary" premise; VexRiscv-first sequencing (superseded R12); gracilis sole-primary focus (superseded R14 — external research + riscv-formal pedigree elevate PicoRV32 to co-candidate) |
-| D-10 | `[decided, session R1]` **64 KiB ROM / 64 KiB RAM** (parameterized; final gate = P0 `fit.rpt`). **"ROM" is downloadable**: M10K block read-only to the RV, write port fed by the OSD download path; factory contents from committed init hex; downloaded contents persist across core resets within a session (full FPGA reconfig restores factory). | 16K/16K; refit-required ROM |
-| D-11 | `[decided]` Bridge MMIO base `0x2000_0000`, 4 KiB, word-aligned SimpleBus, slave may stall (late resp.valid). | 32-byte region |
+| D-09 | `[decided, session R1; revised R11/R12/R14]` Support core: **P0 = two-core bake-off (R14): PicoRV32 (`COMPRESSED_ISA`) ⟷ FemtoRV32 `gracilis`** — both pure-Verilog vendored files, zero generation toolchain, same `ssp_top` wrapper; decision at P0 exit on the §5.8 criteria (trust/verification weighted first for a debug host). Common ground that neutralizes most deltas: RV32C available on both (parameter vs native); no standard `mtime` on either ⇒ bridge MMIO 1 MHz tick is common design; atomics absent on both (Mecrisp doesn't need them). **IRQ models differ** (R15 correction: gracilis = standard `mtvec/mepc/mcause/mstatus/mret`; picorv32 = custom `getq/setq/retirq/maskirq/waitirq/timer`) — neutralized by polled v1 FW (D-27). Both have first-party Mecrisp lineage (Mecrisp-Quintus's first target was PicoSoC/picorv32; gracilis ships in the distribution). **VexRiscv shelved** (R12; reopen = OQ-21 measured drivers). Baseline if both P0 entries somehow fail: plain PicoRV32 without C (already an entry member). | v0.1 "femtoRV primary" premise; VexRiscv-first sequencing (superseded R12); gracilis sole-primary focus (superseded R14 — external research + riscv-formal pedigree elevate PicoRV32 to co-candidate) |
+| D-10 | `[decided, session R1]` **64 KiB ROM / 64 KiB RAM** (parameterized; final gate = P0 `fit.rpt`). **"ROM" is downloadable**: M10K block read-only to the RV, write port fed by the OSD download path; factory contents from committed init hex; downloaded contents persist across core resets within a session (full FPGA reconfig restores factory). **R15: stays RV-read-only — no flash emulation** (D-32). | 16K/16K; refit-required ROM; RV-writable upper-ROM "flash" for `compiletoflash` (offered R15, declined) |
+| D-11 | `[decided; R15 wording]` Bridge MMIO base `0x2000_0000`, 4 KiB, word-aligned **SSP local bus** — core-neutral valid/ready (picorv32 `mem_valid/mem_ready` native; gracilis `mem_rstrb`/`mem_wmask` + `rbusy/wbusy` via thin shim); slave may stall (late ready). | 32-byte region; VexRiscv "SimpleBus" naming (retired with shelving) |
 | D-12 | `[decided]` Formal invariants **P-A..P-D** (§2.5) + named guidance notes G-1..G-7 (session R2/R6: A–C formal per owner; P-D promoted R6). | notes-only |
 | D-13 | `[decided, revised v0.3]` **Two-tier watchdog** (session R2): **WDG_RUN** (`[new]` transient holds — WAIT asserts, trap stalls, sequencer busy — auto-release guest, default **~4 ms**, parameterized) and **WDG_PARK** (~1–2 s, governs *FW-originated* parks only: expiry demotes a dead FW console — `console_own←0`, dead-flag lamp — but **never releases a hardware-held park**: classic STOP/BP park semantics stay human-paced and panel-recoverable). §6.9. | single 1.3 s auto-release (v0.2) |
-| D-14 | `[decided, session R4]` RX byte at monitor UART while guest runs = hardware escape-break (auto-BUSRQ, reason=escape). | FW-poll escape |
+| D-14 | `[decided, session R4; revised R15]` **Serial escape = one specific character, recognized in hardware, only when OSD switch `OM` ("Serial Escape", status bit 22, default **Off**) is On.** Recognizer watches the SNAC RX stream; on match while the guest runs ⇒ park at instruction boundary (D-25, reason=escape), console handed to the SSP; the escape byte is **consumed**, never delivered to the guest (mechanism OQ-22). Character = `ESC_CHAR` register, hardware reset default **`0x1D` (`^]`)** — chosen because CP/M software (WordStar `^E` etc.) uses the low control codes. Effective enable = `OM ∧ CTRL.esc_break_en ∧ ssp_active` (FW may disable, never override the OSD). With `OM` Off the serial link is **fully transparent** — no byte value has special meaning; monitor entry is then via panel STOP/BP, or SSP FW when it already owns the link. Distinct from the panel **ESCAPE toggle** (frame bit 32 = monitor *disable*, G-8). | any-RX-byte break (R4 — rejected R15: line noise/answerback/type-ahead halt the guest; no transparent mode); BREAK-condition detect; FW-poll escape |
 | D-15 | `[decided, revised v0.3]` Physical memory: **(P) parked client** `ssp_mem_client` borrows the *wiring* — drives the existing SDRAM client interface (`sdram_addr/din/we/rd` + native DQM) and BRAM mux only while guest parked *and* primary client FSM idle; MMU registers untouched (P-D). **(B) background** vid-port client (P2): **reads only** — natively read-only, verified lowest priority (cpu > vid, refresh > both); vid-*write* mod deferred, revisit gated on sim showing vid traffic benign to the primary path like refresh collisions (session R3). | ~~MMU direct-access ports $B8–$BC~~ **retracted**: auto-increment pointer is guest-owned state (session R3) |
-| D-16 | `[decided, revised v0.3]` OSD allocations: `OK`=bit 20 (`OL`=21 reserved); download index **6 = `MROM` monitor ROM image**, index **7 = `MPKG` FORTH program pack**. MROM mount completion pulses **monitor-subsystem reset only** (RV+bridge+WDG re-arm; guest untouched, session R2). `OF` Reset-after-Mount semantics unchanged (guest). | guest-wide reset on mount |
+| D-16 | `[decided, revised v0.3; R15]` OSD allocations: `OK`=bit 20 (`OL`=21 reserved); **`OM`=bit 22 "Serial Escape" Off/On (D-14, R15)**; download index **6 = `MROM` monitor ROM image**, index **7 = `MPKG` FORTH program pack**. MROM mount completion pulses **monitor-subsystem reset only** (RV+bridge+WDG re-arm; guest untouched, session R2). `OF` Reset-after-Mount semantics unchanged (guest). | guest-wide reset on mount |
 | D-17 | `[decided, revised v0.3]` Lamp display philosophy (session R5): LEDs are a **flexibly-mapped signalling lamp array**, *not* a low-res graphics surface; no assumed correspondence with terminal text. Convention: monitor exports state words into the capture chain (§11.4); **profile 7 = monitor profile**; map_ram maps lamps to any chain bits (existing capture bits and/or monitor-exported bits); OSD profile-override engages profile 7 while monitor display active. Direct color/fb painting remains available for FW extensions. | dedicated monitor framebuffer; "text mirror" lamp pages |
 | D-18 | `[decided, new v0.3]` **Hardware panel engine** (`fp_engine`): classic panel operations execute in FPGA logic through the shared bridge primitives (sequencer, step assist, reset stretcher, bus muxes), maintaining live **AR/DR/MD/PR** functional registers that FW reads/writes too. Panel works with FW absent/hung (P-B strengthened). FW and panel are **peers on one engine**; the sequencer busy-handshake is the arbiter; panel wins simultaneous kicks; panel ops event FW (IRQ + last-op log). | FW panel server as sole executor (v0.2) |
 | D-19 | `[proposed, new v0.3]` Console routing is FW policy over HW muxes: `CONN_ROUTE` selects monitor output sink(s) {SNAC UART, HDMI terminal mirror} and input source {SNAC RX, PS2 kbd (P3)}; hardware default = serial on reset/WDG-death (P-B). | fixed serial-only routing (kept as fail-safe default semantics) |
-| D-20 | `[decided, session R1]` Core facilities: **RV32IMC** (no A — single hart, state read via bridge regs), **1 MHz machine timer**, external IRQ dispatched by reading bridge `IRQ_PENDING` (no PLIC, no `mcause`-specific code; portable to fallback core). | IMAC; mcause/vectored |
+| D-20 | `[decided, session R1; revised R15]` Core facilities: **RV32IMC** (no A — single hart, state read via bridge regs); time base = **bridge MMIO 1 MHz counter `TICK_US`** (neither candidate has `mtime`; `rdcycle` usable for fine timing); events read from bridge `IRQ_PENDING` **by polling in v1** (D-27) — the IRQ line exists in RTL but v1 FW does not depend on it; no PLIC, no core-specific trap code. | IMAC; mcause/vectored; "1 MHz machine timer" CSR (does not exist on either core) |
+| D-25 | `[decided, new R15]` **Instruction-boundary parking.** The T80 grants BUSRQ at *any* M-cycle `T_Res` (`T80.vhd:~1033-1042`), so a raw BUSRQ can freeze mid-instruction (PC/temporaries half-advanced). The D-08 `T80s` mod additionally exports **`insn_end`** (last M-cycle of the instruction ∧ `T_Res`); the bridge passes park requests (FW hold, panel STOP, STEP INSN, escape, BP) to `BUSRQ_n` only aligned to `insn_end`. Rules: **prefixes are not boundaries** (no park between DD/FD/CB/ED and the opcode they modify); HALT state parks anywhere (PC = HALT+1); INT/NMI acknowledge completes before park; EI's one-instruction shadow honoured; block instructions park per iteration (PC re-points at the instruction). M-cycle/T-state step modes deliberately park off-boundary. `STATUS.at_boundary` tags every park; register snapshots are architectural only when set (`R` warns otherwise). **Breakpoints**: stop-*before*-execute via **self-loop injection** — on BP M1 match, the trampoline data mux feeds `18 FE` (`JR $`) in place of the opcode/displacement fetches, then park at its `insn_end` ⇒ PC = BP address, flags/regs untouched, only R +1 (already-accepted drift). Evaluation in sim (OQ-23). | raw BUSRQ park (v0.1–v1.0: unsafe); stop-after-BP-instruction (reports wrong PC) |
+| D-26 | `[decided, new R15]` **Single `z80_bus_mux`** at the T80 output boundary, one select, flips only with `BusAck` confirmed (P-A): address, data-out, `MREQ/IORQ/RD/WR`, **`MRD_T1`** (the SDRAM speculative-read trigger, `MicrocomputerZ80CPM.vhd:~1090`), **`M1_n`** (capture chain `:~764`), plus engine-side **sensing of `cpu_wait_n`** (MMU + SDRAM waits — the parked T80 no longer consumes them). The engine emits **cycle-faithful Z80 bus cycles** on `cpu_cen` (T1–T3 + Tw, `MRD_T1` timing as T80s), so every peripheral and the SDRAM client FSM see "a Z80"; guest-path tests are reused for engine cycles. | per-signal ad-hoc muxes; engine-native (non-Z80) strobe timing |
+| D-27 | `[decided, new R15]` **Polled v1 firmware.** Every bridge event is a **sticky status bit** (W1C), so FW is correct by polling its main loop; the IRQ line is an optional later optimization. Makes the two P0 cores FW-interchangeable despite their different IRQ models, and keeps interrupt races out of the debugger. | IRQ-driven dispatch as baseline (v0.3 §5.5) |
+| D-28 | `[decided, new R15]` **Two-level simulation**: (1) **SSP-only, Verilator** — core + ROM/DTCM + UART + bridge + engine against a behavioural Z80-bus model (BFM); fast enough for the Mecrisp REPL (10⁷–10⁸ cycles); (2) **integration, Questa-Intel Starter or GHDL** — real T80/MMU/SDRAM client FSM (VHDL) for D-25/D-26, wait handling, R-21 pass-through. Both under `sim/` with a Makefile; the §13 TB names become runnable targets. Set up in P0. | single-simulator flow (Verilator can't read VHDL; mixed-language Icarus too slow for Mecrisp) |
+| D-29 | `[decided, new R15]` **Single-source register map**: `ssp/regs/ssp_regs.csv` (offset, name, access, fields, reset, doc) → generator `tools/ssp_regmap.py` emits `ssp_regs.vh` (RTL), `ssp-regs.fs` (Forth constants), and the §6 Markdown table; TBs include the `.vh`. Hand-editing generated outputs forbidden. | hand-maintained parallel copies |
+| D-30 | `[decided, new R15]` **Panel engine = micro-op sequencer.** Primitives `LOAD_AR, LOAD_PR, MEM_RD, MEM_WR, IO_RD, IO_WR, INC_AR, STEP, RESET_VENT, INJECT, TAP_RD, PAGE_SET`; each panel op (EXAM-NEXT, DEP-NEXT, START-AT-A, MMU-DEPOSIT two-OUT, …) is a short sequence in a small table; FW `MEM_CTL` kicks enter the **same queue**. Arbitration is **per macro** (atomic — no FW cycle between MMU-DEPOSIT's two OUTs); panel wins simultaneity. | hand-coded per-op FSM states |
+| D-31 | `[decided, new R15]` **Profile-7 hardware interlock**: guest `$A0–$A7` writes targeting LED profile 7 are dropped in hardware; profile 7 is SSP-owned (supersedes §11.5's by-convention rule). | convention-only (v0.3) |
+| D-32 | `[decided, new R15]` **RAM-only Forth — no flash emulation.** Mecrisp-Quintus runs `compiletoram` only: kernel executes from the OSD-loaded MROM image (RV-read-only, D-10); all compiled words live in DTCM; flash-write primitives stubbed (error); persistence = MROM image + MPKG packs re-`EVAL`'d at boot (D-21); OQ-13 stays deferred. | RV-writable upper-ROM `compiletoflash` region (offered R15, declined: unnecessary at this stage) |
 | D-21 | `[decided, session R1]` **Code is data lifecycle**: monitor boots before/independent of guest image; ROM image (index 6) and FORTH pack (index 7: text source staged in DTCM, auto-`EVAL`'d at boot, magic+length trailer; position-independent, survives kernel rebuilds) both OSD-loadable; serial upload path (P2) reuses the same "eval a buffer" primitive. No NVRAM machinery in v1. | refit-per-change; battery-backed dict (deferred OQ-13) |
 | D-22 | `[decided, session R5]` Addressing is **modal** on both surfaces: logical (MMU-translated, 16-bit) ⟷ physical (28-bit). FW keeps a live MMU shadow from the `mmu_frame` HW tap (state-neutral) and can translate/report either view; serial mode command (`PHY`/`LOG`); panel physical mode = **S31 = '1'** (§11.2). | single addressing mode |
 | D-23 | `[decided, new v0.5 (R8)]` Panel UX package (full spec `SSP_PANEL_UX.md`): sovereignty-with-`PANEL_LOCK` (G-8) · S28=**BP ARM** (LOAD-ADDR also sets BP at encoder-cursor slot), S29=**FREEZE**, S30=**START-AT-A** (hardware trampoline start, firmware-free — closes D-07 panel gap) · per-page lamp remap with pinned chrome + page-ID lamps (G-9; cold default = identity ⇒ CLASSIC) · encoder: hold-cursor after commit, rapid double-press zeroes (no commit) · hybrid `*` commentary · colour conventions · WDG-dead ⇒ page forced to CLASSIC, lock cleared. | static-map/paged-content (rejected R8 in favour of per-page layout); unconditional RUN; zero-after-commit; queue-only or silent commentary |
@@ -244,7 +262,7 @@ numbers are hints — grep the name.
 | Fact | Anchor |
 |---|---|
 | `busrq_n => '1'` tie-off; `M1_n`/`RFSH_n`/`HALT_n`/`BUSAK_n` unconnected at CPU map | `MicrocomputerZ80CPM.vhd:~352/361` |
-| `clk_sys` = 50 MHz; `clk_ram` = 112 MHz (100 fallback); `cpu_cen` 1-of-5 → T80 at 10 MHz | `MrZ80.sv:~238, 505-535`; `MicrocomputerZ80CPM.vhd:~322-326, 1168-1173` |
+| `clk_sys` = 50 MHz; `clk_ram` = **100 MHz fallback currently live** (`SDRAM_CLK_100`, `MrZ80.sv:~502`; 112 MHz tap remains a regression target — R15 correction); `cpu_cen` 1-of-5 → T80 at 10 MHz | `MrZ80.sv:~238, 505-535`; `MicrocomputerZ80CPM.vhd:~322-326, 1168-1173` |
 | `ClkEn <= CEN and not BusAck` (all progression CEN-gated); `BusReq_s` sampled each CEN edge; park at `T_Res`; while parked CEN pulses do nothing | `T80.vhd:~344, ~968, ~1033-1044` |
 | `CEN` already a `T80s` port; `MRD_T1` already exported; `MCycle`/`TState` still internal (P1 mod per D-08, now also exporting `Alternate`) | `T80s.vhd:~67-99, 128-135` |
 | **T80 outputs FREEZE (not tri-state) during hold** — mastering = explicit muxes (G-2) | grep `'Z'` in `Components/Z80`: 0 hits; `cpuAddress` `:147/366`; `cpuDataIn` mux `:~875-883` |
@@ -259,6 +277,11 @@ numbers are hints — grep the name.
 | CONF_STR bits in use 0, 9–11, 12, 13, **14 (`OE` flow — bit14 not free)**, 15, 16–19; download idx 1/2/5 used, 3/4 reserved ⇒ **6/7 allocate for MROM/MPKG (D-21)**; `OK`=bit20 valid | `MrZ80.sv:~382-408` |
 | Baud divider table exists (`O9B`, 115200…2400) — monitor UART takes the same select (session R4) | `MrZ80.sv:~763-764` |
 | 5 `clk_sys` per T-state; Mecrisp word ≈ 200 ns > one T-state ⇒ §4.3 split arithmetic | derived |
+| `[new R15]` **BUSRQ is granted at the `T_Res` of *any* M-cycle**, not only at instruction end ⇒ raw parks can land mid-instruction (D-25) | `T80.vhd:~1033-1042` |
+| `[new R15]` SDRAM speculative read is triggered by the T80's **`MRD_T1`** output; `n_M1` feeds the capture chain; MMU wait and SDRAM wait combine into `cpu_wait_n` ⇒ the engine must synthesize/sense these (D-26) | `MicrocomputerZ80CPM.vhd:~472, ~764, ~1090` |
+| `[new R15]` **Core IRQ models differ**: gracilis = standard `mtvec/mepc/mcause/mstatus` + `mret`, 64-bit `rdcycle`; picorv32 = custom `getq/setq/retirq/maskirq/waitirq/timer` (+ optional countdown-timer IRQ), `rdcycle` with `ENABLE_COUNTERS` | `femtorv32_gracilis.v:~292-316`; `picorv32.v:~652-757` |
+| `[new R15]` Bus interfaces: picorv32 `mem_valid/mem_ready/mem_wstrb` (+ look-ahead `mem_la_*`); gracilis `mem_rstrb`, `mem_wmask`, `mem_rbusy/mem_wbusy`, single `interrupt_request` | `picorv32.v:~93-107`; `femtorv32_gracilis.v:~26-38` |
+| `[new R15]` OSD status bits in use: 0, 9–19; allocated 20 (`OK`), reserved 21 (`OL`) ⇒ **22 (`OM`) = Serial Escape** | `MrZ80.sv` `CONF_STR` |
 
 ---
 
@@ -274,18 +297,20 @@ numbers are hints — grep the name.
  SNAC io4/io5 ◄──► fp_capture ─► fp_engine (hardware classic console)│[new v0.3]
  USER_OUT[6] ◄──── WS2812 PHY ◄── refresh ctrl ◄── FP_RAM_Store ◄─┐│
                                                                    ▼│
- ┌──────────────────┐   SimpleBus   ┌────────────────────────────────────────┐
- │ gracilis RV32IMC │──cmd/ack────►│ ssp_bridge @ 0x2000_0000 (4 KiB)      │
- │  ROM 64K (OSD-   │◄──ssp_irq────│ CTRL·STATUS·STEP·BP·TRAP·MD·AR·DR·PR   │
- │   downloadable)  │              │ MEM-SEQ engine (one door: FW ⇄ panel)  │
- │  RAM 64K         │              │ SNAP/LIVE REG · MAP0..3 (mmu tap)      │
- │  µs machine timer│              │ MON-CHAIN export(64b)·MBX·CONN_ROUTE   │
+ ┌──────────────────┐ SSP local bus ┌────────────────────────────────────────┐
+ │ RV32IMC — P0 pick│──valid/ready─►│ ssp_bridge @ 0x2000_0000 (4 KiB)      │
+ │ picorv32|gracilis│◄──ssp_irq────│ CTRL·STATUS·STEP·BP·TRAP·MD·AR·DR·PR   │
+ │  ROM 64K (OSD-   │  (optional,  │ µop sequencer (one door: FW ⇄ panel)   │
+ │   downloadable)  │   D-27)      │ SNAP/LIVE REG · MAP0..3 (mmu tap)      │
+ │  RAM 64K (all    │              │ SSP-CHAIN export(64b)·MBX·CONN_ROUTE   │
+ │   Forth, D-32)   │              │ TICK_US · ESC_CHAR (OM-gated, D-14)    │
  └──────────────────┘              │ WDG_RUN(4ms)+WDG_PARK(1-2s)·IRQ·ID     │
                                  └──┬──────────────────────────────┬──────────┘
-                                  │ busreq/wait/stretched-rst/     │ A·RD/WR/MREQ/IORQ
-                                  │ cen_gate·tramp·escape          │ mux sel + DI inject
+                                  │ busreq (insn_end-aligned,     │ A·D·strobes·MRD_T1·M1
+                                  │ D-25)/wait/rst/tramp/escape   │ + cpu_wait_n sense
                                   ▼                              ▼
-                    T80s (CEN · MC/TS/ALT export · REG[211:0] · CTEV* P2)
+                                  │      z80_bus_mux (D-26) — one select, BusAck-gated
+                    T80s (CEN · MC/TS/ALT/insn_end export · REG[211:0] · CTEV* P2)
                                   │
         memory system: MMU (untouched by monitor, tapped only) · BRAM mux ·
         SDRAM client FSM ── ssp_mem_client (parked physical, borrows wiring) ──┐
@@ -300,9 +325,12 @@ numbers are hints — grep the name.
 | `Components/RISCV/VexRiscv.v` + `.qip` | *Shelved (R12)* — vendored core path if reopened (OQ-21); provenance manifest + `gen/GenMrZ80.scala` + containerized regen (`tools/vexgen.sh`, §5.7) all specced, nothing scheduled |
 | `ssp/rtl/ssp_top.v` | Subsystem wrapper: core + ROM + RAM + decoder + `ssp_uart` + `ssp_bridge`; sideband bundle to CPM; `ssp_irq` out; guest controls out; `SSP_CHAIN[63:0]` export |
 | `ssp/rtl/ssp_bridge.v` | §6 register file; shared functional registers (MD/AR/DR/PR); MEM-SEQ engine + arbiter; STEP assist; BP/trap; WDG×2; IRQ; ID |
-| `ssp/rtl/ssp_uart.v` | 8N1 UART, divider select from `O9B` table index (D-22 session R4); RX FIFO (8) `[proposed]`; RX-byte → escape-break + IRQ |
+| `ssp/rtl/ssp_uart.v` | 8N1 UART, divider select from `O9B` table index (session R4, §5.3); RX FIFO (8) `[proposed]`; **escape-character recognizer** on the SNAC RX stream (`ESC_CHAR`, OSD `OM`-gated, D-14 rev R15) → boundary park + console hand-over; sticky `rx`/`esc` status bits |
+| `ssp/rtl/z80_bus_mux.vhd` | `[new R15]` D-26 single mux at the T80 output boundary (A, D-out, strobes, `MRD_T1`, `M1_n`; `cpu_wait_n` sense back to the sequencer); select BusAck-gated (P-A); lives at the CPM-core boundary (VHDL, beside the T80) |
+| `ssp/regs/ssp_regs.csv` + `tools/ssp_regmap.py` | `[new R15]` D-29 single-source register map → `ssp_regs.vh`, `ssp-regs.fs`, §6 Markdown table |
+| `sim/` | `[new R15]` D-28: `sim/ssp/` (Verilator: cores + bridge + BFM, Mecrisp REPL) and `sim/integ/` (Questa-Intel Starter / GHDL: T80 + MMU + SDRAM client FSM + mux); Makefile targets = §13 TB names |
 | `ssp/rtl/fp_capture.v` | 68-bit shift-in, debounce (4-sample ~2 ms), quadrature/press decode, menu-counter (+commit latch), frame-error detect; single source of truth feeding `fp_engine`, bridge mirror regs, **and** the guest sense-port mux ($FC–$FF/$FB, §11.6) |
-| `ssp/rtl/fp_engine.v` | **Hardware classic-console executor** (D-18, §11.3): SPDT command decode, AR/DR/MD/PR state, auto-increment, kicks MEM-SEQ/STEP/RESET primitives, lamp-state outputs; event+log to FW |
+| `ssp/rtl/fp_engine.v` | **Hardware classic-console executor** (D-18, §11.3): SPDT command decode → **macro index into the shared micro-op sequencer** (D-30, R15); AR/DR/MD/PR state, auto-increment, lamp-state outputs; event+log to FW |
 | `ssp/rtl/ssp_mem_client.v` | Parked physical SDRAM/BRAM client (D-15-P): drives existing client interface + BRAM mux while guest-parked ∧ primary client idle; native DQM byte lanes |
 | `ssp/rtl/ssp_sd.v` | (P2) vid-port background READ client; clk_ram CDC per existing pattern |
 | `ssp/fw/*` | Mecrisp-Quintus build: `crt0.S`, linker, kernel glue, ODT app sources → `forth_rom.hex` (factory ROM init image) + pack files |
@@ -315,7 +343,7 @@ capture-chain input; `FP_RAM_Store` Port-A ownership mux (§11.5).
 
 ### 4.3 Split arithmetic (why this and not more FW) `[decided]`
 50 MHz vs 10 MHz Z80 ⇒ 5 `clk_sys`/T-state; a Mecrisp word ≈ 10 instr ≈
-200 ns > one T-state; SimpleBus round-trip ≈ RV-side stall. Human-speed
+200 ns > one T-state; SSP-local-bus round-trip ≈ RV-side stall. Human-speed
 events (switches, keys, bytes, ms-scale budgets) → FW with vast margin.
 Cycle-boundary functions → bridge (P-C). Panel *operation sequencing* is
 human-speed — but D-18 places it in HW anyway (owner preference: FW stays
@@ -330,24 +358,31 @@ two controllers, one engine (G-3).
 
 ### 5.1 Core configuration (D-09, D-20)
 RV32IMC · no caches/MMU · ITCM/DTCM tightly-coupled · machine mode ·
-1 MHz machine soft-timer · external IRQ input (level from `|IRQ_PENDING`) ·
-SimpleBus master with stall-tolerant slave contract · reset = `locked ∧
-core_reset ∧ !ssp subsystem_reset` (monitor up **before** any guest image).
-No JTAG plugin (UART *is* the debugger). Fallback: PicoRV32 (§5.6).
+time base = bridge **`TICK_US`** MMIO counter (+ `rdcycle`; D-20 rev R15) ·
+external IRQ input wired (level from `|IRQ_PENDING`) but **unused by v1 FW**
+(polled, D-27) · SSP-local-bus master (valid/ready, stall-tolerant slave
+contract, D-11) · reset = `locked ∧ core_reset ∧ !ssp_subsystem_reset`
+(monitor up **before** any guest image). No JTAG (UART *is* the debugger).
+Core = P0 bake-off pick (picorv32 `COMPRESSED_ISA` or gracilis, §5.6/§5.8).
 
 ### 5.2 Memory map
 | Range | Content |
 |---|---|
 | `0x0000_0000–0x0000_FFFF` | "ROM" — 64 KiB M10K, **RV read-only**; download write-port (ioctl route, only while monitor held in reset during mount); factory init from committed `ssp/fw/forth_rom.hex`; downloaded image persists across core resets, full FPGA reconfig restores factory (D-10) |
-| `0x1000_0000–0x1000_FFFF` | DTCM RAM 64 KiB byte-enable: BSS + dictionary + **pack staging** (§5.5) |
+| `0x1000_0000–0x1000_FFFF` | DTCM RAM 64 KiB byte-enable: Mecrisp RAM variables + stacks + **the entire compiled dictionary** (RAM-only, D-32) + **pack staging** (§5.4) |
 | `0x2000_0000–0x2000_0FFF` | `ssp_bridge` (§6) |
 | else | decoder error → `resp.error`; FW trap word prints |
 
 ### 5.3 Console UART
 8N1; divider = existing `O9B` table select (single baud truth for the SNAC
 connector, session R4; 115200 = ÷27 from 50 MHz ⇒ +0.47 %). No RTS/CTS for
-the monitor (G/decision R4): TX blocks on ready, RX FIFO drains via IRQ or
-poll. Escape-break on first RX byte while guest runs (D-14, HW).
+the monitor (G/decision R4): TX blocks on ready, RX FIFO drains by polling
+(D-27). **Escape (D-14, rev R15):** a hardware recognizer compares each SNAC
+RX byte with `ESC_CHAR` (reset default `0x1D` = `^]`) only while OSD `OM`
+("Serial Escape") is On; a match while the guest runs parks it at the next
+instruction boundary (reason=escape), hands the console to the SSP and
+consumes the byte. With `OM` Off the link is bit-transparent to whoever
+owns it.
 
 ### 5.4 Downloadable ROM & packs (D-21)
 - `MROM` (index 6): RV32 image `ssp/fw` build output (`forth.bin`→
@@ -367,11 +402,18 @@ poll. Escape-break on first RX byte while guest runs (D-14, HW).
 ### 5.5 Firmware structure (Mecrisp-Quintus)
 `crt0.S` trap vector → Forth dispatcher; stack-register convention verified
 against the chosen port during P0 (was OQ-09b — P0 checklist item, carried).
-Glue primitives: `serial-key?`, `serial-key`, `serial-emit`, `milliseconds`.
-IRQ dispatcher on `IRQ_PENDING`: bp→halt line + REPL; trap→log/release;
-fpevent→panel-op mirror update (comments, disassemble-last); rx→escape;
-wdg→console-dead report. Main loop: parked→REPL `.`; running→background
-(pump panel mirror, service traps, kick both WDGs, `CONN_ROUTE` service).
+Glue primitives: `serial-key?`, `serial-key`, `serial-emit`, `milliseconds`
+(reads `TICK_US`). **Memory model (D-32, R15):** RAM-only — `compiletoram`
+throughout; kernel executes from the MROM image, every compiled word lives in
+DTCM; Mecrisp's flash-write primitives are stubbed to an error; no flash
+emulation. **Event handling (D-27, R15): polled** — the main loop reads the
+sticky `IRQ_PENDING` bits and dispatches: bp/esc→halt line + REPL;
+trap→log/release; fp_done→panel-op mirror update (comments,
+disassemble-last); mbx→mailbox service; wdg→console-dead report; W1C after
+handling. Loop body: parked→REPL `.`; running→background (pump panel mirror,
+service traps, kick both WDGs, `CONN_ROUTE` service). The core's IRQ
+mechanism is unused in v1, so the same FW source runs on either P0 core
+(only `crt0.S` differs).
 `F`⇄`ODT` raw-Forth / ODT-skin switch (session posture: ODT syntax is a
 skin over a scriptable core).
 
@@ -395,135 +437,12 @@ note: post-R12/R14 the *entire* toolchain surface is distro
 packages; the §5.7 container path belongs only to the shelved VexRiscv
 route (OQ-21).
 
-### 5.8 FemtoRV32 — evaluated alternative core (R11, owner-initiated 2026-10-26)
-
-Owner directive: investigate **FemtoRV** as the debugger CPU. Strong fit
-signals: it is pure Verilog (no generation/build system anywhere), it is
-the softcore family **co-developed with Matthias Koch** — Mecrisp's author —
-and ships inside the official Mecrisp-Quintus distribution, so the
-firmware alignment we already rely on is first-party.
-
-**Source of record:** <https://github.com/BrunoLevy/learn-fpga/tree/master/FemtoRV/RTL/PROCESSOR>
-("FemtoRV processor collection"); background reading:
-<https://deepwiki.com/BrunoLevy/learn-fpga/3-femtorv32-processor-design>.
-
-Variant table (from the repo README, 2026-10):
-
-| File | ISA | Notes (repo description, condensed) |
-|---|---|---|
-| `femtorv32_quark.v` | RV32I | Smallest; bit-serial shifter (tiny-FPGA target) |
-| `femtorv32_quark_bicycle.v` | RV32I | Quark + barrel shifter; best CPI of the family |
-| `femtorv32_tachyon.v` | RV32I | Exec split in two stages for higher fmax, worse CPI |
-| `femtorv32_electron.v` | RV32IM | Barrel shifter + mul/div |
-| `femtorv32_intermissum.v` | RV32IM + IRQ | Full interrupt support + CSR registers |
-| **`femtorv32_gracilis.v`** | **RV32IMC + IRQ** | Compressed instructions — "saves both RAM usage and memory fetch cycles"; repo-recommended general-purpose part → **primary eval target** |
-| `femtorv32_individua.v` | RV32IMAC + IRQ | + atomics ("useful for tricky interrupt handlers") |
-| `femtorv32_petitbateau.v` | RV32IMFC + IRQ | Floating point (not needed; listed for completeness) |
-
-**Why it earns an evaluation slot:**
-- `gracilis` = RV32IMC + IRQ matches our §5.1 ISA requirement *exactly*,
-  including the compressed encoding the owner flags for **future memory
-  footprint concerns** (RVC ≈ 25–30 % smaller code images; Mecrisp
-  kernels are 18–30 KiB against our 64 KiB MROM budget).
-- Its IRQ model is PicoRV32-derived *custom-CSR* — deliberately simple,
-  which is precisely the "IRQ via pending-register dispatch" model R1
-  chose; no CLINT/PLIC machinery to bolt on.
-- Footprint: family-scale ≈ a few hundred ALUTs — comfortably below any
-  VexRiscv config; frees budget (LUTs *and* M10K) vs D-09's incumbent.
-- Compressed variant addresses footprint *without* the LiteX-style caches
-  we rejected; higher performance than PicoRV32 at similar size per the
-  family README positioning. `[verify]`
-
-**Deltas to verify at spike (vs §5.1):** (1) **machine soft-timer** —
-confirm CSR mtime/mtimecmp presence; if absent, the tick moves to an MMIO
-counter in `ssp_bridge` (our `milliseconds` glue reads it — trivial FW
-change, negligible budget); (2) interrupt *latency & nesting* semantics vs
-R-13-era dispatch assumptions; (3) repo license compatibility for vendoring
-(learn-fpga is openly published; verify exact terms at checkout);
-(4) external-reset-vector & stall-tolerant slave contract on its simple
-buses; (5) Quartus 17.0 fmax/area on `5CSEBA6U23I7` (Verilog-2001, so
-expected uneventful).
-
-**Disposition (superseded by R12 — see D-09):** gracilis is the **P0
-primary core**, not merely a candidate; VexRiscv shelved (reopen = OQ-21
-measured drivers); PicoRV32 remains the baseline fallback.
-
-**R14 addendum — PicoRV32 elevated to co-candidate (external research,
-owner-forwarded 2026-10-26).** The forwarded recommendation: PicoRV32 for
-formal verification pedigree, simple valid/ready memory interface, documented
-custom-IRQ mechanism, deep docs/examples (PicoSoC), ISC license; "slow is
-fine for a support processor"; FemtoRV framed as tiny-iCE40-oriented, less
-documented/formally verified, FemtoSoC-wrapper-oriented, no atomics.
-Assessment against *our* specifics:
-- *Endorsed:* riscv-formal pedigree is the strongest argument, and the one
-  that matters most for a **debug host** — the core we trust to inspect
-  everything else must itself be beyond doubt; picorv32 is riscv-formal's
-  reference target (optional eqy-container run at P0, off critical path).
-  Memory-interface simplicity genuinely suits the `ssp_top` decoder;
-  ecosystem depth (PicoSoC, decades of field use incl. Quartus/Cyclone V)
-  is real; speed non-issue matches our §4.3-class arithmetic.
-- *Corrected for context:* RV32C exists on picorv32 (`COMPRESSED_ISA`
-  parameter) ⇒ gracilis's footprint/coding-density advantage **neutralized**;
-  **neither** core implements standard `mtime` ⇒ the bridge-MMIO 1 MHz tick
-  (R12 verify item) is *common* design work, not a gracilis penalty; the
-  atomics critique cuts both ways — picorv32 lacks the A extension too, and
-  Mecrisp doesn't need it; gracilis is not "unverified" — it *ships in the
-  official Mecrisp-Quintus distribution* running the exact Forth we will
-  run, and the family's custom-IRQ encodings are **PicoRV32-lineage**, so
-  FW IRQ glue is near-portable across the finalists (the FW bet survives
-  either pick).
-- *External "design considerations" already in our architecture*
-  (corroboration, not new work): private program/data RAM = D-10 MROM/DTCM
-  (unreachable from the Z80 bus); Z80 halt/reset control = `CTRL`
-  `z_busreq/z_wait/z_rst` + `cen_gate` — stronger than the generic
-  WAIT-advice, and carrying our *verified* T80 nuance (FREEZE, never
-  tri-state ⇒ explicit muxes, P-D/G-2); explicit CDC = level-req +
-  toggle-done idiom (§9.2/SDRAM plan); HPS-vs-SSP job split = D-19 console
-  routing + P3 HPS-path eval (HPS = storage/config/archive host; SSP =
-  runtime observation + panel + fast reaction — deliberately no Linux
-  duplication on the board).
-
-**P0 bake-off criteria `[proposed, decide at P0 exit]`:**
-
-| Criterion | How measured | Weight |
-|---|---|---|
-| Trust / pedigree | riscv-formal pass on picorv32 (eqy container, optional-but-recommended); field history (picorv32 broad & long; gracilis = shipped-Mecrisp targets) | **highest** — debug host must be beyond doubt |
-| ISA parity | RV32IMC both ways (`COMPRESSED_ISA` vs native) | parity |
-| Bus-fit to `ssp_top` | wrapper LOC + `fit.rpt` timing on the IBus/DBus↔ROM/DTCM/decoder shim, per core | high |
-| IRQ glue | same lineage both cores; smoke-test SWI/EOI/GETI path through `ssp_bridge` IRQs | parity (verify) |
-| Timer | no `mtime` on either ⇒ bridge MMIO tick shared design (§6, `[new]` reg slot at P0 map freeze) | parity |
-| Quartus 17.0 on `5CSEBA6U23I7` | `fit.rpt` ×2 area/fmax | medium (both expected easy) |
-| Docs / community | picorv32 deeper; learn-fpga tutorials adequate, lighter | medium |
-| License | ISC (picorv32) vs learn-fpga terms `[check]` | low (both permissive-family) |
-
-**Working lean `[proposed]`:** if the riscv-formal run executes, **picorv32
-+ `COMPRESSED_ISA`** takes it on trust + ecosystem at zero ISA/footprint
-cost; gracilis overturns only if its bus-fit or Mecrisp bring-up is
-*measurably* cheaper at P0. Either way Mecrisp glue is ~portable, so the
-decision is reversible long after P0.
-
-**Cross-development toolchain `[decided R12]`:** packaged **GNU
-`riscv64-unknown-elf-*`** toolchain (distro package, e.g. Debian/Ubuntu
-`gcc-riscv64-unknown-elf`; riscv-collab prebuilt tarball as the
-no-package fallback). *An RV64 toolchain emitting RV32IMC is correct and is
-standard FPGA practice* — the ISA is chosen per-invocation, not at
-compiler-build time:
-`riscv64-unknown-elf-gcc -march=rv32imc_zicsr_zifencei -mabi=ilp32`
-(LiteX/picorv32/FemtoRV SoCs are all built this way). Notes:
-(a) binutils ≥ 2.38 moved CSR/fence-i ops into `Zicsr`/`Zifencei` — the
-march suffix is *required* or `csrr/csrw` glue (gracilis custom-CSR IRQ
-code) won't assemble;
-(b) multilib (`-print-multi-lib`) supplies rv32 runtime libs, but the
-freestanding Mecrisp kernel needs essentially none (mul/div are
-instructions) — a multilib-less chain still builds it;
-(c) bare-metal `unknown-elf` triplet, never `riscv64-linux-gnu`;
-(d) one toolchain covers both candidate cores — the PicoRV32 fallback adds
-zero further tooling.
-
 ### 5.7 Containerized generation of the VexRiscv configuration ("vexgen")
 
-> **SHELVED (R12, 2026-10-26).** VexRiscv work is deferred — P0 executes on
-> FemtoRV32-gracilis (§5.8/D-09). This section is retained as
+> **SHELVED (R12, 2026-10-26).** VexRiscv work is deferred — P0 is the
+> picorv32 ⟷ gracilis bake-off (R14, §5.8/D-09). Bus/timer wording below
+> ("SimpleBus", mtime) is VexRiscv-specific and does not apply to the P0
+> cores. This section is retained as
 > ready-to-execute guidance should the shelved path reopen (OQ-21);
 > nothing here is installed or scheduled.
 
@@ -587,19 +506,159 @@ pin). Pre-generated VexRiscv files elsewhere (m-labs/VexRiscv-verilog
 wrong plugin sets (no RV32C, or MMU+caches); they are config references
 only.
 
+### 5.8 FemtoRV32 — evaluated alternative core (R11, owner-initiated 2026-10-26)
+
+Owner directive: investigate **FemtoRV** as the debugger CPU. Strong fit
+signals: it is pure Verilog (no generation/build system anywhere), it is
+the softcore family **co-developed with Matthias Koch** — Mecrisp's author —
+and ships inside the official Mecrisp-Quintus distribution, so the
+firmware alignment we already rely on is first-party.
+
+**Source of record:** <https://github.com/BrunoLevy/learn-fpga/tree/master/FemtoRV/RTL/PROCESSOR>
+("FemtoRV processor collection"); background reading:
+<https://deepwiki.com/BrunoLevy/learn-fpga/3-femtorv32-processor-design>.
+
+Variant table (from the repo README, 2026-10):
+
+| File | ISA | Notes (repo description, condensed) |
+|---|---|---|
+| `femtorv32_quark.v` | RV32I | Smallest; bit-serial shifter (tiny-FPGA target) |
+| `femtorv32_quark_bicycle.v` | RV32I | Quark + barrel shifter; best CPI of the family |
+| `femtorv32_tachyon.v` | RV32I | Exec split in two stages for higher fmax, worse CPI |
+| `femtorv32_electron.v` | RV32IM | Barrel shifter + mul/div |
+| `femtorv32_intermissum.v` | RV32IM + IRQ | Full interrupt support + CSR registers |
+| **`femtorv32_gracilis.v`** | **RV32IMC + IRQ** | Compressed instructions — "saves both RAM usage and memory fetch cycles"; repo-recommended general-purpose part → **primary eval target** |
+| `femtorv32_individua.v` | RV32IMAC + IRQ | + atomics ("useful for tricky interrupt handlers") |
+| `femtorv32_petitbateau.v` | RV32IMFC + IRQ | Floating point (not needed; listed for completeness) |
+
+**Why it earns an evaluation slot:**
+- `gracilis` = RV32IMC + IRQ matches our §5.1 ISA requirement *exactly*,
+  including the compressed encoding the owner flags for **future memory
+  footprint concerns** (RVC ≈ 25–30 % smaller code images; Mecrisp
+  kernels are 18–30 KiB against our 64 KiB MROM budget).
+- Its IRQ model is PicoRV32-derived *custom-CSR* — deliberately simple,
+  which is precisely the "IRQ via pending-register dispatch" model R1
+  chose; no CLINT/PLIC machinery to bolt on. **[R15 erratum: wrong —
+  gracilis implements the *standard* `mtvec/mepc/mcause/mstatus` CSRs +
+  `mret`; it is picorv32 that uses custom instructions. See §3 and D-27.]**
+- Footprint: family-scale ≈ a few hundred ALUTs — comfortably below any
+  VexRiscv config; frees budget (LUTs *and* M10K) vs D-09's incumbent.
+- Compressed variant addresses footprint *without* the LiteX-style caches
+  we rejected; higher performance than PicoRV32 at similar size per the
+  family README positioning. `[verify]`
+
+**Deltas to verify at spike (vs §5.1):** (1) **machine soft-timer** —
+confirm CSR mtime/mtimecmp presence; if absent, the tick moves to an MMIO
+counter in `ssp_bridge` (our `milliseconds` glue reads it — trivial FW
+change, negligible budget); (2) interrupt *latency & nesting* semantics vs
+R-13-era dispatch assumptions; (3) repo license compatibility for vendoring
+(learn-fpga is openly published; verify exact terms at checkout);
+(4) external-reset-vector & stall-tolerant slave contract on its simple
+buses; (5) Quartus 17.0 fmax/area on `5CSEBA6U23I7` (Verilog-2001, so
+expected uneventful).
+
+**Disposition (superseded by R12, then R14 — see D-09):** gracilis is the **P0
+primary core**, not merely a candidate; VexRiscv shelved (reopen = OQ-21
+measured drivers); PicoRV32 remains the baseline fallback. *(R14: now a
+two-core bake-off; both cores vendored 2026-10-26 in `Components/RISCV/`.)*
+
+**R14 addendum — PicoRV32 elevated to co-candidate (external research,
+owner-forwarded 2026-10-26).** The forwarded recommendation: PicoRV32 for
+formal verification pedigree, simple valid/ready memory interface, documented
+custom-IRQ mechanism, deep docs/examples (PicoSoC), ISC license; "slow is
+fine for a support processor"; FemtoRV framed as tiny-iCE40-oriented, less
+documented/formally verified, FemtoSoC-wrapper-oriented, no atomics.
+Assessment against *our* specifics:
+- *Endorsed:* riscv-formal pedigree is the strongest argument, and the one
+  that matters most for a **debug host** — the core we trust to inspect
+  everything else must itself be beyond doubt; picorv32 is riscv-formal's
+  reference target (optional eqy-container run at P0, off critical path).
+  Memory-interface simplicity genuinely suits the `ssp_top` decoder;
+  ecosystem depth (PicoSoC, decades of field use incl. Quartus/Cyclone V)
+  is real; speed non-issue matches our §4.3-class arithmetic.
+- *Corrected for context:* RV32C exists on picorv32 (`COMPRESSED_ISA`
+  parameter) ⇒ gracilis's footprint/coding-density advantage **neutralized**;
+  **neither** core implements standard `mtime` ⇒ the bridge-MMIO 1 MHz tick
+  (R12 verify item) is *common* design work, not a gracilis penalty; the
+  atomics critique cuts both ways — picorv32 lacks the A extension too, and
+  Mecrisp doesn't need it; gracilis is not "unverified" — it *ships in the
+  official Mecrisp-Quintus distribution* running the exact Forth we will
+  run, and the family's custom-IRQ encodings are **PicoRV32-lineage**, so
+  FW IRQ glue is near-portable across the finalists (the FW bet survives
+  either pick). **[R15 erratum: the IRQ-portability claim is false — the
+  two IRQ models are unrelated (gracilis standard CSRs/`mret`; picorv32
+  `getq/setq/retirq/maskirq/waitirq/timer`). Portability is restored by
+  design instead: v1 FW is polled (D-27), so only `crt0.S` differs. Also:
+  Mecrisp-Quintus's *first* target was PicoSoC (picorv32), so both cores
+  have first-party Mecrisp lineage.]**
+- *External "design considerations" already in our architecture*
+  (corroboration, not new work): private program/data RAM = D-10 MROM/DTCM
+  (unreachable from the Z80 bus); Z80 halt/reset control = `CTRL`
+  `z_busreq/z_wait/z_rst` + `cen_gate` — stronger than the generic
+  WAIT-advice, and carrying our *verified* T80 nuance (FREEZE, never
+  tri-state ⇒ explicit muxes, P-D/G-2); explicit CDC = level-req +
+  toggle-done idiom (§9.2/SDRAM plan); HPS-vs-SSP job split = D-19 console
+  routing + P3 HPS-path eval (HPS = storage/config/archive host; SSP =
+  runtime observation + panel + fast reaction — deliberately no Linux
+  duplication on the board).
+
+**P0 bake-off criteria `[proposed, decide at P0 exit]`:**
+
+| Criterion | How measured | Weight |
+|---|---|---|
+| Trust / pedigree | riscv-formal pass on picorv32 (eqy container, optional-but-recommended); field history (picorv32 broad & long, incl. Mecrisp-Quintus's original PicoSoC target; gracilis = shipped-Mecrisp targets) | **highest** — debug host must be beyond doubt |
+| ISA parity | RV32IMC both ways (`COMPRESSED_ISA` vs native) | parity |
+| Bus-fit to `ssp_top` | wrapper LOC + `fit.rpt` timing on the local-bus↔ROM/DTCM/decoder shim, per core (picorv32 valid/ready native; gracilis rstrb/wmask/busy shim) | high |
+| Timer | no `mtime` on either ⇒ bridge `TICK_US` shared design (§6) | parity |
+| Quartus 17.0 on `5CSEBA6U23I7` | `fit.rpt` ×2 area/fmax | medium (both expected easy) |
+| Mecrisp bring-up effort in sim | `crt0.S` + glue LOC and time-to-REPL in Verilator (D-28), per core | medium |
+| Docs / community | picorv32 deeper; learn-fpga tutorials adequate, lighter | medium |
+| License | ISC (picorv32) vs BSD-3-Clause (learn-fpga) — **checked, both fine** (`Components/RISCV/PROVENANCE.md`) | closed |
+
+*R15: the "IRQ glue — parity" row is removed (the claim was false, and the
+question is moot under polled v1 FW, D-27).*
+
+**Working lean `[proposed]`:** if the riscv-formal run executes, **picorv32
++ `COMPRESSED_ISA`** takes it on trust + ecosystem at zero ISA/footprint
+cost; gracilis overturns only if its bus-fit or Mecrisp bring-up is
+*measurably* cheaper at P0. With polled FW (D-27) the FW differs only in
+`crt0.S`, so the decision stays reversible long after P0. (R15 strengthened
+this lean: picorv32 also has first-party Mecrisp lineage.)
+
+**Cross-development toolchain `[decided R12]`:** packaged **GNU
+`riscv64-unknown-elf-*`** toolchain (distro package, e.g. Debian/Ubuntu
+`gcc-riscv64-unknown-elf`; riscv-collab prebuilt tarball as the
+no-package fallback). *An RV64 toolchain emitting RV32IMC is correct and is
+standard FPGA practice* — the ISA is chosen per-invocation, not at
+compiler-build time:
+`riscv64-unknown-elf-gcc -march=rv32imc_zicsr_zifencei -mabi=ilp32`
+(LiteX/picorv32/FemtoRV SoCs are all built this way). Notes:
+(a) binutils ≥ 2.38 moved CSR/fence-i ops into `Zicsr`/`Zifencei` — the
+march suffix is *required* or `csrr/csrw` glue (gracilis standard-CSR
+code, `rdcycle`) won't assemble;
+(b) multilib (`-print-multi-lib`) supplies rv32 runtime libs, but the
+freestanding Mecrisp kernel needs essentially none (mul/div are
+instructions) — a multilib-less chain still builds it;
+(c) bare-metal `unknown-elf` triplet, never `riscv64-linux-gnu`;
+(d) one toolchain covers both candidate cores — the PicoRV32 fallback adds
+zero further tooling.
+
 ---
 
 ## 6. Debug Bridge (`ssp_bridge`) — MMIO map (v0.3)
 
 Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 `fp_engine` (G-3: single door, dual controllers).
+**R15 (D-29):** this table becomes a *generated* artefact of
+`ssp/regs/ssp_regs.csv` once RTL starts; until then it is the seed for that
+CSV. All event bits are **sticky W1C** so polled FW is correct (D-27).
 
 | Off | Reg | Acc | Description |
 |---|---|---|---|
 | 0x00 | `ID` | R | `0x4D52_5A03` rev-stamped |
-| 0x04 | `CTRL` | RW | bit0 `z_rst_n` · bit1 `z_busreq_n`(FW hold) · bit2 `z_wait_n` · bit3 `cen_gate` · bit4 `tramp_en` · bit5 `esc_break_en` · bit8 `console_own` · bit9 `panel_lock` (G-8: gates panel RUN/START only; auto-clears on WDG_PARK expiry/escape/OK-off/MROM mount); **forced inactive when `!ssp_active`**; park sources = FW hold ∨ engine stop-latch (D-13) |
+| 0x04 | `CTRL` | RW | bit0 `z_rst_n` · bit1 `z_busreq_n`(FW hold) · bit2 `z_wait_n` · bit3 `cen_gate` · bit4 `tramp_en` · bit5 `esc_break_en` (reset 1; effective only with OSD `OM` On — FW can disable, never override the OSD, D-14) · bit8 `console_own` · bit9 `panel_lock` (G-8: gates panel RUN/START only; auto-clears on WDG_PARK expiry/escape/OK-off/MROM mount); **forced inactive when `!ssp_active`**; park sources = FW hold ∨ engine stop-latch (D-13) |
 | 0x08 | `TRAMP_ADDR` | RW | `G aaaa`/START target |
-| 0x0C | `STATUS` | R | `BusAck, HALT_n, M1_n, MC, TS, ALT (new P1), cpu_running, ssp_active, s32, fw_console_ok, eng_stop_latch, seq_busy, wdg_dead` |
+| 0x0C | `STATUS` | R | `BusAck, HALT_n, M1_n, MC, TS, ALT (new P1), cpu_running, ssp_active, s32, fw_console_ok, eng_stop_latch, seq_busy, wdg_dead`, **`at_boundary`** (R15/D-25: park landed on an instruction boundary ⇒ snapshot architectural), **`osd_esc_en`** (live OSD `OM`) |
 | 0x10 | `HALT_REASON` | R/clr | §10.4 codes (+`wdg`) |
 | 0x14 | `PC_LATCH` | R | match/park PC |
 | 0x18–0x30 | `SNAP_REG0..6` | R | `REG` frozen at park/match instant (R-snapshot discipline) |
@@ -608,7 +667,7 @@ Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 | 0x54–0x60 | `BP0..BP3` | RW | `{en, addr}` |
 | 0x64 | `BP_SKIP` | RW | suppress-next-match mask (`C`) |
 | 0x68–0x70 | `TRAP_CTL/ADDR/DATA` | RW | I/O trap `{en, wait_stall, rnw}` / port / `{mask, val}` |
-| 0x74 | `MEM_CTL` | RW | **shared engine kick**: `{start, rnw, is_io}`; busy/done/timeout readback — arbitrated: panel-op-in-progress blocks FW kick, else panel wins simultaneous kick (engine priority) |
+| 0x74 | `MEM_CTL` | RW | **shared engine kick**: `{start, rnw, is_io}`; busy/done/timeout readback — arbitrated: panel-op-in-progress blocks FW kick, else panel wins simultaneous kick (engine priority). R15/D-30: a FW kick enqueues a one-step macro on the same micro-op sequencer the panel uses; arbitration per macro |
 | 0x78 | `MEM_ADDR` | RW | `[shared]` op address: source = `AR` (mem) or `PR` (port) when kick bit `use_shared` set; explicit-value kicks allowed for FW scripted ops |
 | 0x7C | `MEM_DATA` | RW | read = captured byte (latched at strobe **release**, `rd_done` discipline) · write = data-out (staged; source `DR` when `use_shared`) |
 | 0x80 | `MD` | RW/clr | `[shared]` addressing mode: 0=logical(16b), 1=physical(28b) — tracks panel S31, FW `PHY`/`LOG` write |
@@ -619,7 +678,7 @@ Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 | 0x94 | `ENG_LOG_ADDR` / 0x98 `ENG_LOG_DATA` | R/clr | last panel operation address/data (FW mirror, IRQ `fp` source) |
 | 0xA0–0xAC | `SD_ADDR/SD_WDATA/SD_RDATA/SD_CTL` | RW/R | vid-port background window (P2; reads only — `SD_CTL.err` on write attempts until D-15-B revisit) |
 | 0xB0 | `WDG_RUN_KICK` · 0xB4 `WDG_PARK_KICK` · 0xB8 `WDG_STAT` | WO/WO/R | two-tier watchdog (§6.9); `WDG_STAT {run_expiredL, park_deadL, park_timer}` |
-| 0xC0 | `IRQ_EN` / 0xC4 `IRQ_PENDING` (W1C) | RW | `bp0..3, trap, rx, fp_done, map_changed?, sd_done, wdg_park` |
+| 0xC0 | `IRQ_EN` / 0xC4 `IRQ_PENDING` (W1C) | RW | `bp0..3, trap, rx, esc, mbx, fp_done, map_changed?, sd_done, wdg_park` — **sticky event register, polled by v1 FW** (D-27); `IRQ_EN` only gates the optional IRQ line |
 | 0xC8 | `CONN_ROUTE` | RW | `{out_snac=1 default, out_hdmi(P2), in_snac=1 default, in_kbd(P3)}` — FW policy, HW fail-safe defaults on reset/`wdg_park` (D-19) |
 | 0xD0–0xDC | `MBX0..3` | RW | guest mirror ($D0–$D3); guest write → IRQ `fp_done`-class new bit `mbx` |
 | 0xE0–0xEC | `MAP0..MAP3` | R | **MMU frame tap**: `{valid, page[13:0]}` ×4 — FW translation shadow, state-neutral (P-D) |
@@ -630,6 +689,8 @@ Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 | 0x104 | `FP_FN` | R | live debounced SPDT function-line levels (18 lines incl. MMU-EXAM/DEPOSIT at bits 17:16, R10, §11.2) — FW snoop of panel activity |
 | 0x108 | `FP_ENC_CNT` | R | menu-selection counter — same source as guest port $FB (§11.6) |
 | 0x10C | `FP_ENC_STAT` | R/W1C | `{committed[7:0](15:8), page_id[2:0], dbl_zero_evt, commit_evt, press_evt}` — press commits page (cursor **held**, D-23); rapid double-press zeroes cursor w/o commit; FW may subscribe instead of polling |
+| 0x110 | `ESC_CHAR` | RW | `[new R15]` serial escape character (reset `0x1D` = `^]`); recognizer active only with OSD `OM` On ∧ `CTRL.esc_break_en` (D-14) |
+| 0x114 | `TICK_US` | R | `[new R15]` free-running 32-bit 1 MHz counter (D-20; `milliseconds` glue) |
 | 0xFF0 | `DEC_ERR_COUNT` | R | unimplemented-offset counter |
 
 `SSP_CHAIN[63:0]` is a structural output of `ssp_bridge` (not MMIO-readable
@@ -653,10 +714,23 @@ classic semantics, released by panel RUN or escape (P-B).
 
 ## 7. Z80 CPU Control Semantics (v0.1 §5 carried; actor = FW or panel engine)
 
-7.1 HALT: assert busreq (FW `CTRL` or panel STOP) → park at M-cycle `T_Res`;
-self-consistent state; exact resume; R frozen by snapshot discipline.
+7.1 HALT: park request (FW `CTRL`, panel STOP, escape) → **released to
+`BUSRQ_n` only at `insn_end`** (D-25, R15) → park at that instruction's last
+`T_Res`; architectural state (`STATUS.at_boundary`=1); exact resume; R
+frozen by snapshot discipline. *(Pre-R15 text said "park at M-cycle
+`T_Res`" — true of the T80 but unsafe: any M-cycle qualifies.)*
 7.2 S/T/X steps: `STEP_CTL` one-shot semantics (v0.1 §5.2 table) — panel
-Step pair drives the same register.
+Step pair drives the same register. STEP INSN = release, re-park at the
+next `insn_end` (prefix bytes do not count, D-25). MCYCLE/TSTATE steps park
+off-boundary by design ⇒ `at_boundary`=0 and `R` prints a "mid-instruction"
+warning.
+7.2b `[new R15]` **Boundary rules (D-25):** prefixes DD/FD/CB/ED are part
+of their instruction (no park between prefix and opcode); HALT state parks
+anywhere (PC = HALT+1, matching Z80 behaviour); an INT/NMI acknowledge
+sequence completes before park; EI's one-instruction interrupt shadow is
+preserved across a step; LDIR-class instructions park per iteration (PC
+re-points at the instruction). `insn_end` is produced inside `T80s` by the
+D-08 port-out mod, which therefore exports MC/TS/ALT **and `insn_end`**.
 7.3 RESET: panel *Reset CPU* / serial `A` → HW-stretched ≥8-`cpu_cen` vent
 on `reset_n_internal`; monitor state persists; auto-repark after (examine
 context). Panel *Reset System* = `hard_reset_req` path (OSD-equivalent core
@@ -672,6 +746,15 @@ suppressed while injecting).
 ## 8. Breakpoints & Jump History (carried)
 §6 regs; semantics exactly v0.1 §6 (latched match PC reported, adjacent
 first-match, `C`=skip-once) — halt reasons visible to FW **and** lamps.
+**R15 (D-25): stop-*before*-execute by self-loop injection.** BUSRQ cannot
+un-fetch an opcode, so on a BP match at the M1 of the target address the
+trampoline data mux (§7.4) substitutes `18 FE` (`JR $`) for the opcode and
+displacement fetches; the CPU executes a jump to itself and parks at its
+`insn_end` ⇒ PC = BP address, flags/registers untouched, R +1 (accepted
+drift). Resume (`G`/RUN) suppresses the match once (`BP_SKIP` semantics) so
+the real instruction executes. Edge cases to settle in sim (OQ-23): BP on a
+prefix byte, BP inside the trampoline window (OQ-05), interrupt accepted at
+the injected `JR`'s boundary (pushes PC = BP address — correct).
 Jump ring P2 per D-06/OQ-06 (explicit `Ret` in MCode; lean carried).
 
 ---
@@ -680,8 +763,14 @@ Jump ring P2 per D-06/OQ-06 (explicit `Ret` in MCode; lean carried).
 
 ### 9.1 Logical — shared sequencer, guest reuse
 One engine (§6 `MEM_CTL`) executes mem and I/O cycles **while parked**,
-driving the guest's own nets (G-2 muxes) → MMU translate, BRAM/SDRAM route,
-SDRAM wait handshake, peripheral decodes all reused. FW `E/D/F/I/O` and the
+driving the guest's own nets through the single **`z80_bus_mux`** (D-26,
+R15) → MMU translate, BRAM/SDRAM route, SDRAM wait handshake, peripheral
+decodes all reused. The engine produces **cycle-faithful Z80 cycles** on
+`cpu_cen` — T1–T3 plus wait states, **`MRD_T1` asserted in T1 of memory
+reads** exactly as `T80s` does (the SDRAM client FSM starts its speculative
+read from it), `M1_n` held inactive (engine cycles are never opcode
+fetches) — and it **samples `cpu_wait_n` itself**, since the parked T80 no
+longer does. FW `E/D/F/I/O` and the
 panel EXAM/DEP/Port-R/W are identical transactions modulo source (G-3).
 `MD`=logical. State-neutrality (P-D): engine op cycles *may* touch guest
 I/O (that is the point of port mastering) but never use the MMU
@@ -722,7 +811,8 @@ unaffected).
 
 10.1 **ODT skin protocol** carried verbatim from v0.1 §10 (prompt `.`,
 repeat-last, `$`/`.`/`;`, `?ER nn` atomicity, uppercase responses). `X`
-escape (HW) + `F`/`ODT` skin switch.
+escape (HW; R15: the escape is the `ESC_CHAR` byte, default `^]`, honoured
+only while OSD `OM` is On) + `F`/`ODT` skin switch.
 
 10.2 **Command table** (as v0.2 §10.2 with these amendments):
 - `PHY` / `LOG` — addressing mode select (`MD`) `[new v0.3]`
@@ -735,8 +825,13 @@ escape (HW) + `F`/`ODT` skin switch.
 - `U` unassembler P1 (carried pull-forward); `S?` search P2; `TR` trap P2;
   `H` HBIOS page-table decode P2; `ME/MD` now native via `PHY`+`E/D` (and
   retain `ME p:aaaa` shorthand); `SD` background-block dump P2.
+- `ESC [hh]` — show / set the serial escape character (`ESC_CHAR`); also
+  reports the OSD `OM` state, since the recognizer is inert while `OM` is
+  Off `[new R15]`
 `R` format carried (now `Alternate` known from P1 ⇒ prime banks labelled
-correctly, `'AF=`… line conditional on bank).
+correctly, `'AF=`… line conditional on bank). **R15:** if
+`STATUS.at_boundary`=0 (after an M-cycle/T-state step) `R` prefixes
+`*MID-INSN*` — register values are then not architectural (D-25).
 
 10.3 Halt reasons / error codes carried verbatim (+ reason 9=`wdg-park-dead`,
 + error `0B` bridge timeout, `0C` SD-write-unimplemented-until-revisit).
@@ -799,7 +894,13 @@ mem[`AR`]←`DR`; DEP-NEXT: `AR`++ then DEP. Port pairs: same over `PR`/`DR`.
 RUN/STOP: release / latch-stop (stop-latch = park source, §6.9). STEP pair:
 `STEP_CTL` INSN/MCYCLE one-shots. RESET pair: §7.3 CPU vent / system-reset.
 All ops kick the shared engine; `seq_busy` serializes vs FW; panel wins
-simultaneity; completion pulses `IRQ.fp_done` + `ENG_LOG`. Errors
+simultaneity; completion pulses `IRQ.fp_done` + `ENG_LOG`.
+**Implementation (D-30, R15):** each operation above is a *macro* — a short
+row sequence in the micro-op table (`LOAD_AR, LOAD_PR, MEM_RD, MEM_WR,
+IO_RD, IO_WR, INC_AR, STEP, RESET_VENT, INJECT, TAP_RD, PAGE_SET`); e.g.
+EXAM-NEXT = `INC_AR, MEM_RD`; START-AT-A = `LOAD tramp, INJECT arm,
+RESET_VENT, release`; MMU-DEPOSIT = `IO_WR $B0+n, IO_WR $B4+n`. Macros are
+atomic with respect to FW kicks. Errors
 (e.g. engine-kick while not parked when required) latch `engine_err`, lamp
 flag. Auto-increment policy lives here (human-speed; still hardware).
 **Encoder (D-23/R8):** rotation accrues a signed cursor (page menu 0..7,
@@ -857,9 +958,10 @@ rendering (G-6); page/layout/colour tables land in `HARDWARE.md`.
 ### 11.5 Port-A ownership mux (LED store)
 `FP_RAM_Store` Port A select: {FP master controller (Z80 `$A0–$A7` path),
 monitor FW route (via `ssp_top` → `LED_ADDR/DATA` bridge regs)}. Z80-guest
-writes win (rare, atomic); monitor writes proceed otherwise; profile 7 in
-practice avoids overlap entirely (guest profile usage convention ≠ 7 —
-enforced by convention, not interlock, noted).
+writes win (rare, atomic); monitor writes proceed otherwise. **R15 (D-31):
+guest writes addressed to profile 7 are dropped in hardware** — profile 7
+is SSP-owned by interlock, no longer by convention. Guest profiles 0–6 are
+unaffected.
 
 ### 11.6 Guest-visible sense & encoder ports (D-05, R7) `[decided]`
 
@@ -893,24 +995,31 @@ and is harmless if FW chooses it.
 | Item | Estimate |
 |---|---|
 | VexRiscv IMC + TCM *(shelved R12 — reference figures only)* | ~4–7k ALUT; 16 M10K (64K+64K), shrink knobs = ROM/RAM generics |
-| FemtoRV32 gracilis (eval, §5.8) | ~0.3–0.6k ALUT expected (family scale) — same M10K budget (TCM is ours, not the core's); measure at P0 side-spike |
+| FemtoRV32 gracilis (P0 entrant, §5.8) | ~0.3–0.6k ALUT expected (family scale) — same M10K budget (TCM is ours, not the core's); measure at P0 |
+| PicoRV32 + `COMPRESSED_ISA` + MUL/DIV (P0 entrant, §5.8) | ~1.5–2.5k ALUT expected (`[verify]` at P0 `fit.rpt`); same M10K budget |
 | `ssp_bridge` + uart + capture + engine | ~3–4k ALUT (engine ≈ +0.5–1k over v0.2 estimate), ~2 M10K |
 | `ssp_mem_client` / `ssp_sd` | ~1–1.5k ALUT total |
 | Idle/disabled | `OK`-off ⇒ all monitor outputs static-inactive, muxes guest-side; RV quiescent (`WFI` between ticks; panel ops still serviced by engine — engine runs even when `OK`-off? **No**: `OK`-off disables monitor bus mastering incl. engine (bare-core equivalence, R-19); panel lamps/sense remain (guest-visible per D-05) |
 | Clock domains | all new logic clk_sys; vid client = only new CDC (existing pattern); SNAC/UART async `set_false_path`; chain/encoder false paths as v0.2 |
 
 Integration edit list (delta to v0.2 §12): `MicrocomputerZ80CPM.vhd` gains
-`ssp_mem_client` (BRAM mux + SDRAM-request arbiter point), `$D0–$D3` decode
+**`z80_bus_mux` (D-26, R15) covering A/D/strobes plus `cpu_mrd_t1` (feeds
+`sdram_spec_go`) and `n_M1` (capture chain), with `cpu_wait_n` routed to the
+engine**, `ssp_mem_client` (BRAM mux + SDRAM-request arbiter point),
+profile-7 write interlock (D-31), `$D0–$D3` decode
 + mirror, **`$FB–$FF` sense/encoder decode (`n_fpSenseCS`; $FF read source
 swap, write-side `fpLatch` untouched)**, engine mux participation,
 `SSP_CHAIN` append at chain input, Port-A ownership mux (§11.5). `MrZ80.sv` gains `MPKG`/`MROM` ioctl routing
 (idx 6/7), `CONN_ROUTE` HDMI tap points (P2), monitor-subsystem-reset pulse
-on MROM mount-complete, CONF_STR `OK`/`OL` + two file entries + profile
+on MROM mount-complete, CONF_STR `OK`/`OL` + **`OM` Serial Escape
+(bit 22, R15)** + two file entries + profile
 override extended value (profile 7 "monitor", OQ-12 detail). `T80s.vhd`
-MC/TS + **ALT** port-out (P1), `T80.vhd` CTEV*/`Ret` (P2). `HARDWARE.md`:
-mailbox, halt/error codes, switch map, lamp conventions, console ownership,
-baud policy. `REQUIREMENTS.md` item 1: traceability note (done at this
-revision). `ssp/fw`, `monitor/rtl`, `Components/RISCV` added to `.qsf`.
+MC/TS + **ALT** + **`insn_end`** (R15/D-25) port-out (P1a), `T80.vhd`
+CTEV*/`Ret` (P2). `HARDWARE.md`: mailbox, halt/error codes, switch map,
+lamp conventions, console ownership, baud policy, **serial escape
+(`OM`/`ESC_CHAR`)**. `REQUIREMENTS.md` item 1: traceability note (done at
+this revision). `ssp/rtl`, `ssp/fw` outputs, `Components/RISCV` added to
+`.qsf` (R15: `monitor/rtl` rename residue fixed).
 
 ---
 
@@ -931,9 +1040,9 @@ with:
 New:
 | Req | Statement | TB |
 |---|---|---|
-| R-23 | RV boots factory ROM init image; `V` header check | `tb_mon_smoke` |
+| R-23 | RV boots factory ROM init image; `V` header check | `tb_ssp_smoke` |
 | R-24 | WDG_RUN (≤4 ms transient auto-release) / WDG_PARK (FW-hold-only release + console demote) / engine-park unaffected | `tb_bridge_wdg` |
-| R-25 | console mux default passthrough with RV in reset (P-B); `CONN_ROUTE` switch-over; fail-safe on `wdg_park` | `tb_mon_mux` |
+| R-25 | console mux default passthrough with RV in reset (P-B); `CONN_ROUTE` switch-over; fail-safe on `wdg_park` | `tb_ssp_mux` |
 | R-26 | vid-port reads benign to primary path (refresh-class latency envelope, zero corruption; guest whole during background sweeps) — **P2 gate** (session R3 criterion) | `tb_ssp_sd` |
 | R-27 | `ssp_mem_client`: parked R/W vs BRAM page + SDRAM incl. odd-byte DQM; zero access while guest runs | `tb_mem_client` |
 | R-28 | **panel engine standalone with RV held in reset**: full LOAD-AR/EXAM/DEP/PORT/STEP/RUN/STOP/RESET ritual functional | `tb_fp_engine` |
@@ -948,6 +1057,13 @@ New:
 | R-37 | MMU-EXAM: correct tap field per entry `n=S1:S0`; page→A27..A14 lamp routing, `n`→L1:L0, rest dark; persist-until-next-op; re-query on UP edge + live on S1:S0 change; zero MMU write strobes (state-neutral) | `tb_fp_engine` |
 | R-38 | MMU-DEPOSIT: two-out macro `$B0+n`/`$B4+n`, executed only with guest parked; valid set implicitly, no value checking; FW map shadow matches taps after deposit | `tb_fp_engine` + `tb_fw_panel` |
 | R-39 | MMU ops full-function with FW held in reset (engine-only: tap exam + deposit) | `tb_fw_panel` |
+| R-40 | `[R15]` **Boundary parking** (D-25): every STOP/escape/STEP-INSN park lands on `insn_end` (`at_boundary`=1) across a directed instruction mix incl. DD/FD/CB/ED prefixes, DDCB-indexed bit ops, LDIR/OTIR, HALT, EI+INT shadow, IM2 acknowledge; snapshot PC == next instruction | `tb_integ_park` (integration level) |
+| R-41 | `[R15]` **BP self-loop injection** (D-25/OQ-23): stop-before-execute ⇒ PC = BP addr, AF/regs unchanged, R +1 only; resume executes the real instruction once | `tb_integ_bp` |
+| R-42 | `[R15]` **Bus mux fidelity** (D-26): engine reads/writes to SDRAM, BRAM and I/O produce the same `MRD_T1`/strobe/wait waveforms as T80 cycles (golden compare); engine honours MMU + SDRAM waits; mux select never flips without `BusAck` | `tb_integ_mux` |
+| R-43 | `[R15]` **Serial escape** (D-14 rev): `OM` Off ⇒ every byte incl. `ESC_CHAR` reaches the guest bit-transparently, no park; `OM` On ⇒ `ESC_CHAR` parks at boundary, console handed over, byte not delivered to guest; other bytes pass; `ESC_CHAR` reprogrammable; FW disable honoured | `tb_ssp_esc` |
+| R-44 | `[R15]` Profile-7 interlock (D-31): guest writes to profile 7 dropped, profiles 0–6 unaffected; SSP writes land | `tb_fp_led` |
+| R-45 | `[R15]` Register-map consistency (D-29): generated `.vh`/`.fs`/Markdown match the CSV; build fails on drift | `make regmap-check` |
+| R-46 | `[R15]` Polled FW (D-27): full P1a command set operates with the core's IRQ input tied off | `tb_ssp_smoke` |
 R-21 unchanged and doubly load-bearing.
 
 ---
@@ -966,14 +1082,16 @@ OQ-18)**.
 |---|---|---|
 | OQ-05 | BP at $0000–$0002 vs trampoline injection | Carried lean: suppressed during injection window |
 | OQ-06 | `Ret` classification source for CTEV | Carried lean: explicit `Ret` in MCode |
-| OQ-09 | Bridge board un-built: electrical freeze incl. SPDT parts, encoder, spare banks; sim now with synthetic frames (R-13) + SPDT pair encoding assumptions | P2 dependency, not P1 |
+| OQ-09 | Bridge board un-built: electrical freeze incl. SPDT parts, encoder, spare banks; sim now with synthetic frames (R-13) + SPDT pair encoding assumptions | P2 dependency, not P1 — **R15: longest-lead item; start board design in parallel with P1a/P1b** so the UX second pass isn't blocked |
 | OQ-10 | **Exact "Reset System" scope** — proposed: `hard_reset_req`-equivalent (guest + monitor + FP profile clear; not FPGA config). Confirm at board design. | needs owner confirmation |
 | OQ-11 | vid-port **writes** revisit gate (D-15-B): after R-26 passes with reads; scope = `sdram2.sv` DQM mod; alternative = physical writes stay parked-only forever | revisit P3+ |
 | OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 54–67) future use; **MMU-switch (D-24) silkscreen labels + 9th-SPDT mounting; live-re-query-on-`S1:S0` policy; deposit valid-bit encoding check vs `MMU.vhd`** | board design time; `SSP_PANEL_UX.md` §11 checklist |
 | OQ-19 | Milestone-B scheduling: formal `sd_arb` extraction approved (R9) but unscheduled — proposal: dedicated refactor milestone after P2 green, before P3 polish work; confirm at P3 planning | `SDRAM_REWORK_PLAN.md` §6/§10 |
-| OQ-20 | **P0 core bake-off** (R14): **PicoRV32 (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** — same wrapper, both vendored; decide at P0 exit on the §5.8 criteria table (trust/pedigree weighted highest; optional riscv-formal eqy-container run as evidence; learn-fpga license terms check; `fit.rpt` ×2) | P0, critical path — evidence decides; FW glue portable ⇒ late reversibility |
+| OQ-20 | **P0 core bake-off** (R14): **PicoRV32 (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** — same wrapper, both vendored (2026-10-26); decide at P0 exit on the §5.8 criteria table (trust/pedigree weighted highest; optional riscv-formal eqy-container run as evidence; ~~license check~~ closed — ISC / BSD-3; `fit.rpt` ×2; time-to-REPL in Verilator) | P0, critical path — evidence decides; polled FW (D-27) ⇒ only `crt0.S` differs ⇒ late reversibility |
 | OQ-21 | **VexRiscv reopen conditions** (shelved R12): reopen the §5.7 container path only on (a) measured FW cycle-budget shortfall in P1/P2 (dump/disassemble/REPL responsiveness vs §4.3-class arithmetic), or (b) a new capability need not met by the family (`individua` covers atomics; nothing else on the horizon). Record measured numbers with any reopen request | dormant until drivers |
-| OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1 |
+| OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1. R15: flash emulation explicitly **not** pursued (D-32) |
+| OQ-22 | `[new R15]` **Escape-byte consumption mechanism** (D-14): when the guest owns the SNAC link and `OM` is On, the escape byte must not reach the guest ACIA, but recognition completes only at the stop bit. Options: (a) byte-level relay (deserialize → filter → re-serialize at the `O9B` rate; adds one character time of latency, only while `OM` On; RTS/CTS passed through), (b) let the byte through and accept the guest sees it, (c) inject into the ACIA receive path instead of the wire | lean **(a)**: exact semantics, and `OM` Off keeps the raw wire (true transparency); decide at P1a RTL |
+| OQ-23 | `[new R15]` **BP self-loop injection** (D-25): confirm in integration sim — BP on a prefix byte (inject at the prefix M1; does T80 prefix state reset cleanly?), interaction with trampoline window (OQ-05), interrupt taken at the injected `JR`'s boundary, `BP_SKIP` resume path | P1a/P2 sim (R-41); fallback = stop-after with corrected PC report |
 | OQ-15 | Graphical frame buffer for monitor *video* output (vs 80×25 ANSI on SBC terminal), including exclusive HDMI+kbd console details (D-19 P3): font, pages, keymap | later-phase design note |
 | OQ-16b | *(closed by R8 →* `SSP_PANEL_UX.md` v0.1*)* deep-dive held 2026-10-23: sovereignty/lock, pages, lamps, encoder, commentary, walkthroughs; second pass after first FP hardware experience | closed |
 | OQ-17 | Doc naming: CamelFORTH (guest) vs Mecrisp (monitor) glossaries in `doc/` — two files naming | lean: `MONITOR-FORTH-GLOSSARY.md` new beside existing |
@@ -984,9 +1102,10 @@ OQ-18)**.
 
 | Phase | Scope | Exit |
 |---|---|---|
-| **P0 — two-core bake-off (R14)** | Vendored `picorv32.v` (`COMPRESSED_ISA`) **and** `femtorv32_gracilis.v` (+`utils.v`); Quartus 17.0 synth on `5CSEBA6U23I7` for **both**; **Mecrisp REPL live in sim and on the stub SoC** (UART console, per core); toolchain package verified (`riscv64-unknown-elf`, `-print-multi-lib`, `-march=rv32imc_zicsr_zifencei -mabi=ilp32`); downloadable-ROM write path sim; `fit.rpt` headroom recorded ×2; crt0 convention verified; §5.8 verify items closed (bridge MMIO 1 MHz timer tick — common to both; IRQ glue smoke; learn-fpga license terms). Optional: riscv-formal on picorv32 (eqy container, off critical path). **VexRiscv/vexgen shelved** (§5.7; reopen = OQ-21) | clean synth ×2; headroom logged; REPL live on harness; **one core selected per §5.8 table**; no day-to-day container dependency |
-| **P1 — console core** | bridge (regs incl. MD/AR/DR/PR, MAP0..3, MBX, WDG×2, ID), ssp_uart (O9B divider), escape-break, STEP assist, reset stretcher, trampoline, MEM-SEQ (logical) + **`ssp_mem_client`** (physical P/W), SNAC mux + MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export, FW: ODT skin + `G S T X K E D I O R A W V ? U F ODT PHY LOG MB` | R-01…R-09, R-12, R-19…R-25, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired |
-| **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`SSP_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, BP/`C` (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `ssp_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
+| **P0 — two-core bake-off (R14)** | Vendored `picorv32.v` (`COMPRESSED_ISA`) **and** `femtorv32_gracilis.v` (+`utils.v`); Quartus 17.0 synth on `5CSEBA6U23I7` for **both**; **Mecrisp REPL live in sim and on the stub SoC** (UART console, per core); toolchain package verified (`riscv64-unknown-elf`, `-print-multi-lib`, `-march=rv32imc_zicsr_zifencei -mabi=ilp32`); downloadable-ROM write path sim; `fit.rpt` headroom recorded ×2; crt0 convention verified; §5.8 verify items closed (bridge `TICK_US` timer — common to both; ~~IRQ glue smoke~~ moot under polled FW, D-27; ~~learn-fpga license~~ closed). **R15 additions:** **simulation infrastructure** (D-28: `sim/ssp` Verilator + `sim/integ` Questa-Intel/GHDL, Makefile) — Mecrisp REPL in Verilator per core; **register-map generator** (D-29: CSV → `.vh`/`.fs`/Markdown, `make regmap-check`); Mecrisp RAM-only build confirmed (D-32: `compiletoram`, flash primitives stubbed). Optional: riscv-formal on picorv32 (eqy container, off critical path). **VexRiscv/vexgen shelved** (§5.7; reopen = OQ-21) | clean synth ×2; headroom logged; REPL live on harness; **one core selected per §5.8 table**; sim flows + regmap generator runnable; no day-to-day container dependency |
+| **P1a — "first light"** `[new R15]` | Minimum vertical slice that exercises the riskiest RTL on real hardware: bridge `ID/CTRL/STATUS/TICK_US/ESC_CHAR/IRQ_PENDING/MEM_CTL/MEM_ADDR/MEM_DATA/SNAP_REG`, **`insn_end` export + boundary parking** (D-25), **`z80_bus_mux` + cycle-faithful engine (logical mem + I/O)** (D-26), micro-op sequencer core (D-30, FW kicks only), `ssp_uart` + **OSD `OM` escape recognizer** (D-14, OQ-22 resolved), SNAC console mux; FW (polled, D-27): `E D G H R X` + `ESC` | R-40, R-42, R-43, R-45, R-46, R-23, R-25 + the R-01…R-09 subset covering halt/examine/deposit/go green; **on hardware**: escape into the SSP, examine/deposit guest memory, resume — with `OM` Off proven bit-transparent |
+| **P1b — console complete** | Remaining P1 scope: `MD/AR/DR/PR` shared regs, `MAP0..3`, `MBX`, WDG×2, STEP assist (INSN/MCYCLE/TSTATE), reset stretcher, trampoline / `G aaaa`, **`ssp_mem_client`** (physical P/W), MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export completion; FW: ODT skin + `S T K I O A W V ? U F ODT PHY LOG MB` | rest of R-01…R-09, R-12, R-19…R-22, R-24, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired. **Bridge board (OQ-09) designed in parallel with P1a/P1b** |
+| **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`SSP_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, panel macros on the D-30 sequencer, profile-7 interlock (D-31, R-44), BP/`C` with **self-loop stop-before-execute** (D-25, R-41/OQ-23) (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `ssp_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
 | **P3 — polish** | T80 register write-back (retires trampoline), step-over, conditional BPs, `Y`, MMU writes from monitor, exclusive HDMI+kbd console (D-19), vid-write revisit (OQ-11), HPS path eval, mailbox protocol hardening with HBIOS | D-02 retired; all prior green |
 
 > **SDRAM arbiter milestone (R9):** P1/P2 use additive borrowed-wiring
@@ -1006,15 +1125,23 @@ OQ-18)**.
 3. Owner confirmations outstanding: OQ-10 (Reset-System scope), OQ-18
    (board-freeze UX values incl. panel BP-clear gesture), OQ-11/13/15
    (deferrals acknowledged); panel-UX second pass after first hardware.
+   R15 opened OQ-22 (escape-byte consumption, lean relay) and OQ-23 (BP
+   self-loop injection edge cases) — both settled in sim, not by owner.
 4. P0 spike first, absolutely — **two-core bake-off: PicoRV32
    (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** (R14, §5.8 criteria table):
    vendored files + packaged `riscv64-unknown-elf` GNU toolchain
    (`-march=rv32imc_zicsr_zifencei -mabi=ilp32`); optional riscv-formal
    tie-breaker via one-shot eqy container. VexRiscv/vexgen shelved (§5.7,
-   reopen conditions OQ-21).
-5. RTL order: bridge with task-emulated master harness → `ssp_mem_client` →
-   mux hookup only after `tb_bridge_*` green with gates stubbed transparent
-   (R-21 discipline) → `fp_engine` standalone (R-28) → FW.
+   reopen conditions OQ-21). Cores vendored (`Components/RISCV/`,
+   2026-10-26). **R15: P0 also delivers the two simulation flows (D-28) and
+   the register-map generator (D-29)** — everything after depends on them.
+5. RTL order (R15): `insn_end` export in `T80s` + boundary-park logic
+   (D-25, integration sim) → `z80_bus_mux` + cycle-faithful engine (D-26)
+   → bridge P1a regs + sequencer (D-30) against the BFM → UART + escape
+   recognizer (D-14) → **P1a hardware first light** → P1b
+   (`ssp_mem_client`, mount path, WDGs, trampoline) → `fp_engine` macros
+   standalone (R-28) → FW. Mux hookup only after `tb_bridge_*` green with
+   gates stubbed transparent (R-21 discipline).
 6. Update `HARDWARE.md` incrementally with each landed surface; keep
    `REQUIREMENTS.md` item 1 note current.
 
@@ -1173,3 +1300,44 @@ D-19/P3) — external corroboration · **D-09 rewritten**: P0 = bake-off on
 the §5.8 criteria table (trust weighted highest; working lean picorv32+C
 if riscv-formal executes); OQ-20 restated; P0 row, module table, resume
 checklist, §5.6 realigned; VexRiscv remains shelved (OQ-21).
+
+R15 **Design review — front panel + serial debugger readiness
+(2026-10-26)**: owner-requested review of spec/design/plan against the
+code; owner accepted all recommendations, with directions on escape and
+memory model.
+· **Findings verified in source:** T80 grants BUSRQ at *any* M-cycle
+`T_Res` (`T80.vhd:~1033-1042`) ⇒ raw parks can land mid-instruction; SDRAM
+speculative read keyed off T80 `MRD_T1` (`MicrocomputerZ80CPM.vhd:~1090`),
+`n_M1` in capture chain (`:~764`), waits merged in `cpu_wait_n` (`:~472`);
+**R14 IRQ claim false** — gracilis standard CSRs/`mret`, picorv32 custom
+`getq/setq/retirq/maskirq/waitirq/timer`; Mecrisp-Quintus's first target
+was PicoSoC (picorv32) · **New decisions:** D-25 instruction-boundary
+parking (`insn_end` export in the D-08 mod; prefix/HALT/INT/EI/LDIR rules;
+`STATUS.at_boundary`; BP stop-before-execute by `JR $` self-loop
+injection), D-26 single `z80_bus_mux` incl. `MRD_T1`/`M1_n` synthesis and
+`cpu_wait_n` sensing with cycle-faithful engine cycles, D-27 polled v1 FW
+over sticky W1C status (cores FW-interchangeable; only `crt0.S` differs),
+D-28 two-level simulation (Verilator SSP-only + Questa-Intel/GHDL
+integration, `sim/` Makefile, P0 deliverable), D-29 single-source register
+map (CSV → `.vh`/`.fs`/Markdown), D-30 panel engine as micro-op sequencer
+with per-macro arbitration, D-31 profile-7 hardware interlock, D-32
+RAM-only Forth · **Revised:** D-14 — owner direction: **only a specific
+escape character** enters the monitor, and recognition is **conditional on
+an OSD switch** so transparent serial I/O remains possible ⇒ `OM` (status
+bit 22) "Serial Escape" Off/On default Off, `ESC_CHAR` default `0x1D`
+(`^]`), byte consumed (mechanism OQ-22, lean byte relay), effective enable
+`OM ∧ esc_break_en ∧ ssp_active`; D-10/D-32 — owner direction: **no flash
+emulation**; Forth is built RAM-only on the OSD-loaded image (offered
+RV-writable upper-ROM `compiletoflash` region declined); D-09/D-11/D-16/
+D-20 wording (IRQ correction, core-neutral SSP local bus, `OM`
+allocation, `TICK_US` time base) · **Plan:** P1 split into **P1a "first
+light"** (boundary park + bus mux + escape + `E D G H R X` on hardware) and
+**P1b** (rest of console); P0 gains sim flows + regmap generator; bridge
+board (OQ-09) to be designed in parallel with P1 · §6 gains `ESC_CHAR`
+(0x110), `TICK_US` (0x114), `STATUS.at_boundary/osd_esc_en`, `esc`/`mbx`
+event bits; §13 gains R-40…R-46; §14 gains OQ-22/OQ-23 · **Doc hygiene:**
+§4.1 diagram core-neutral; "SimpleBus" retired (VexRiscv-only); §5.1 stale
+fallback text; §5.6→5.7→5.8 order restored; `monitor/rtl` and `tb_mon_*`
+rename residue; `ssp_uart` row mis-cited D-22; §3 `clk_ram` corrected to
+100 MHz live; R11/R14 IRQ text kept with explicit errata markers (log
+history preserved, not rewritten).

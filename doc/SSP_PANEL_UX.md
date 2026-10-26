@@ -69,6 +69,8 @@ Mechanism: page change ⇒ FW (or cold-boot defaults) rewrites **profile 7
 the page's layout, and sets `SSP_CTRL.page` to swap the 64-bit export
 content. Cold default = shipped identity map ⇒ page 0 CLASSIC works with
 zero FW and zero profile load (identity over the classic export layout).
+Profile 7 is SSP-owned by **hardware interlock** (guest writes to it are
+dropped — design D-31, R15), so a guest program can't corrupt page layouts.
 WDG-PARK expiry (FW dead) ⇒ engine forces content to page 0 (map frozen —
 last layout stays, chrome intact).
 
@@ -166,6 +168,10 @@ Ladder, strongest first:
    guest controls forced inactive (park drops ⇒ guest resumes if parked),
    profile override drops (guest lamp profile returns), PANEL_LOCK cleared,
    `console_own` forced 0. Never lockable.
+   *Terminology (R15):* this panel **ESCAPE toggle** *disables* the
+   monitor. It is unrelated to the **serial escape character** (`ESC_CHAR`,
+   default `^]`, honoured only while OSD `OM` is On — design D-14), which
+   *enters* the monitor from a terminal.
 2. **PANEL_LOCK (`CTRL.bit9`, FW-set)** — gates only resumption-type
    actions: `RUN`(up) and START-AT-A are **rejected** while held (red-HALT
    flash + `lock_rejected` log/event). STOP, EXAM/DEP/PORT (which transient

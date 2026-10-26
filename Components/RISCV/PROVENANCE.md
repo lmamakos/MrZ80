@@ -33,7 +33,7 @@ SHA-256:
 | Upstream | https://github.com/BrunoLevy/learn-fpga — `FemtoRV/RTL/PROCESSOR/` |
 | Pinned at | repo HEAD `5c08c870315c09ccd9ec64ccde20ab3375b3f273` (2025-11-18); `femtorv32_gracilis.v` last modified `ad5b19fb0b91cf6dbf9ad425ecbbde6e26831c3a` (2021-11-19) |
 | License | BSD-3-Clause (c) 2020 Bruno Levy — `LICENSE.learn-fpga` (repo LICENSE; individual source files carry no SPDX headers). **OQ-20 license-terms check: satisfied — BSD-3-Clause is permissive-family; vendoring with the license text is compliant** |
-| ISA | Header: **RV32IMC + CSR + MRET**; native interrupts |
+| ISA | Header: **RV32IMC + CSR + MRET**; native interrupts via **standard** `mtvec/mepc/mcause/mstatus` CSRs (unlike picorv32's custom `getq/retirq/maskirq` instructions — v1 FW is polled anyway, `SSP_DESIGN.md` D-27) |
 | Intent | P0 bake-off entry (same harness as picorv32). **Not yet added to `MrZ80.qsf`** |
 
 SHA-256:
