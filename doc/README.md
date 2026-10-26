@@ -27,6 +27,12 @@ hardware classic-console front-panel engine (halt/step/examine/deposit,
 breakpoints, jump history, downloadable monitor ROM + Forth packs via OSD).
 §17 records the design decision sessions of 2026-10-22/23.
 
+`SSP_HANDOFF.md` -- session hand-off (2026-10-26, after R15): environment and
+tool availability, network-fetch recipes, the existing GHDL `sim/` flow and
+its current drift, core-integration gotchas, Mecrisp licensing, capture-chain
+headroom, owner conventions, and proposed R16 findings (H-1..H-8). Read
+after the design doc when resuming work.
+
 `SSP_PANEL_UX.md` -- front-panel user-experience spec (v0.2; deep-dive
 2026-10-23 + MMU-switch addendum): lamp zones/chrome/colours, paged state
 blocks with per-page remap, BP-ARM/FREEZE/START-AT-A modifiers, MMU
