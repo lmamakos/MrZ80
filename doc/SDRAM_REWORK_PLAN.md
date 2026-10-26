@@ -1,12 +1,12 @@
 # SDRAM_REWORK_PLAN — SDRAM Memory Subsystem Rework Roadmap
 
 Status: **DRAFT v0.1** — captures the rework planning discussion and owner
-decisions of 2026-10-23 (decision round **R9** in the `ODT_MONITOR_DESIGN.md`
+decisions of 2026-10-23 (decision round **R9** in the `SSP_DESIGN.md`
 §17 log numbering). Tags as in the design doc (`[verified]`/`[decided]`/
 `[proposed]`/`[open]`/`[deferred]`).
 
 Companions: `REQUIREMENTS.md` items 1 & 4 (the requirements this plan
-dispositions), `doc/ODT_MONITOR_DESIGN.md` v0.6 §9.2 (the monitor's memory
+dispositions), `doc/SSP_DESIGN.md` (v1.0-draft) §9.2 (the monitor's memory
 clients — the rework's primary driver), `HISTORY.md` +
 `SDRAM-review-handoff.md` (reliability/performance narrative), `MrZ80.sdc`
 (timing).
@@ -26,7 +26,7 @@ The SDRAM path is **reliable** and **fast**; those battles are won:
   (item 4.2) lost its performance rationale and was shelved. `[verified]`
 
 So this rework is **not** a fix and not a speed project. The driver is
-**architecture**: the ODT monitor design (v0.6) introduces *multiple memory
+**architecture**: the SSP design (`SSP_DESIGN.md`, renamed from ODT_MONITOR_DESIGN.md at R13) introduces *multiple memory
 clients*, and today there is no arbiter — one CPU client FSM (inline in
 `MicrocomputerZ80CPM.vhd`) plus an implicit second path (the HPS ioctl
 loader streams via the same wiring while the CPU is held), multiplexed *by
@@ -56,17 +56,17 @@ of implicit coupling.
   (separate mux, not the SDRAM controller); MMU is 28-bit physical
   (256 MB capable; >128 MB has no physical devices).
 
-## 3. Client roster (as decided across ODT rounds R3/R9)
+## 3. Client roster (as decided across SSP design rounds R3/R9)
 
 | # | Client | Priority | Traffic shape | Status |
 |---|---|---|---|---|
 | 1 | **CPU** (MMU-translated, existing FSM) | highest | single bytes; T1-speculative reads; posted writes | live |
 | 2 | **Loader** (ioctl BIN/DSK/MPKG/MROM) | boot-ish (CPU held) | byte stream, cooldown-spaced | live; streaming **deferred** (D-S3) |
-| 3 | **`mon_mem_client`** (ODT P1) | only while guest parked ∧ primary FSM idle | single physical bytes R/W (incl. BRAM mux) | planned |
-| 4 | **`mon_sd`** (ODT P2) | lowest | vid-port 16-bit background **reads** | planned (OQ-11 keeps writes deferred) |
+| 3 | **`ssp_mem_client`** (SSP P1) | only while guest parked ∧ primary FSM idle | single physical bytes R/W (incl. BRAM mux) | planned |
+| 4 | **`ssp_sd`** (SSP P2) | lowest | vid-port 16-bit background **reads** | planned (OQ-11 keeps writes deferred) |
 | ~~5~~ | ~~Block-transfer engine~~ | — | — | **retired** (D-S2) |
 
-Standing ODT constraints apply to all clients: **P-A** (park before master),
+Standing SSP constraints apply to all clients: **P-A** (park before master),
 **P-D** (never disturb MMU/guest state — arbiter is physical-space by
 construction), **G-2** (explicit muxes, frozen-output discipline), **G-4**
 (transient guest-stall budget ≤ ~4 ms, watchdog-backed).
@@ -74,7 +74,7 @@ construction), **G-2** (explicit muxes, frozen-output discipline), **G-4**
 ## 4. Decisions `[decided, R9, 2026-10-23]`
 
 - **D-S1 — Staged A-then-B.** *Option A* (minimal additive: new clients
-  borrow existing mux points inline, no new abstraction) ships with ODT
+  borrow existing mux points inline, no new abstraction) ships with SSP
   P1/P2 — smallest diff, keeps R-21 bit-identical discipline trivially.
   *Option B* (formal arbiter extraction) is **approved as useful work** but
   runs as a dedicated refactor milestone **after P2 green**, off the monitor
@@ -113,33 +113,33 @@ construction), **G-2** (explicit muxes, frozen-output discipline), **G-4**
   must write the MMU page high-byte ports (+4..+7); no RTL arbiter/cache
   work.
 
-## 5. Milestone A — additive borrowed wiring (rides ODT P1/P2)
+## 5. Milestone A — additive borrowed wiring (rides SSP P1/P2)
 
-What actually gets built now, unchanged from ODT v0.6 §9.2:
+What actually gets built now, unchanged from `SSP_DESIGN.md` §9.2:
 
-1. `mon_mem_client` taps the existing client-interface mux points in
+1. `ssp_mem_client` taps the existing client-interface mux points in
    `MicrocomputerZ80CPM.vhd` (plus the BRAM mux), gated parked ∧
    primary-client-idle; native DQM via `addr[0]` (R-27).
-2. `mon_sd` instantiates the *existing CDC pattern* (level req + completion
+2. `ssp_sd` instantiates the *existing CDC pattern* (level req + completion
    toggle) onto the controller's vid port, reads only; acceptance = R-26
    "benign as refresh collisions" assertion suite.
 3. Loader untouched (cooldown stays; D-S3).
 4. R-21 discipline: bit-identical existing traces with monitor clients idle;
    full sim + hardware regression on every step.
 
-Acceptance = the ODT P1/P2 exit criteria (R-26, R-27) plus existing
+Acceptance = the SSP P1/P2 exit criteria (R-26, R-27) plus existing
 regressions green at **both** `clk_ram` configs.
 
 ## 6. Milestone B — formal arbiter extraction (future, approved)
 
-Trigger: ODT P2 green (three muxed clients now exist inline) or a measured
+Trigger: SSP P2 green (three muxed clients now exist inline) or a measured
 need that D-S2's INIR/OTIR path can't meet — whichever first. Then, as a
 self-contained refactor:
 
 - Extract `sd_arb.sv` + `sd_cdc_client.sv`; migrate CPU, loader, and
-  `mon_mem_client` onto the formal ports; vid path unchanged at controller.
+  `ssp_mem_client` onto the formal ports; vid path unchanged at controller.
 - Add stall-budget counters + per-class debug counters (export through the
-  ODT bridge's debug registers for `SYS` lamp page / `ENG_LOG` visibility —
+  SSP bridge debug registers for `SYS` lamp page / `ENG_LOG` visibility —
   free synergy).
 - Gate: full regression (`sim/run.sh`, `run_perf.sh`, hardware
   `sdramexec/ret/backtoback/timertest`, bench within noise) + STA all
@@ -168,7 +168,7 @@ self-contained refactor:
   starvation (liveness); timeout semantics per G-4; randomized multi-client
   overlap; deadlock-class checks (the historical S_GAP family gets explicit
   regression vectors).
-- **Monitor clients (A):** `tb_mem_client` (R-27), `tb_mon_sd` (R-26) —
+- **Monitor clients (A):** `tb_mem_client` (R-27), `tb_ssp_sd` (R-26) —
   land in P1/P2 respectively.
 - **STA:** any added mux into `cpuDataIn`/strobe nets must keep the T80
   `set_multicycle_path` (setup 5 / hold 4) argument valid — paths change
@@ -196,8 +196,8 @@ self-contained refactor:
 
 | Item | Disposition | Trigger / home |
 |---|---|---|
-| `mon_mem_client`, `mon_sd` (additive) | scheduled (ODT P1/P2) | ODT §9.2 |
-| Formal `sd_arb` extraction (Milestone B) | **approved, unscheduled** | after ODT P2 green; confirm at P3 planning (ODT OQ-19) |
+| `ssp_mem_client`, `ssp_sd` (additive) | scheduled (SSP P1/P2) | `SSP_DESIGN.md` §9.2 |
+| Formal `sd_arb` extraction (Milestone B) | **approved, unscheduled** | after SSP P2 green; confirm at P3 planning (SSP OQ-19) |
 | Block-transfer engine | retired (INIR/OTIR suffices) | reopen only on measured inadequacy |
 | Loader streaming mode | deferred (adequate today) | with/after milestone B |
 | Burst transfers | rejected v1/v2 | reopen only on measured demand |

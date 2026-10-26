@@ -87,9 +87,9 @@ performance/feature item (see item 4).
 
 **Traceability (2026-10).** The front-panel examine/deposit port
 requirement of this item is subsumed by the debug-monitor design in
-`doc/ODT_MONITOR_DESIGN.md` (v0.6): the RISC-V support CPU
-(VexRiscv + Mecrisp-Quintus Forth) drives a cycle-accurate `dbg_bridge`
-mastering engine, a parked physical-memory client (`mon_mem_client`,
+`doc/SSP_DESIGN.md` (v1.0-draft; the subsystem is now **SSP — System Support Processor**, renamed from the inherited "ODT" label at R13): the RISC-V support CPU
+(VexRiscv + Mecrisp-Quintus Forth) drives a cycle-accurate `ssp_bridge`
+mastering engine, a parked physical-memory client (`ssp_mem_client`,
 borrowing the existing SDRAM/BRAM wiring without disturbing guest state),
 and a hardware front-panel engine — delivering independent logical and
 physical examine/deposit without a dedicated new port in the arbiter

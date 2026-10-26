@@ -1,15 +1,16 @@
-# ODT_PANEL_UX — Front-Panel User-Experience Specification
+# SSP_PANEL_UX — Front-Panel User-Experience Specification
 
 Status: **DRAFT v0.2** — v0.1 = first pass of the panel-UX deep-dive
 (OQ-16b/OQ-12), owner session of 2026-10-23, recorded as round **R8** in
-`ODT_MONITOR_DESIGN.md` §17; **v0.2** = round **R10** addendum — the MMU
-map switch (§4A). Implements the panel-side surface of design
-v0.7 §§11/6. Notation/tags as in the design doc; `[proposed]` marks items
+`SSP_DESIGN.md` §17; **v0.2** = round **R10** addendum — the MMU
+map switch (§4A). Renamed from `ODT_PANEL_UX.md` at R13 (subsystem is now
+**SSP — System Support Processor**; naming map in `SSP_DESIGN.md` "Naming").
+Implements the panel-side surface of design v1.0-draft §§11/6. Notation/tags as in the design doc; `[proposed]` marks items
 still open to board-freeze adjustment.
 
-Companions: `ODT_MONITOR_DESIGN.md` v0.7 (architecture, decisions D-23/D-24/G-8/G-9
+Companions: `SSP_DESIGN.md` v1.0-draft (architecture, decisions D-23/D-24/G-8/G-9
 introduced here), `HARDWARE.md` (port/lamp tables on landing), `fp_engine`/
-`fp_capture`/`dbg_bridge` RTL (module specs reference this document).
+`fp_capture`/`ssp_bridge` RTL (module specs reference this document).
 
 ---
 
@@ -65,7 +66,7 @@ intensities at board time]`
 
 Mechanism: page change ⇒ FW (or cold-boot defaults) rewrites **profile 7
 `map_ram`** through the bridge LED path (`LED_ADDR/LED_DATA`, design §6) to
-the page's layout, and sets `MON_CTRL.page` to swap the 64-bit export
+the page's layout, and sets `SSP_CTRL.page` to swap the 64-bit export
 content. Cold default = shipped identity map ⇒ page 0 CLASSIC works with
 zero FW and zero profile load (identity over the classic export layout).
 WDG-PARK expiry (FW dead) ⇒ engine forces content to page 0 (map frozen —
@@ -84,7 +85,7 @@ last layout stays, chrome intact).
 
 **Auto-paging (FW):** `E D F S? ME MD`→0 · `R`→1 (+`R2`→2, `R3`→3) ·
 `P`→4 · `B`→5 · `MB`→6 · `SYS`→7. Sticky until next command or encoder
-commit. `MON n` = explicit. Panel actions page 0 implicitly (EXAM/DEP/PORT
+commit. `PAGE n` (ex `MON n` pre-R13) = explicit. Panel actions page 0 implicitly (EXAM/DEP/PORT
 refresh zone A/B/D content even when entered from another page ⇒ landing
 back to classic view after panel work). `[proposed: stickiness fine-tune at
 board time]`
@@ -151,7 +152,7 @@ translation shadow self-corrects from the tap.
   `[proposed]`): zeroes the cursor; second press does **not** commit.
   `dbl_zero_evt` event bit to FW.
 - **Page commit mechanics**: engine cannot rewrite profile-7 maps (FW job);
-  therefore engine commits *page number* into `MON_CTRL.page` immediately
+  therefore engine commits *page number* into `SSP_CTRL.page` immediately
   (hardware: content swap + chrome page-ID reflect it), and raises
   `fp_done`/`ENG_LOG` so FW **optionally** rewrites the map for richer
   layouts. On FW-dead/absent, commits still switch content with the last

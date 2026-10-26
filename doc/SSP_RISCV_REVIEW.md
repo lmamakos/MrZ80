@@ -1,6 +1,6 @@
-# ODT_RISCV_REVIEW — Impact of the RISC-V/FORTH pivot on ODT_MONITOR_DESIGN.md
+# SSP_RISCV_REVIEW — Impact of the RISC-V/FORTH pivot on SSP_DESIGN.md
 
-Status: **DRAFT v0.1** (2026-10-22). Review of `ODT_MONITOR_DESIGN.md` v0.1
+Status: **DRAFT v0.1** (2026-10-22). Review of `SSP_DESIGN.md` v0.1
 (hardwired mon_core/mon_cli architecture) against the new approach in
 `archive/ODT_CHANGE.md`: a VexRiscv RV32IMC softcore running Mecrisp-Quintus FORTH
 as the debug monitor, reaching over to the T80 through a thin MMIO bridge
@@ -15,7 +15,7 @@ Tags: `[verified]` (re-confirmed against source this review, anchor given),
 implementation moves hardware→FORTH or FORTH→bridge), `[superseded]`,
 `[new]`, `[risk]`, `[decision]` (needs owner call before v0.2).
 
-Companion docs: `ODT_MONITOR_DESIGN.md` (review subject), `archive/ODT_CHANGE.md`
+Companion docs: `SSP_DESIGN.md` (review subject), `archive/ODT_CHANGE.md`
 (pivot handoff), `doc/t80_reg_debug_vector.md` (still normative),
 `REQUIREMENTS.md` item 1 (the examine/deposit-port requirement this
 architecture satisfies), `HARDWARE.md` (must gain the monitor windows).
@@ -29,7 +29,7 @@ The pivot is sound and recommended. Roughly **half of v0.1 survives intact**
 (§3/§5), the halt/step/BP behavioral spec (§6), the console protocol (§10),
 and the verification matrix (§12) are all **behavioral** statements that do
 not care who executes them. What dies is the *implementation* split: the
-FSM/console/CLI RTL (mon_core, mon_cli, mon_uart, most of mon_fp, the
+FSM/console/CLI RTL (mon_core, mon_cli, ssp_uart, most of mon_fp, the
 mon_mem logical path) becomes FORTH code, where it is cheaper, more
 debuggable, and easier to extend.
 
@@ -148,7 +148,7 @@ before useful, **m** = clean-up.
 
 ---
 
-## 4. Disposition map: ODT_MONITOR_DESIGN.md section by section
+## 4. Disposition map: SSP_DESIGN.md section by section
 
 | v0.1 § | Content | Disposition | v0.2 home |
 |---|---|---|---|
@@ -162,7 +162,7 @@ before useful, **m** = clean-up.
 | D-07 | START uses live switch value | `[carried]` — now literally free (FORTH policy) | FW |
 | D-08 | MC/TS export + CEN gating for step | `[carried]` — `CEN` port already exists `[verified]`; MC/TS port-out still the same one-line mod | T80s mod + bridge |
 | §3 | Verified platform facts | `[carried]` — all still valid, **except** the §8.2 tri-state claim (corrected, §2) and "27/28-bit" ambiguity (28-bit). Merge in §2 of this review | — |
-| §4 | Module list (mon_core/cli/uart/fp/bp/jr/mem) | `[superseded]` by §5 split below. mon_core+mon_cli→**Mecrisp REPL**; mon_uart→RV MMIO UART; mon_fp→thin frame/LED bridge + FW policy; mon_bp+mon_jr→bridge HW (kept); mon_mem→cycle-sequencer + SD client (bridge HW) + FW driver | — |
+| §4 | Module list (mon_core/cli/uart/fp/bp/jr/mem) | `[superseded]` by §5 split below. mon_core+mon_cli→**Mecrisp REPL**; ssp_uart→RV MMIO UART; mon_fp→thin frame/LED bridge + FW policy; mon_bp+mon_jr→bridge HW (kept); mon_mem→cycle-sequencer + SD client (bridge HW) + FW driver | — |
 | §5 | Stop/go/step/reset/G semantics | `[carried]` **as the normative behavior spec**; mechanism = CTRL/STEP_CTL/reset-stretcher/trampoline regs; add soft-pause via `wait_n` `[new]`; R-snapshot-at-freeze invariant unchanged | bridge + FW |
 | §6 | 4×BP, latched match PC, `C`-skip | `[carried]` HW matcher + `BP_SKIP`; OQ-05 (BP at $0000 vs trampoline) carries | bridge HW + FW |
 | §7 | `CTEV` ring | `[carried]` unchanged proposal (OQ-06 open) | T80 mod + bridge |
@@ -186,7 +186,7 @@ before useful, **m** = clean-up.
                        ▲ owner = OSD OK & rv_ctrl                          
   SNAC io4/io5 ◄──►► fp_bridge ─┐      (68-bit capture, debounce, quad)  ┌─► FP_RAM_Store / WS2812
                                 │    ┌────────────────────────┐   led mux ──┘
-  VexRiscv RV32IMC ── SimpleBus ►│  dbg_bridge (4 KiB)    │◄── cpu_cen, M1, MC/TS, BusAck,
+  VexRiscv RV32IMC ── SimpleBus ►│  ssp_bridge (4 KiB)    │◄── cpu_cen, M1, MC/TS, BusAck,
    ITCM: forth_rom (32K)        │  ctrl/status/step-assist│    frozen A/DO, REG[211:0]
    DTCM: dict     (64K)         │  BP×4 + trap + jump ring│──► busreq_n, wait_n, rst_n(stretched),
    uart0 (SNAC muxed)           │  mem/io cycle sequencer │    A mux sel, RD/WR/MREQ/IO mux sel,
@@ -226,7 +226,7 @@ Replaces the sketch's 8-register block. All offsets word-aligned
 | 0x00 | `ID` | R | `0x4D52_5A00` 'MRZ' + minor rev; FW `V` command source |
 | 0x04 | `CTRL` | RW | bit0 `z_rst_n`* · bit1 `z_busreq_n`* · bit2 `z_wait_n`* · bit3 `cen_gate`* · bit4 `tramp_en` (one-shot) |
 | 0x08 | `TRAMP_ADDR` | RW | `G aaaa` / panel START target; HW emits `C3 aa aa` at $0000 while `tramp_en` and first fetches after reset-vent |
-| 0x0C | `STATUS` | R | live `BusAck, Halt_n, M1_n, MC[2:0], TS[2:0], cpu_running, mon_active, s32, alt` (OQ-01 sideband when added), `wdg_expired` |
+| 0x0C | `STATUS` | R | live `BusAck, Halt_n, M1_n, MC[2:0], TS[2:0], cpu_running, ssp_active, s32, alt` (OQ-01 sideband when added), `wdg_expired` |
 | 0x10 | `HALT_REASON` | R/clr | v0.1 §10.2 codes + `wdg`; latched `{reason, bp_slot}` |
 | 0x14 | `PC_LATCH` | R | match/park PC (v0.1 §6 "latched match, not PC+1") |
 | 0x18–0x30 | `SNAP_REG0..6` | R | 212-bit `REG` frozen at park/match instant (`t80_reg_debug_vector.md` §1 layout, normative) |
@@ -270,7 +270,7 @@ mem! mem@ sd@ page. h bios.map` — the v0.1 §10.1 command table implemented
 - v0.1 §12 requirements carry **verbatim as behavioral specs**; the test
   driver moves from "drive mon_* FSMs" to "drive MMIO registers" — VHDL
   tasks emulating FORTH calls make every v0.1 TB reusable
-  (`tb_dbg_bridge` replaces tb_mon_ctrl's register surface; tb_mon_mem/io
+  (`tb_ssp_bridge` replaces tb_mon_ctrl's register surface; tb_mon_mem/io
   now exercise the cycle sequencer incl. the mux-vs-frozen-output cases).
 - New requirements: **R-23** RV boots from TCM ROM with `forth_rom.hex`
   (ROM-model init in GHDL smoke test); **R-24** watchdog auto-release +
@@ -317,9 +317,9 @@ mem! mem@ sd@ page. h bios.map` — the v0.1 §10.1 command table implemented
 1. Owner calls on the `[decision]` items: D-04 shrink ($D0-$DF reserved vs
    mailbox), LED tap (OQ-RV-06), ROM/runtime-reload (OQ-RV-03).
 2. P0 spike (F-10 de-risk, headroom numbers) — gates everything.
-3. Rewrite `ODT_MONITOR_DESIGN.md` → **v0.2**: keep §1-§3 (corrected), §5,
+3. Rewrite `SSP_DESIGN.md` → **v0.2**: keep §1-§3 (corrected), §5,
    §6, §7, §10, §12 as behavior spec; replace §4, §8, §11, §14, §15 with
    this review's §5-§8; merge ODT_CHANGE.md's roadmap into the P0-P3 plan.
 4. Update `REQUIREMENTS.md` item 1 (the arbiter/examine-port requirement)
-   to reference ODT v0.2 as its satisfying architecture, and `HARDWARE.md`
+   to reference design v0.2 (now `SSP_DESIGN.md`) as its satisfying architecture, and `HARDWARE.md`
    when the bridge lands.

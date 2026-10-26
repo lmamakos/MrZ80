@@ -1,13 +1,20 @@
-# ODT_MONITOR_DESIGN — FPGA-Resident ODT-Style Debug Monitor for MrZ80
+# SSP_DESIGN — System Support Processor for MrZ80
+*An embedded RISC-V (Forth-powered) support processor and its Z80-facing
+debug/console/assist interfaces.*
 
-Status: **DRAFT v0.9** — v0.2 (support-CPU architecture: VexRiscv RV32IMC +
-Mecrisp-Quintus FORTH + cycle-accurate `dbg_bridge`) as amended by the
+Status: **v1.0-draft** — **renamed from `ODT_MONITOR_DESIGN.md` at round
+R13** (2026-10-26): the subsystem outgrew the Intel-derived "ODT" label
+(debug console is now one feature among many). All prior content, decision
+lineage v0.1–v0.9 and logs R1–R12 are preserved below and carry the old
+name where historically accurate.
+Architecture from v0.2 (support-CPU: RV32IMC +
+Mecrisp-Quintus FORTH + cycle-accurate `ssp_bridge`) as amended by the
 **design decision session of 2026-10-22** (full round-by-round log in §17),
 plus follow-up refinement **R7**: 32-switch bank with dual personality
 (panel input + guest sense ports $FC–$FF) and encoder accumulate-and-commit
 menu counter exposed at $FB (§11.2/§11.6).
 **v0.5** = panel-UX deep-dive outcome (round **R8**, 2026-10-23; full spec
-in `ODT_PANEL_UX.md`): operator-sovereignty-with-PANEL_LOCK (G-8), per-page
+in `SSP_PANEL_UX.md`): operator-sovereignty-with-PANEL_LOCK (G-8), per-page
 lamp remapping with pinned chrome (G-9/D-23), S28–S30 = BP-ARM / FREEZE /
 START-AT-A, encoder hold-cursor + rapid-double-press-zero, `*`-prefixed
 panel-op commentary, colour conventions, WDG-dead forces CLASSIC page +
@@ -50,14 +57,42 @@ name) · `[decided]` (locked, see §2) · `[proposed]` (review target) ·
 `[open]` (§14) · `[deferred]` · `[new v0.3]` (from the decision session).
 
 Companion documents: `doc/t80_reg_debug_vector.md` (normative register map),
-`ODT_PANEL_UX.md` (panel UX spec — R8 outcome, referenced by §11),
+`SSP_PANEL_UX.md` (panel UX spec — R8 outcome, referenced by §11),
 `SDRAM_REWORK_PLAN.md` (memory-subsystem rework roadmap — R9 outcome,
-referenced by §9.2), `ODT_RISCV_REVIEW.md` (v0.1→v0.2 rationale + fact
+referenced by §9.2), `SSP_RISCV_REVIEW.md` (v0.1→v0.2 rationale + fact
 corrections), `archive/ODT_CHANGE.md`
 (pivot handoff, historical — superseded by this doc), `REQUIREMENTS.md` item 1
 (this design is its
 detailed spec — traceability note added there), `HARDWARE.md` (I/O map; must
 be updated when this lands).
+
+### Naming (R13, 2026-10-26) `[decided]`
+
+**SSP — System Support Processor**: the RISC-V support CPU *and* its
+Z80-facing peripheral interfaces (bridge, console UART, panel engine,
+watchdogs, memory clients, mount path) as one subsystem. Chosen over the
+inherited "ODT" label, which described only the debug-console heritage;
+industry pattern precedents: service/support processors, BMCs.
+
+Rename map applied through the doc set (code hasn't existed yet, so this is
+the canonical vocabulary from day one):
+
+| Was | Now |
+|---|---|
+| ODT (subsystem brand) | **SSP** |
+| `ODT_MONITOR_DESIGN.md` / `ODT_PANEL_UX.md` / `ODT_RISCV_REVIEW.md` | `SSP_DESIGN.md` / `SSP_PANEL_UX.md` / `SSP_RISCV_REVIEW.md` |
+| `mon_top` / `mon_uart` / `mon_mem_client` / `mon_sd` | `ssp_top` / `ssp_uart` / `ssp_mem_client` / `ssp_sd` |
+| `dbg_bridge` | `ssp_bridge` |
+| `mon_active` / `mon_irq` / `mon subsystem` | `ssp_active` / `ssp_irq` / `ssp subsystem` |
+| `MON_CTRL` / `MON_CHAIN` | `SSP_CTRL` / `SSP_CHAIN` |
+| `monitor/rtl/`, `monitor/fw/` | `ssp/rtl/`, `ssp/fw/` |
+| FW page word `MON n` | `PAGE n` (clearer: it selects lamp/state pages) |
+
+**Carve-outs — "ODT" survives *only* as Intel heritage:** the phrase
+"ODT-style" for the classic-console idiom (§1), the FW compatibility-skin
+word `ODT` (§5.5/§10.1 — the command set *emulates* Intel's ODT monitor,
+alongside its `H T G X K…` mnemonics), and `archive/ODT_CHANGE.md` (whose
+name is itself historical). Nothing else bears the old label.
 
 ---
 
@@ -122,7 +157,7 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-12 | `[decided]` Formal invariants **P-A..P-D** (§2.5) + named guidance notes G-1..G-7 (session R2/R6: A–C formal per owner; P-D promoted R6). | notes-only |
 | D-13 | `[decided, revised v0.3]` **Two-tier watchdog** (session R2): **WDG_RUN** (`[new]` transient holds — WAIT asserts, trap stalls, sequencer busy — auto-release guest, default **~4 ms**, parameterized) and **WDG_PARK** (~1–2 s, governs *FW-originated* parks only: expiry demotes a dead FW console — `console_own←0`, dead-flag lamp — but **never releases a hardware-held park**: classic STOP/BP park semantics stay human-paced and panel-recoverable). §6.9. | single 1.3 s auto-release (v0.2) |
 | D-14 | `[decided, session R4]` RX byte at monitor UART while guest runs = hardware escape-break (auto-BUSRQ, reason=escape). | FW-poll escape |
-| D-15 | `[decided, revised v0.3]` Physical memory: **(P) parked client** `mon_mem_client` borrows the *wiring* — drives the existing SDRAM client interface (`sdram_addr/din/we/rd` + native DQM) and BRAM mux only while guest parked *and* primary client FSM idle; MMU registers untouched (P-D). **(B) background** vid-port client (P2): **reads only** — natively read-only, verified lowest priority (cpu > vid, refresh > both); vid-*write* mod deferred, revisit gated on sim showing vid traffic benign to the primary path like refresh collisions (session R3). | ~~MMU direct-access ports $B8–$BC~~ **retracted**: auto-increment pointer is guest-owned state (session R3) |
+| D-15 | `[decided, revised v0.3]` Physical memory: **(P) parked client** `ssp_mem_client` borrows the *wiring* — drives the existing SDRAM client interface (`sdram_addr/din/we/rd` + native DQM) and BRAM mux only while guest parked *and* primary client FSM idle; MMU registers untouched (P-D). **(B) background** vid-port client (P2): **reads only** — natively read-only, verified lowest priority (cpu > vid, refresh > both); vid-*write* mod deferred, revisit gated on sim showing vid traffic benign to the primary path like refresh collisions (session R3). | ~~MMU direct-access ports $B8–$BC~~ **retracted**: auto-increment pointer is guest-owned state (session R3) |
 | D-16 | `[decided, revised v0.3]` OSD allocations: `OK`=bit 20 (`OL`=21 reserved); download index **6 = `MROM` monitor ROM image**, index **7 = `MPKG` FORTH program pack**. MROM mount completion pulses **monitor-subsystem reset only** (RV+bridge+WDG re-arm; guest untouched, session R2). `OF` Reset-after-Mount semantics unchanged (guest). | guest-wide reset on mount |
 | D-17 | `[decided, revised v0.3]` Lamp display philosophy (session R5): LEDs are a **flexibly-mapped signalling lamp array**, *not* a low-res graphics surface; no assumed correspondence with terminal text. Convention: monitor exports state words into the capture chain (§11.4); **profile 7 = monitor profile**; map_ram maps lamps to any chain bits (existing capture bits and/or monitor-exported bits); OSD profile-override engages profile 7 while monitor display active. Direct color/fb painting remains available for FW extensions. | dedicated monitor framebuffer; "text mirror" lamp pages |
 | D-18 | `[decided, new v0.3]` **Hardware panel engine** (`fp_engine`): classic panel operations execute in FPGA logic through the shared bridge primitives (sequencer, step assist, reset stretcher, bus muxes), maintaining live **AR/DR/MD/PR** functional registers that FW reads/writes too. Panel works with FW absent/hung (P-B strengthened). FW and panel are **peers on one engine**; the sequencer busy-handshake is the arbiter; panel wins simultaneous kicks; panel ops event FW (IRQ + last-op log). | FW panel server as sole executor (v0.2) |
@@ -130,7 +165,7 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-20 | `[decided, session R1]` Core facilities: **RV32IMC** (no A — single hart, state read via bridge regs), **1 MHz machine timer**, external IRQ dispatched by reading bridge `IRQ_PENDING` (no PLIC, no `mcause`-specific code; portable to fallback core). | IMAC; mcause/vectored |
 | D-21 | `[decided, session R1]` **Code is data lifecycle**: monitor boots before/independent of guest image; ROM image (index 6) and FORTH pack (index 7: text source staged in DTCM, auto-`EVAL`'d at boot, magic+length trailer; position-independent, survives kernel rebuilds) both OSD-loadable; serial upload path (P2) reuses the same "eval a buffer" primitive. No NVRAM machinery in v1. | refit-per-change; battery-backed dict (deferred OQ-13) |
 | D-22 | `[decided, session R5]` Addressing is **modal** on both surfaces: logical (MMU-translated, 16-bit) ⟷ physical (28-bit). FW keeps a live MMU shadow from the `mmu_frame` HW tap (state-neutral) and can translate/report either view; serial mode command (`PHY`/`LOG`); panel physical mode = **S31 = '1'** (§11.2). | single addressing mode |
-| D-23 | `[decided, new v0.5 (R8)]` Panel UX package (full spec `ODT_PANEL_UX.md`): sovereignty-with-`PANEL_LOCK` (G-8) · S28=**BP ARM** (LOAD-ADDR also sets BP at encoder-cursor slot), S29=**FREEZE**, S30=**START-AT-A** (hardware trampoline start, firmware-free — closes D-07 panel gap) · per-page lamp remap with pinned chrome + page-ID lamps (G-9; cold default = identity ⇒ CLASSIC) · encoder: hold-cursor after commit, rapid double-press zeroes (no commit) · hybrid `*` commentary · colour conventions · WDG-dead ⇒ page forced to CLASSIC, lock cleared. | static-map/paged-content (rejected R8 in favour of per-page layout); unconditional RUN; zero-after-commit; queue-only or silent commentary |
+| D-23 | `[decided, new v0.5 (R8)]` Panel UX package (full spec `SSP_PANEL_UX.md`): sovereignty-with-`PANEL_LOCK` (G-8) · S28=**BP ARM** (LOAD-ADDR also sets BP at encoder-cursor slot), S29=**FREEZE**, S30=**START-AT-A** (hardware trampoline start, firmware-free — closes D-07 panel gap) · per-page lamp remap with pinned chrome + page-ID lamps (G-9; cold default = identity ⇒ CLASSIC) · encoder: hold-cursor after commit, rapid double-press zeroes (no commit) · hybrid `*` commentary · colour conventions · WDG-dead ⇒ page forced to CLASSIC, lock cleared. | static-map/paged-content (rejected R8 in favour of per-page layout); unconditional RUN; zero-after-commit; queue-only or silent commentary |
 | D-24 | `[decided, new v0.7 (R10)]` **MMU map switch** — 9th SPDT (center-off momentary; two electrical lines): UP = **MMU-EXAM**: entry `n=S1:S0` read from the `MAP0..3` taps (no port cycle — P-D-safe); sustained display override until next display-changing op: page → lamps at the physical **A27..A14** positions, `n` → L1:L0, other low lamps dark; re-query on each UP edge and live on `S1:S0` change while active `[board-adjustable]`. DOWN = **MMU-DEPOSIT**: page `S27..S14` → entry `n` via parked port-master macro (`OUT $B0+n` low, `OUT $B4+n` high; valid set implicitly, bit encoding per `MMU.vhd` verified at landing); no panel-side validity check — an invalid mapping misbehaves exactly as a guest-set invalid value (owner R10). Engine-only capable both directions (tap + mastering); FW mirrors events for `*` commentary; FW map shadow self-corrects via tap. | valid-dot lamp — rejected: unnecessary (op is for a stopped CPU; static lights); FW-dependent display; latching toggle part |
 
 ### 2.5 Principles
@@ -231,13 +266,13 @@ numbers are hints — grep the name.
  clk_sys 50 MHz (single domain; only the vid-port window crosses to clk_ram)
 
  SNAC io0/io1 ◄──► console mux ◄─┬─ guest ACIA path ($82/$83)          [default]
-   HDMI kbd (P3) ────────────────┴─ CONN_ROUTE (D-19) ─► mon_uart ◄┐
+   HDMI kbd (P3) ────────────────┴─ CONN_ROUTE (D-19) ─► ssp_uart ◄┐
  SNAC io4/io5 ◄──► fp_capture ─► fp_engine (hardware classic console)│[new v0.3]
  USER_OUT[6] ◄──── WS2812 PHY ◄── refresh ctrl ◄── FP_RAM_Store ◄─┐│
                                                                    ▼│
  ┌──────────────────┐   SimpleBus   ┌────────────────────────────────────────┐
- │ gracilis RV32IMC │──cmd/ack────►│ dbg_bridge @ 0x2000_0000 (4 KiB)      │
- │  ROM 64K (OSD-   │◄──mon_irq────│ CTRL·STATUS·STEP·BP·TRAP·MD·AR·DR·PR   │
+ │ gracilis RV32IMC │──cmd/ack────►│ ssp_bridge @ 0x2000_0000 (4 KiB)      │
+ │  ROM 64K (OSD-   │◄──ssp_irq────│ CTRL·STATUS·STEP·BP·TRAP·MD·AR·DR·PR   │
  │   downloadable)  │              │ MEM-SEQ engine (one door: FW ⇄ panel)  │
  │  RAM 64K         │              │ SNAP/LIVE REG · MAP0..3 (mmu tap)      │
  │  µs machine timer│              │ MON-CHAIN export(64b)·MBX·CONN_ROUTE   │
@@ -249,8 +284,8 @@ numbers are hints — grep the name.
                     T80s (CEN · MC/TS/ALT export · REG[211:0] · CTEV* P2)
                                   │
         memory system: MMU (untouched by monitor, tapped only) · BRAM mux ·
-        SDRAM client FSM ── mon_mem_client (parked physical, borrows wiring) ──┐
-        sdram2 vid port ◄── mon_sd (P2 background READS only) ─────────────────┴─ clk_ram CDC
+        SDRAM client FSM ── ssp_mem_client (parked physical, borrows wiring) ──┐
+        sdram2 vid port ◄── ssp_sd (P2 background READS only) ─────────────────┴─ clk_ram CDC
 ```
 
 ### 4.2 Module list
@@ -259,17 +294,17 @@ numbers are hints — grep the name.
 |---|---|
 | `Components/RISCV/femtorv32_gracilis.v` (+`utils.v`) + `.qip` | **P0 core (D-09/R12)**: vendored single-file RV32IMC+IRQ, pinned upstream rev + provenance note (URL/commit/license check); no generation toolchain |
 | `Components/RISCV/VexRiscv.v` + `.qip` | *Shelved (R12)* — vendored core path if reopened (OQ-21); provenance manifest + `gen/GenMrZ80.scala` + containerized regen (`tools/vexgen.sh`, §5.7) all specced, nothing scheduled |
-| `monitor/rtl/mon_top.v` | Subsystem wrapper: core + ROM + RAM + decoder + `mon_uart` + `dbg_bridge`; sideband bundle to CPM; `mon_irq` out; guest controls out; `MON_CHAIN[63:0]` export |
-| `monitor/rtl/dbg_bridge.v` | §6 register file; shared functional registers (MD/AR/DR/PR); MEM-SEQ engine + arbiter; STEP assist; BP/trap; WDG×2; IRQ; ID |
-| `monitor/rtl/mon_uart.v` | 8N1 UART, divider select from `O9B` table index (D-22 session R4); RX FIFO (8) `[proposed]`; RX-byte → escape-break + IRQ |
-| `monitor/rtl/fp_capture.v` | 68-bit shift-in, debounce (4-sample ~2 ms), quadrature/press decode, menu-counter (+commit latch), frame-error detect; single source of truth feeding `fp_engine`, bridge mirror regs, **and** the guest sense-port mux ($FC–$FF/$FB, §11.6) |
-| `monitor/rtl/fp_engine.v` | **Hardware classic-console executor** (D-18, §11.3): SPDT command decode, AR/DR/MD/PR state, auto-increment, kicks MEM-SEQ/STEP/RESET primitives, lamp-state outputs; event+log to FW |
-| `monitor/rtl/mon_mem_client.v` | Parked physical SDRAM/BRAM client (D-15-P): drives existing client interface + BRAM mux while guest-parked ∧ primary client idle; native DQM byte lanes |
-| `monitor/rtl/mon_sd.v` | (P2) vid-port background READ client; clk_ram CDC per existing pattern |
-| `monitor/fw/*` | Mecrisp-Quintus build: `crt0.S`, linker, kernel glue, ODT app sources → `forth_rom.hex` (factory ROM init image) + pack files |
+| `ssp/rtl/ssp_top.v` | Subsystem wrapper: core + ROM + RAM + decoder + `ssp_uart` + `ssp_bridge`; sideband bundle to CPM; `ssp_irq` out; guest controls out; `SSP_CHAIN[63:0]` export |
+| `ssp/rtl/ssp_bridge.v` | §6 register file; shared functional registers (MD/AR/DR/PR); MEM-SEQ engine + arbiter; STEP assist; BP/trap; WDG×2; IRQ; ID |
+| `ssp/rtl/ssp_uart.v` | 8N1 UART, divider select from `O9B` table index (D-22 session R4); RX FIFO (8) `[proposed]`; RX-byte → escape-break + IRQ |
+| `ssp/rtl/fp_capture.v` | 68-bit shift-in, debounce (4-sample ~2 ms), quadrature/press decode, menu-counter (+commit latch), frame-error detect; single source of truth feeding `fp_engine`, bridge mirror regs, **and** the guest sense-port mux ($FC–$FF/$FB, §11.6) |
+| `ssp/rtl/fp_engine.v` | **Hardware classic-console executor** (D-18, §11.3): SPDT command decode, AR/DR/MD/PR state, auto-increment, kicks MEM-SEQ/STEP/RESET primitives, lamp-state outputs; event+log to FW |
+| `ssp/rtl/ssp_mem_client.v` | Parked physical SDRAM/BRAM client (D-15-P): drives existing client interface + BRAM mux while guest-parked ∧ primary client idle; native DQM byte lanes |
+| `ssp/rtl/ssp_sd.v` | (P2) vid-port background READ client; clk_ram CDC per existing pattern |
+| `ssp/fw/*` | Mecrisp-Quintus build: `crt0.S`, linker, kernel glue, ODT app sources → `forth_rom.hex` (factory ROM init image) + pack files |
 
-Integration: `mon_top` instantiates at `MrZ80.sv`; `fp_capture`+`fp_engine`
-+`mon_mem_client` live at the CPM-core boundary (signals available:
+Integration: `ssp_top` instantiates at `MrZ80.sv`; `fp_capture`+`fp_engine`
++`ssp_mem_client` live at the CPM-core boundary (signals available:
 `cpuAddress`, strobes, `cpuDataIn` mux point, `reset_n_internal`,
 `cpu_cen`, BRAM mux, SDRAM request signals); chain export appended at the
 capture-chain input; `FP_RAM_Store` Port-A ownership mux (§11.5).
@@ -293,15 +328,15 @@ two controllers, one engine (G-3).
 RV32IMC · no caches/MMU · ITCM/DTCM tightly-coupled · machine mode ·
 1 MHz machine soft-timer · external IRQ input (level from `|IRQ_PENDING`) ·
 SimpleBus master with stall-tolerant slave contract · reset = `locked ∧
-core_reset ∧ !mon subsystem_reset` (monitor up **before** any guest image).
+core_reset ∧ !ssp subsystem_reset` (monitor up **before** any guest image).
 No JTAG plugin (UART *is* the debugger). Fallback: PicoRV32 (§5.6).
 
 ### 5.2 Memory map
 | Range | Content |
 |---|---|
-| `0x0000_0000–0x0000_FFFF` | "ROM" — 64 KiB M10K, **RV read-only**; download write-port (ioctl route, only while monitor held in reset during mount); factory init from committed `monitor/fw/forth_rom.hex`; downloaded image persists across core resets, full FPGA reconfig restores factory (D-10) |
+| `0x0000_0000–0x0000_FFFF` | "ROM" — 64 KiB M10K, **RV read-only**; download write-port (ioctl route, only while monitor held in reset during mount); factory init from committed `ssp/fw/forth_rom.hex`; downloaded image persists across core resets, full FPGA reconfig restores factory (D-10) |
 | `0x1000_0000–0x1000_FFFF` | DTCM RAM 64 KiB byte-enable: BSS + dictionary + **pack staging** (§5.5) |
-| `0x2000_0000–0x2000_0FFF` | `dbg_bridge` (§6) |
+| `0x2000_0000–0x2000_0FFF` | `ssp_bridge` (§6) |
 | else | decoder error → `resp.error`; FW trap word prints |
 
 ### 5.3 Console UART
@@ -311,7 +346,7 @@ the monitor (G/decision R4): TX blocks on ready, RX FIFO drains via IRQ or
 poll. Escape-break on first RX byte while guest runs (D-14, HW).
 
 ### 5.4 Downloadable ROM & packs (D-21)
-- `MROM` (index 6): RV32 image `monitor/fw` build output (`forth.bin`→
+- `MROM` (index 6): RV32 image `ssp/fw` build output (`forth.bin`→
   `forth_rom.hex` factory-committed; `.bin` mountable at runtime). Mount
   streams over ioctl into the ROM-RAM; **on mount-complete: monitor-
   subsystem reset pulse only** — RV boots new image; guest untouched (D-16).
@@ -391,7 +426,7 @@ Variant table (from the repo README, 2026-10):
 
 **Deltas to verify at spike (vs §5.1):** (1) **machine soft-timer** —
 confirm CSR mtime/mtimecmp presence; if absent, the tick moves to an MMIO
-counter in `dbg_bridge` (our `milliseconds` glue reads it — trivial FW
+counter in `ssp_bridge` (our `milliseconds` glue reads it — trivial FW
 change, negligible budget); (2) interrupt *latency & nesting* semantics vs
 R-13-era dispatch assumptions; (3) repo license compatibility for vendoring
 (learn-fpga is openly published; verify exact terms at checkout);
@@ -445,7 +480,7 @@ soft IRQ + one external IRQ input wired from `|IRQ_PENDING`), **no MMU, no
 I$/D$**, simple uncached IBus/DBus. Murax's APB peripherals (uart/gpio/
 prescaler) are dropped — UART lives in our bridge (§5.3); the generator
 emits the bare *CPU* plus its IBus/DBus + IRQ/timer pins, which our
-`rv_top` wires to MROM/DTCM/SimpleBus shim and `dbg_bridge`.
+`rv_top` wires to MROM/DTCM/SimpleBus shim and `ssp_bridge`.
 
 **Container (`tools/vexgen/Dockerfile`, built once on tycho).**
 `FROM eclipse-temurin:17-jdk` + `git` + the **mill** launcher single
@@ -490,7 +525,7 @@ only.
 
 ---
 
-## 6. Debug Bridge (`dbg_bridge`) — MMIO map (v0.3)
+## 6. Debug Bridge (`ssp_bridge`) — MMIO map (v0.3)
 
 Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 `fp_engine` (G-3: single door, dual controllers).
@@ -498,9 +533,9 @@ Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 | Off | Reg | Acc | Description |
 |---|---|---|---|
 | 0x00 | `ID` | R | `0x4D52_5A03` rev-stamped |
-| 0x04 | `CTRL` | RW | bit0 `z_rst_n` · bit1 `z_busreq_n`(FW hold) · bit2 `z_wait_n` · bit3 `cen_gate` · bit4 `tramp_en` · bit5 `esc_break_en` · bit8 `console_own` · bit9 `panel_lock` (G-8: gates panel RUN/START only; auto-clears on WDG_PARK expiry/escape/OK-off/MROM mount); **forced inactive when `!mon_active`**; park sources = FW hold ∨ engine stop-latch (D-13) |
+| 0x04 | `CTRL` | RW | bit0 `z_rst_n` · bit1 `z_busreq_n`(FW hold) · bit2 `z_wait_n` · bit3 `cen_gate` · bit4 `tramp_en` · bit5 `esc_break_en` · bit8 `console_own` · bit9 `panel_lock` (G-8: gates panel RUN/START only; auto-clears on WDG_PARK expiry/escape/OK-off/MROM mount); **forced inactive when `!ssp_active`**; park sources = FW hold ∨ engine stop-latch (D-13) |
 | 0x08 | `TRAMP_ADDR` | RW | `G aaaa`/START target |
-| 0x0C | `STATUS` | R | `BusAck, HALT_n, M1_n, MC, TS, ALT (new P1), cpu_running, mon_active, s32, fw_console_ok, eng_stop_latch, seq_busy, wdg_dead` |
+| 0x0C | `STATUS` | R | `BusAck, HALT_n, M1_n, MC, TS, ALT (new P1), cpu_running, ssp_active, s32, fw_console_ok, eng_stop_latch, seq_busy, wdg_dead` |
 | 0x10 | `HALT_REASON` | R/clr | §10.4 codes (+`wdg`) |
 | 0x14 | `PC_LATCH` | R | match/park PC |
 | 0x18–0x30 | `SNAP_REG0..6` | R | `REG` frozen at park/match instant (R-snapshot discipline) |
@@ -524,7 +559,7 @@ Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 | 0xC8 | `CONN_ROUTE` | RW | `{out_snac=1 default, out_hdmi(P2), in_snac=1 default, in_kbd(P3)}` — FW policy, HW fail-safe defaults on reset/`wdg_park` (D-19) |
 | 0xD0–0xDC | `MBX0..3` | RW | guest mirror ($D0–$D3); guest write → IRQ `fp_done`-class new bit `mbx` |
 | 0xE0–0xEC | `MAP0..MAP3` | R | **MMU frame tap**: `{valid, page[13:0]}` ×4 — FW translation shadow, state-neutral (P-D) |
-| 0xF0 | `MON_CTRL` | RW | `[shared]` chain-export control: `{enable, page}` — selects which 64-bit state block feeds `MON_CHAIN[63:0]` (§11.4); panel engine writes `page` on encoder commit (D-23); WDG_PARK expiry forces `page←0` |
+| 0xF0 | `SSP_CTRL` | RW | `[shared]` chain-export control: `{enable, page}` — selects which 64-bit state block feeds `SSP_CHAIN[63:0]` (§11.4); panel engine writes `page` on encoder commit (D-23); WDG_PARK expiry forces `page←0` |
 | 0xF4 | `LED_ADDR` | RW | profile-7 map/colour/fb write address (forwarded to `FP_RAM_Store` Port-A via ownership mux, §11.5) |
 | 0xF8 | `LED_DATA0..2` | RW | map entry (≤10b) / colour (R,G,B) / fb bit per write-type select — FW rewrites profile-7 **map per page** (G-9); cold default = identity map ⇒ CLASSIC layout free |
 | 0x100 | `FP_SW` | R | debounced toggle bank `{S31..S0}` — same source driving guest ports $FC–$FF (single source of truth, §11.6) |
@@ -533,9 +568,9 @@ Base `0x2000_0000`, word offsets, 4 KiB. `[shared]` = also driven/updated by
 | 0x10C | `FP_ENC_STAT` | R/W1C | `{committed[7:0](15:8), page_id[2:0], dbl_zero_evt, commit_evt, press_evt}` — press commits page (cursor **held**, D-23); rapid double-press zeroes cursor w/o commit; FW may subscribe instead of polling |
 | 0xFF0 | `DEC_ERR_COUNT` | R | unimplemented-offset counter |
 
-`MON_CHAIN[63:0]` is a structural output of `dbg_bridge` (not MMIO-readable
+`SSP_CHAIN[63:0]` is a structural output of `ssp_bridge` (not MMIO-readable
 necessity — FW can read its own writes): `{PC, AR, DR, PR, STATUS,
-HALT_REASON, MD/eng flags, spare}` selected by `MON_CTRL.page`.
+HALT_REASON, MD/eng flags, spare}` selected by `SSP_CTRL.page`.
 
 ### 6.9 Two-tier watchdog (D-13)
 `WDG_RUN` counts while any **transient** hold is asserted (`z_wait_n=0`
@@ -544,7 +579,7 @@ transient hold, force `wait/stall` inactive, `err` on the operation,
 `run_expiredL=1`, IRQ. Default 2²² clk ≈ **4 ms**.
 `WDG_PARK` counts only while the sole park reason is **FW hold**
 (`CTRL.bit1` set, `eng_stop_latch`=0): expiry → `console_own←0`,
-**`panel_lock←0`**, **`MON_CTRL.page←0`** (D-23: lamps fall back to
+**`panel_lock←0`**, **`SSP_CTRL.page←0`** (D-23: lamps fall back to
 CLASSIC), `z_busreq_n←1` (release **and** demote: FW presumed dead),
 `park_deadL=1`, lamp flag, IRQ; re-arm on next FW write after re-kick. Default 2²⁶ ≈ 1.3 s.
 Hardware parks (`eng_stop_latch`, e.g. STOP/BP) do **not** arm WDG_PARK:
@@ -591,12 +626,12 @@ AR auto-increment: engine policy for panel walks (`EXAM+`, `DEP+`); FW
 commands update `AR` explicitly (both surfaces leave `AR` coherent, R-15).
 
 ### 9.2 Physical (28-bit)
-- **P1 — parked client (D-15-P):** `mon_mem_client` drives the SDRAM client
+- **P1 — parked client (D-15-P):** `ssp_mem_client` drives the SDRAM client
   interface (`sdram_addr/din/we/rd` + DQM via `addr[0]`) and the BRAM mux,
   gated on: parked ∧ primary-client-idle ∧ no contention. Full R/W reach
   incl. BRAM page 8192. MMU bypassed (physical, by definition) and untouched
   (P-D). `MD`=physical makes `AR` 28-bit for both surfaces.
-- **P2 — background window (D-15-B):** `mon_sd` client on the vid port,
+- **P2 — background window (D-15-B):** `ssp_sd` client on the vid port,
   **reads only**; verified arbitration priority (refresh>cpu>vid) keeps the
   guest whole; acceptance = sim assertion suite showing vid traffic behaves
   like refresh-collision latency and never breaks primary-path accesses
@@ -629,7 +664,8 @@ escape (HW) + `F`/`ODT` skin switch.
 - `PHY` / `LOG` — addressing mode select (`MD`) `[new v0.3]`
 - `E/D/I/O` default via `AR/PR` shared registers; explicit-arg forms allowed
 - `MB rd[,n]` / `MB wr,dd` — mailbox peek/poke `$D0..$D3` `[new v0.3]`
-- `MON n` — select lamp state block (`MON_CTRL.page`) `[new v0.3]`
+- `PAGE n` — select lamp state block (`SSP_CTRL.page`) `[new v0.3; renamed
+  from `MON n` at R13]`
 - `SW[.]` — dump 32-switch bank (bridge mirror); `ENC` — menu counter + last
   committed selection `[new v0.4]`
 - `U` unassembler P1 (carried pull-forward); `S?` search P2; `TR` trap P2;
@@ -703,7 +739,7 @@ simultaneity; completion pulses `IRQ.fp_done` + `ENG_LOG`. Errors
 (e.g. engine-kick while not parked when required) latch `engine_err`, lamp
 flag. Auto-increment policy lives here (human-speed; still hardware).
 **Encoder (D-23/R8):** rotation accrues a signed cursor (page menu 0..7,
-wrap); PRESS commits — sets `MON_CTRL.page` immediately (hardware content
+wrap); PRESS commits — sets `SSP_CTRL.page` immediately (hardware content
 swap + chrome page-ID), latches `FP_ENC_STAT.committed`, pulses
 `commit_evt`; the cursor is then **held** (persistent index). A second press
 within `T_w` (default ≈500 ms `[proposed]`) **zeroes the cursor** without
@@ -713,7 +749,7 @@ still switch content under the last map — degraded, never stuck.
 **Modifiers (D-23):** S28 **BP-ARM** — while on, LOAD-ADDRESS(up) also
 installs BP at `A[15:0]`, slot = committed cursor[1:0] (panel-settable
 breakpoints — v0.1 §9.5 exclusion retired; panel BP *clear* gesture open,
-UX-spec §4/§11). S29 **FREEZE** — latches `MON_CHAIN` export (chrome still
+UX-spec §4/§11). S29 **FREEZE** — latches `SSP_CHAIN` export (chrome still
 updates). S30 **START-AT-A** — while armed, RUN(up) executes hardware START:
 `TRAMP_ADDR←A[15:0]`, `tramp_en`, stretched reset-vent, park release
 (firmware-free, P-B; MD is display context only). Arm state → chrome lamps
@@ -739,16 +775,16 @@ from the tap.
 
 ### 11.4 Lamps — pages own content *and* layout (D-17/D-23, G-6/G-9)
 
-`MON_CHAIN[63:0]` (bridge output, selected state block)
+`SSP_CHAIN[63:0]` (bridge output, selected state block)
 is appended to the 384-bit capture chain after the existing 24 live bus
 bits. **Page = content + layout:** on any page change (FW command
 auto-paging, encoder commit, WDG fallback), the **profile-7 `map_ram` is
 rewritten** (FW via `LED_ADDR/LED_DATA`; cold default = shipped *identity*
 map, which is exactly the CLASSIC layout — zero FW needed for page 0), and
-`MON_CTRL.page` swaps the 64-bit export content. Chrome is invariant across
+`SSP_CTRL.page` swaps the 64-bit export content. Chrome is invariant across
 pages: modifier-arm lamps (S28–S30 arms + MD), status strip (RUN green /
 HALT red / MON / CONSOLE_OWN / PANEL_LOCK amber / FW-alive cyan blink /
-WDG violet), and 3-bit **page-ID** lamps — per `ODT_PANEL_UX.md` §2/§3
+WDG violet), and 3-bit **page-ID** lamps — per `SSP_PANEL_UX.md` §2/§3
 (zones A/M/B/T/D, colour table, page definitions 0–7: CLASSIC, CORE-A/B/C,
 MMU, BP, MSG, SYS). FW-dead ⇒ content forced to page 0, map frozen, chrome
 intact. Live bus bits remain mappable for authentic bus lamps. No text
@@ -756,7 +792,7 @@ rendering (G-6); page/layout/colour tables land in `HARDWARE.md`.
 
 ### 11.5 Port-A ownership mux (LED store)
 `FP_RAM_Store` Port A select: {FP master controller (Z80 `$A0–$A7` path),
-monitor FW route (via `mon_top` → `LED_ADDR/DATA` bridge regs)}. Z80-guest
+monitor FW route (via `ssp_top` → `LED_ADDR/DATA` bridge regs)}. Z80-guest
 writes win (rare, atomic); monitor writes proceed otherwise; profile 7 in
 practice avoids overlap entirely (guest profile usage convention ≠ 7 —
 enforced by convention, not interlock, noted).
@@ -794,23 +830,23 @@ and is harmless if FW chooses it.
 |---|---|
 | VexRiscv IMC + TCM *(shelved R12 — reference figures only)* | ~4–7k ALUT; 16 M10K (64K+64K), shrink knobs = ROM/RAM generics |
 | FemtoRV32 gracilis (eval, §5.8) | ~0.3–0.6k ALUT expected (family scale) — same M10K budget (TCM is ours, not the core's); measure at P0 side-spike |
-| `dbg_bridge` + uart + capture + engine | ~3–4k ALUT (engine ≈ +0.5–1k over v0.2 estimate), ~2 M10K |
-| `mon_mem_client` / `mon_sd` | ~1–1.5k ALUT total |
+| `ssp_bridge` + uart + capture + engine | ~3–4k ALUT (engine ≈ +0.5–1k over v0.2 estimate), ~2 M10K |
+| `ssp_mem_client` / `ssp_sd` | ~1–1.5k ALUT total |
 | Idle/disabled | `OK`-off ⇒ all monitor outputs static-inactive, muxes guest-side; RV quiescent (`WFI` between ticks; panel ops still serviced by engine — engine runs even when `OK`-off? **No**: `OK`-off disables monitor bus mastering incl. engine (bare-core equivalence, R-19); panel lamps/sense remain (guest-visible per D-05) |
 | Clock domains | all new logic clk_sys; vid client = only new CDC (existing pattern); SNAC/UART async `set_false_path`; chain/encoder false paths as v0.2 |
 
 Integration edit list (delta to v0.2 §12): `MicrocomputerZ80CPM.vhd` gains
-`mon_mem_client` (BRAM mux + SDRAM-request arbiter point), `$D0–$D3` decode
+`ssp_mem_client` (BRAM mux + SDRAM-request arbiter point), `$D0–$D3` decode
 + mirror, **`$FB–$FF` sense/encoder decode (`n_fpSenseCS`; $FF read source
 swap, write-side `fpLatch` untouched)**, engine mux participation,
-`MON_CHAIN` append at chain input, Port-A ownership mux (§11.5). `MrZ80.sv` gains `MPKG`/`MROM` ioctl routing
+`SSP_CHAIN` append at chain input, Port-A ownership mux (§11.5). `MrZ80.sv` gains `MPKG`/`MROM` ioctl routing
 (idx 6/7), `CONN_ROUTE` HDMI tap points (P2), monitor-subsystem-reset pulse
 on MROM mount-complete, CONF_STR `OK`/`OL` + two file entries + profile
 override extended value (profile 7 "monitor", OQ-12 detail). `T80s.vhd`
 MC/TS + **ALT** port-out (P1), `T80.vhd` CTEV*/`Ret` (P2). `HARDWARE.md`:
 mailbox, halt/error codes, switch map, lamp conventions, console ownership,
 baud policy. `REQUIREMENTS.md` item 1: traceability note (done at this
-revision). `monitor/fw`, `monitor/rtl`, `Components/RISCV` added to `.qsf`.
+revision). `ssp/fw`, `monitor/rtl`, `Components/RISCV` added to `.qsf`.
 
 ---
 
@@ -834,8 +870,8 @@ New:
 | R-23 | RV boots factory ROM init image; `V` header check | `tb_mon_smoke` |
 | R-24 | WDG_RUN (≤4 ms transient auto-release) / WDG_PARK (FW-hold-only release + console demote) / engine-park unaffected | `tb_bridge_wdg` |
 | R-25 | console mux default passthrough with RV in reset (P-B); `CONN_ROUTE` switch-over; fail-safe on `wdg_park` | `tb_mon_mux` |
-| R-26 | vid-port reads benign to primary path (refresh-class latency envelope, zero corruption; guest whole during background sweeps) — **P2 gate** (session R3 criterion) | `tb_mon_sd` |
-| R-27 | `mon_mem_client`: parked R/W vs BRAM page + SDRAM incl. odd-byte DQM; zero access while guest runs | `tb_mem_client` |
+| R-26 | vid-port reads benign to primary path (refresh-class latency envelope, zero corruption; guest whole during background sweeps) — **P2 gate** (session R3 criterion) | `tb_ssp_sd` |
+| R-27 | `ssp_mem_client`: parked R/W vs BRAM page + SDRAM incl. odd-byte DQM; zero access while guest runs | `tb_mem_client` |
 | R-28 | **panel engine standalone with RV held in reset**: full LOAD-AR/EXAM/DEP/PORT/STEP/RUN/STOP/RESET ritual functional | `tb_fp_engine` |
 | R-29 | MROM mount → monitor-only reset (guest unaffected) + new image boots; MPKG auto-eval; factory restore on full reconfig | `tb_dl_path` |
 | R-30 | mailbox: guest write→IRQ+mirror; guest read never stalls; FW `MB` roundtrip | `tb_mbx` |
@@ -859,7 +895,7 @@ OQ-03 (no boot-ROM mux; MROM-reset settled D-16) · OQ-04 (context-loss
 accepted, P3 write-back) · OQ-07 (bit 14 taken → OK=20) · OQ-08 (new map
 redesigned; board freeze later) · OQ-14 ($D0 allocated) · OQ-16 (IMC/timer/
 dispatch) · baud/flow/HDMI-direction settled (D-22/R4) · **OQ-12 + OQ-16b
-(panel-UX deep-dive R8 → D-23 + `ODT_PANEL_UX.md`; residual values →
+(panel-UX deep-dive R8 → D-23 + `SSP_PANEL_UX.md`; residual values →
 OQ-18)**.
 
 | # | Question | Lean / notes |
@@ -869,13 +905,13 @@ OQ-18)**.
 | OQ-09 | Bridge board un-built: electrical freeze incl. SPDT parts, encoder, spare banks; sim now with synthetic frames (R-13) + SPDT pair encoding assumptions | P2 dependency, not P1 |
 | OQ-10 | **Exact "Reset System" scope** — proposed: `hard_reset_req`-equivalent (guest + monitor + FP profile clear; not FPGA config). Confirm at board design. | needs owner confirmation |
 | OQ-11 | vid-port **writes** revisit gate (D-15-B): after R-26 passes with reads; scope = `sdram2.sv` DQM mod; alternative = physical writes stay parked-only forever | revisit P3+ |
-| OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 54–67) future use; **MMU-switch (D-24) silkscreen labels + 9th-SPDT mounting; live-re-query-on-`S1:S0` policy; deposit valid-bit encoding check vs `MMU.vhd`** | board design time; `ODT_PANEL_UX.md` §11 checklist |
+| OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 54–67) future use; **MMU-switch (D-24) silkscreen labels + 9th-SPDT mounting; live-re-query-on-`S1:S0` policy; deposit valid-bit encoding check vs `MMU.vhd`** | board design time; `SSP_PANEL_UX.md` §11 checklist |
 | OQ-19 | Milestone-B scheduling: formal `sd_arb` extraction approved (R9) but unscheduled — proposal: dedicated refactor milestone after P2 green, before P3 polish work; confirm at P3 planning | `SDRAM_REWORK_PLAN.md` §6/§10 |
 | OQ-20 | **FemtoRV32 evaluation** — *promoted to P0 primary (R12)*: gracilis executes P0; remaining verify items per §5.8 (mtime CSR else MMIO tick; IRQ semantics; learn-fpga license terms for vendoring; Quartus 17.0 `fit.rpt` on `5CSEBA6U23I7`) | P0, now on critical path |
 | OQ-21 | **VexRiscv reopen conditions** (shelved R12): reopen the §5.7 container path only on (a) measured FW cycle-budget shortfall in P1/P2 (dump/disassemble/REPL responsiveness vs §4.3-class arithmetic), or (b) a new capability need not met by the family (`individua` covers atomics; nothing else on the horizon). Record measured numbers with any reopen request | dormant until drivers |
 | OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1 |
 | OQ-15 | Graphical frame buffer for monitor *video* output (vs 80×25 ANSI on SBC terminal), including exclusive HDMI+kbd console details (D-19 P3): font, pages, keymap | later-phase design note |
-| OQ-16b | *(closed by R8 →* `ODT_PANEL_UX.md` v0.1*)* deep-dive held 2026-10-23: sovereignty/lock, pages, lamps, encoder, commentary, walkthroughs; second pass after first FP hardware experience | closed |
+| OQ-16b | *(closed by R8 →* `SSP_PANEL_UX.md` v0.1*)* deep-dive held 2026-10-23: sovereignty/lock, pages, lamps, encoder, commentary, walkthroughs; second pass after first FP hardware experience | closed |
 | OQ-17 | Doc naming: CamelFORTH (guest) vs Mecrisp (monitor) glossaries in `doc/` — two files naming | lean: `MONITOR-FORTH-GLOSSARY.md` new beside existing |
 
 ---
@@ -885,8 +921,8 @@ OQ-18)**.
 | Phase | Scope | Exit |
 |---|---|---|
 | **P0 — gracilis focus (R12)** | Vendored `femtorv32_gracilis.v` (+`utils.v`) + Quartus 17.0 synth on `5CSEBA6U23I7`; **Mecrisp REPL live in sim and on the stub SoC** (UART console); toolchain package verified (`riscv64-unknown-elf`, `-print-multi-lib`, `-march=rv32imc_zicsr_zifencei -mabi=ilp32`); downloadable-ROM write path sim; `fit.rpt` headroom recorded; crt0 convention verified; §5.8 verify items closed (mtime CSR else MMIO tick; IRQ semantics; learn-fpga license terms). **VexRiscv/vexgen shelved** (§5.7; reopen = OQ-21) | clean synth; headroom logged; REPL live on harness; Go, or PicoRV32 baseline fallback — no container dependency |
-| **P1 — console core** | bridge (regs incl. MD/AR/DR/PR, MAP0..3, MBX, WDG×2, ID), mon_uart (O9B divider), escape-break, STEP assist, reset stretcher, trampoline, MEM-SEQ (logical) + **`mon_mem_client`** (physical P/W), SNAC mux + MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export, FW: ODT skin + `G S T X K E D I O R A W V ? U F ODT PHY LOG MB` | R-01…R-09, R-12, R-19…R-25, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired |
-| **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`ODT_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, BP/`C` (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `mon_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
+| **P1 — console core** | bridge (regs incl. MD/AR/DR/PR, MAP0..3, MBX, WDG×2, ID), ssp_uart (O9B divider), escape-break, STEP assist, reset stretcher, trampoline, MEM-SEQ (logical) + **`ssp_mem_client`** (physical P/W), SNAC mux + MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export, FW: ODT skin + `G S T X K E D I O R A W V ? U F ODT PHY LOG MB` | R-01…R-09, R-12, R-19…R-25, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired |
+| **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`SSP_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, BP/`C` (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `ssp_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
 | **P3 — polish** | T80 register write-back (retires trampoline), step-over, conditional BPs, `Y`, MMU writes from monitor, exclusive HDMI+kbd console (D-19), vid-write revisit (OQ-11), HPS path eval, mailbox protocol hardening with HBIOS | D-02 retired; all prior green |
 
 > **SDRAM arbiter milestone (R9):** P1/P2 use additive borrowed-wiring
@@ -900,7 +936,7 @@ OQ-18)**.
 ## 16. Resume Checklist
 
 1. `doc/t80_reg_debug_vector.md` (register/snapshot semantics) then this doc.
-2. §17 decision log = authoritative deltas from v0.2; `ODT_RISCV_REVIEW.md`
+2. §17 decision log = authoritative deltas from v0.2; `SSP_RISCV_REVIEW.md`
    §2 for the fact corrections (freeze-not-tri-state, bit-14, 28-bit,
    cpu>vid arbitration, MMU auto-increment hazard).
 3. Owner confirmations outstanding: OQ-10 (Reset-System scope), OQ-18
@@ -910,7 +946,7 @@ OQ-18)**.
    vendored file + packaged `riscv64-unknown-elf` GNU toolchain
    (RV32IMC via `-march/-mabi`). VexRiscv/vexgen shelved (§5.7,
    reopen conditions OQ-21); PicoRV32 remains baseline fallback.
-5. RTL order: bridge with task-emulated master harness → `mon_mem_client` →
+5. RTL order: bridge with task-emulated master harness → `ssp_mem_client` →
    mux hookup only after `tb_bridge_*` green with gates stubbed transparent
    (R-21 discipline) → `fp_engine` standalone (R-28) → FW.
 6. Update `HARDWARE.md` incrementally with each landed surface; keep
@@ -918,7 +954,7 @@ OQ-18)**.
 
 ---
 
-## 17. Decision Session Log (2026-10-22)
+## 17. Decision Session Log (2026-10-22 → 2026-10-26)
 
 R1 **Foundation**: VexRiscv primary P0-gated (PicoRV fallback) · RV32IMC +
 µs timer + pending-reg dispatch · 64K/64K · downloadable ROM (no refit) +
@@ -927,7 +963,7 @@ R2 **Principles/safety**: P-A..P-C formal (owner: keep formal set small) ·
 two-tier stall budget ("few ms to change memory; lax park timing") → D-13
 redesign · D-02 accepted, write-back P3 · MROM mount resets monitor only.
 R3 **Memory**: MMU direct-access path **retracted** (guest-owned
-auto-increment) → `mon_mem_client` borrows wiring (P-D exemplar) · vid port
+auto-increment) → `ssp_mem_client` borrows wiring (P-D exemplar) · vid port
 reads-only in v2, writes revisit later, acceptance = benign-as-refresh
 sim proof · `Alternate` exported with MC/TS in P1 (OQ-01 closed) · modal
 logical/physical addressing both surfaces (owner).
@@ -958,7 +994,7 @@ engine, guest ports, and FW with no skew (D-03/D-05 revised; §11.6 new;
 R-16 rewritten, R-32 added; OQ-12 narrowed to menu semantics + commit-clear
 policy).
 
-R8 **Panel-UX deep-dive (2026-10-23; spec → `ODT_PANEL_UX.md` v0.1)**:
+R8 **Panel-UX deep-dive (2026-10-23; spec → `SSP_PANEL_UX.md` v0.1)**:
 sovereignty ladder adopted **with FW-held PANEL_LOCK** (owner choice over
 unconditional sovereignty) — escape/OK-off absolute, lock gates RUN/START
 only, auto-clears on WDG-PARK/escape/mount → **G-8** · S28=BP-ARM (panel
@@ -1033,3 +1069,21 @@ LiteX/FemtoRV practice); caveats noted: Zicsr/Zifencei suffix mandatory on
 binutils ≥2.38 for CSR glue, multilib nice-to-have but freestanding Mecrisp
 needs ~no libs, bare-metal triplet only · D-09 rewritten; P0 row re-scoped;
 module table reflects shelved VexRiscv + vendored gracilis rows.
+
+R13 **Rebrand: ODT → SSP (2026-10-26)**: owner call — "naming is hard",
+and the Intel-derived **ODT** label no longer fits a subsystem that is
+console + panel engine + watchdog + loader + memory service + debugger host
+· adopted name: **SSP — System Support Processor** (accurate, general,
+industry-pattern: service/support processors, BMCs); considered-and-filed
+alternatives: SPAR (Support Processor for debug And Recovery — SP+AR pun),
+SERF, FORTHLY, TERTIUS (Mecrisp naming-lineage play), PORTAGE, WARDEN,
+PECKER, PIER · **full rename executed now** (cheap pre-RTL): doc files →
+`SSP_DESIGN.md`/`SSP_PANEL_UX.md`/`SSP_RISCV_REVIEW.md`; planned
+identifiers `mon_*`→`ssp_*`, `dbg_bridge`→`ssp_bridge`,
+`MON_CTRL/MON_CHAIN`→`SSP_CTRL/SSP_CHAIN`, `monitor/`→`ssp/`, FW word
+`MON n`→`PAGE n`; canonical rename map recorded in "Naming" section after
+§0-header · **carve-outs**: "ODT-style" kept for the Intel heritage idiom,
+FW compatibility-skin word `ODT` kept (it emulates Intel's monitor),
+`archive/ODT_CHANGE.md` keeps its historical name · design doc version
+lineage reset: **v1.0-draft** (was v0.1–v0.9 under the old name; logs
+R1–R12 unchanged).

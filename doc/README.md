@@ -14,15 +14,17 @@ high-level words), archived from the top-level README; sourced from
 archived from the top-level README. The 6502 and 6809 CPUs have been removed
 from the core.
 
-`ODT_MONITOR_DESIGN.md` -- draft design spec (v0.9) for the FPGA-resident
-ODT-style debug monitor: a compact RV32IMC support CPU (P0 focus since R12:
+`SSP_DESIGN.md` -- draft design spec (v1.0-draft; renamed from
+`ODT_MONITOR_DESIGN.md` at R13 -- the subsystem is now the **SSP = System
+Support Processor**) for the FPGA-resident
+debug/console/assist subsystem: a compact RV32IMC support CPU (P0 focus since R12:
 FemtoRV32 `gracilis`; VexRiscv shelved) running
-Mecrisp-Quintus FORTH, a cycle-accurate `dbg_bridge` MMIO interface, and a
+Mecrisp-Quintus FORTH, a cycle-accurate `ssp_bridge` MMIO interface, and a
 hardware classic-console front-panel engine (halt/step/examine/deposit,
 breakpoints, jump history, downloadable monitor ROM + Forth packs via OSD).
 §17 records the design decision sessions of 2026-10-22/23.
 
-`ODT_PANEL_UX.md` -- front-panel user-experience spec (v0.2; deep-dive
+`SSP_PANEL_UX.md` -- front-panel user-experience spec (v0.2; deep-dive
 2026-10-23 + MMU-switch addendum): lamp zones/chrome/colours, paged state
 blocks with per-page remap, BP-ARM/FREEZE/START-AT-A modifiers, MMU
 EXAM/DEPOSIT map switch (§4A), PANEL_LOCK sovereignty ladder,
@@ -36,7 +38,7 @@ formal `sd_arb` extraction later), block-transfer engine retired
 (`INIR`/`OTIR` suffices), no bursts, loader streaming deferred, cache
 shelving re-confirmed, verification spine and future-work ledger.
 
-`ODT_RISCV_REVIEW.md` -- review of the v0.1 (hardwired-FSM) design against
+`SSP_RISCV_REVIEW.md` -- review of the v0.1 (hardwired-FSM) design against
 the RISC-V/FORTH pivot; fact corrections and the disposition map used to
 produce v0.2.
 
@@ -44,4 +46,4 @@ produce v0.2.
 `archive/README.md` for the disposition map): `ODT_CHANGE.md` was the
 original pivot handoff (RISC-V/VexRiscv + Mecrisp-Quintus approach notes
 and the initial `z80_bus_monitor.v` sketch), fully absorbed by
-`ODT_MONITOR_DESIGN.md` and corrected by `ODT_RISCV_REVIEW.md`.
+`SSP_DESIGN.md` and corrected by `SSP_RISCV_REVIEW.md`.
