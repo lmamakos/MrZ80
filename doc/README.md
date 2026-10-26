@@ -14,7 +14,7 @@ high-level words), archived from the top-level README; sourced from
 archived from the top-level README. The 6502 and 6809 CPUs have been removed
 from the core.
 
-`ODT_MONITOR_DESIGN.md` -- draft design spec (v0.7) for the FPGA-resident
+`ODT_MONITOR_DESIGN.md` -- draft design spec (v0.8) for the FPGA-resident
 ODT-style debug monitor: a VexRiscv RV32IMC support CPU running
 Mecrisp-Quintus FORTH, a cycle-accurate `dbg_bridge` MMIO interface, and a
 hardware classic-console front-panel engine (halt/step/examine/deposit,

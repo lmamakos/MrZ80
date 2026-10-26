@@ -1,6 +1,6 @@
 # ODT_MONITOR_DESIGN — FPGA-Resident ODT-Style Debug Monitor for MrZ80
 
-Status: **DRAFT v0.7** — v0.2 (support-CPU architecture: VexRiscv RV32IMC +
+Status: **DRAFT v0.8** — v0.2 (support-CPU architecture: VexRiscv RV32IMC +
 Mecrisp-Quintus FORTH + cycle-accurate `dbg_bridge`) as amended by the
 **design decision session of 2026-10-22** (full round-by-round log in §17),
 plus follow-up refinement **R7**: 32-switch bank with dual personality
@@ -24,6 +24,10 @@ the address lamps at their physical A27..A14 positions (frame number echoed
 in L1:L0, rest of the low lamps dark); MMU-DEPOSIT stores `S27..S14` as
 the entry's page (implicit valid, parked port-master macro) — **D-24**,
 UX spec §4A.
+**v0.8** = FemtoRV32 promoted to evaluated alternative (round **R11**,
+2026-10-26, §5.8/OQ-20): owner-requested investigation of Bruno Levy's
+FemtoRV core family (Mecrisp-co-author lineage, pure Verilog, no build
+system required; RV32IMC variants address future footprint concerns).
 Headline changes from v0.2: downloadable monitor ROM (no refit to update FW)
 + FORTH program pack via OSD; RV32IMC facilities settled; MMU direct-access
 path **retracted** (guest-owned state) and replaced by a parked physical
@@ -107,7 +111,7 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-06 | `[decided]` Jump-history ring P2: T80 `CTEV*` side-band + 16-entry HW ring + FW `J` + lamps. | SW-only trace (can't keep up, §4.3) |
 | D-07 | `[decided]` Panel START runs at the live switch-set address. | two-phase LOAD-then-RUN |
 | D-08 | `[decided]` MC/TS port-out on `T80s` + bundled **`Alternate` export** (session R3; closes OQ-01) in the same P1 mod; `CEN` already ported. T-state/Mcycle step via bridge `STEP_CTL`. | BUSRQ-only stepping |
-| D-09 | `[decided, session R1]` Support core = **VexRiscv** (SpinalHDL, vendored generated Verilog, pinned config + regen script; sbt not run on tycho — generation is containerized on tycho, §5.7), **P0 Quartus-17.0 synthesis gate**; documented fallback **PicoRV32** (architecture is core-agnostic; only `crt0.S` + cycle budgets change; PicoRV32/FemtoRV need no generation step at all). | femtoRV primary; spike-both |
+| D-09 | `[decided, session R1; candidates revised R11]` Support core = **VexRiscv** (SpinalHDL, vendored generated Verilog, pinned config + regen script; sbt not run on tycho — generation is containerized on tycho, §5.7), **P0 Quartus-17.0 synthesis gate**; fallback **PicoRV32** (architecture is core-agnostic; only `crt0.S` + cycle budgets change; PicoRV32/FemtoRV need no generation step at all). **R11: FemtoRV32 (gracilis = RV32IMC+IRQ) added as third P0 candidate** (§5.8, OQ-20) — owner-initiated; not the *premise* it was in v0.1 (that entry retired), now an evidence-backed contender on size/simplicity/ecosystem. | v0.1 premise "femtoRV primary" (retired as assumption); its "spike-both" spirit is *reinstated* by R11 — FemtoRV now an official third candidate pending P0 data, not a premise |
 | D-10 | `[decided, session R1]` **64 KiB ROM / 64 KiB RAM** (parameterized; final gate = P0 `fit.rpt`). **"ROM" is downloadable**: M10K block read-only to the RV, write port fed by the OSD download path; factory contents from committed init hex; downloaded contents persist across core resets within a session (full FPGA reconfig restores factory). | 16K/16K; refit-required ROM |
 | D-11 | `[decided]` Bridge MMIO base `0x2000_0000`, 4 KiB, word-aligned SimpleBus, slave may stall (late resp.valid). | 32-byte region |
 | D-12 | `[decided]` Formal invariants **P-A..P-D** (§2.5) + named guidance notes G-1..G-7 (session R2/R6: A–C formal per owner; P-D promoted R6). | notes-only |
@@ -337,6 +341,61 @@ note: PicoRV32 (`picorv32.v`, single file, ISC, Quartus scripts in-tree) and
 FemtoRV32 (ships *inside* the Mecrisp-Quintus distribution) need no
 generation step at all — the fallback path therefore adds no tooling risk;
 only the VexRiscv *primary* path needs §5.7.
+
+### 5.8 FemtoRV32 — evaluated alternative core (R11, owner-initiated 2026-10-26)
+
+Owner directive: investigate **FemtoRV** as the debugger CPU. Strong fit
+signals: it is pure Verilog (no generation/build system anywhere), it is
+the softcore family **co-developed with Matthias Koch** — Mecrisp's author —
+and ships inside the official Mecrisp-Quintus distribution, so the
+firmware alignment we already rely on is first-party.
+
+**Source of record:** <https://github.com/BrunoLevy/learn-fpga/tree/master/FemtoRV/RTL/PROCESSOR>
+("FemtoRV processor collection"); background reading:
+<https://deepwiki.com/BrunoLevy/learn-fpga/3-femtorv32-processor-design>.
+
+Variant table (from the repo README, 2026-10):
+
+| File | ISA | Notes (repo description, condensed) |
+|---|---|---|
+| `femtorv32_quark.v` | RV32I | Smallest; bit-serial shifter (tiny-FPGA target) |
+| `femtorv32_quark_bicycle.v` | RV32I | Quark + barrel shifter; best CPI of the family |
+| `femtorv32_tachyon.v` | RV32I | Exec split in two stages for higher fmax, worse CPI |
+| `femtorv32_electron.v` | RV32IM | Barrel shifter + mul/div |
+| `femtorv32_intermissum.v` | RV32IM + IRQ | Full interrupt support + CSR registers |
+| **`femtorv32_gracilis.v`** | **RV32IMC + IRQ** | Compressed instructions — "saves both RAM usage and memory fetch cycles"; repo-recommended general-purpose part → **primary eval target** |
+| `femtorv32_individua.v` | RV32IMAC + IRQ | + atomics ("useful for tricky interrupt handlers") |
+| `femtorv32_petitbateau.v` | RV32IMFC + IRQ | Floating point (not needed; listed for completeness) |
+
+**Why it earns an evaluation slot:**
+- `gracilis` = RV32IMC + IRQ matches our §5.1 ISA requirement *exactly*,
+  including the compressed encoding the owner flags for **future memory
+  footprint concerns** (RVC ≈ 25–30 % smaller code images; Mecrisp
+  kernels are 18–30 KiB against our 64 KiB MROM budget).
+- Its IRQ model is PicoRV32-derived *custom-CSR* — deliberately simple,
+  which is precisely the "IRQ via pending-register dispatch" model R1
+  chose; no CLINT/PLIC machinery to bolt on.
+- Footprint: family-scale ≈ a few hundred ALUTs — comfortably below any
+  VexRiscv config; frees budget (LUTs *and* M10K) vs D-09's incumbent.
+- Compressed variant addresses footprint *without* the LiteX-style caches
+  we rejected; higher performance than PicoRV32 at similar size per the
+  family README positioning. `[verify]`
+
+**Deltas to verify at spike (vs §5.1):** (1) **machine soft-timer** —
+confirm CSR mtime/mtimecmp presence; if absent, the tick moves to an MMIO
+counter in `dbg_bridge` (our `milliseconds` glue reads it — trivial FW
+change, negligible budget); (2) interrupt *latency & nesting* semantics vs
+R-13-era dispatch assumptions; (3) repo license compatibility for vendoring
+(learn-fpga is openly published; verify exact terms at checkout);
+(4) external-reset-vector & stall-tolerant slave contract on its simple
+buses; (5) Quartus 17.0 fmax/area on `5CSEBA6U23I7` (Verilog-2001, so
+expected uneventful).
+
+**Disposition:** added to the P0 exit decision as a third candidate —
+**VexRiscv** (performance headroom) vs **FemtoRV32-gracilis** (size +
+simplicity + ecosystem alignment) vs **PicoRV32** (baseline fallback).
+Spike cost is near-zero (no toolchain — §5.6 note); see OQ-20. D-09 stands
+(VexRiscv primary) until P0 data lands.
 
 ### 5.7 Containerized generation of the VexRiscv configuration ("vexgen")
 
@@ -705,6 +764,7 @@ and is harmless if FW chooses it.
 | Item | Estimate |
 |---|---|
 | VexRiscv IMC + TCM | ~4–7k ALUT; 16 M10K (64K+64K) — headroom confirmed at P0 (`fit.rpt`), shrink knobs = ROM/RAM generics |
+| FemtoRV32 gracilis (eval, §5.8) | ~0.3–0.6k ALUT expected (family scale) — same M10K budget (TCM is ours, not the core's); measure at P0 side-spike |
 | `dbg_bridge` + uart + capture + engine | ~3–4k ALUT (engine ≈ +0.5–1k over v0.2 estimate), ~2 M10K |
 | `mon_mem_client` / `mon_sd` | ~1–1.5k ALUT total |
 | Idle/disabled | `OK`-off ⇒ all monitor outputs static-inactive, muxes guest-side; RV quiescent (`WFI` between ticks; panel ops still serviced by engine — engine runs even when `OK`-off? **No**: `OK`-off disables monitor bus mastering incl. engine (bare-core equivalence, R-19); panel lamps/sense remain (guest-visible per D-05) |
@@ -782,6 +842,7 @@ OQ-18)**.
 | OQ-11 | vid-port **writes** revisit gate (D-15-B): after R-26 passes with reads; scope = `sdram2.sv` DQM mod; alternative = physical writes stay parked-only forever | revisit P3+ |
 | OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 54–67) future use; **MMU-switch (D-24) silkscreen labels + 9th-SPDT mounting; live-re-query-on-`S1:S0` policy; deposit valid-bit encoding check vs `MMU.vhd`** | board design time; `ODT_PANEL_UX.md` §11 checklist |
 | OQ-19 | Milestone-B scheduling: formal `sd_arb` extraction approved (R9) but unscheduled — proposal: dedicated refactor milestone after P2 green, before P3 polish work; confirm at P3 planning | `SDRAM_REWORK_PLAN.md` §6/§10 |
+| OQ-20 | **FemtoRV32 evaluation** (R11, owner): run gracilis (RV32IMC+IRQ) side-spike at P0 — zero toolchain cost (§5.6); criteria: Mecrisp REPL runs (GHDL/verilator via TESTDRIVE or our stub), Quartus 17.0 `fit.rpt` area/fmax on `5CSEBA6U23I7`, timer/IRQ deltas per §5.8 verified, license terms checked for vendoring; decision feeds P0-exit core pick (VexRiscv / gracilis / PicoRV32) | P0 side-spike; low cost, decide on data |
 | OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1 |
 | OQ-15 | Graphical frame buffer for monitor *video* output (vs 80×25 ANSI on SBC terminal), including exclusive HDMI+kbd console details (D-19 P3): font, pages, keymap | later-phase design note |
 | OQ-16b | *(closed by R8 →* `ODT_PANEL_UX.md` v0.1*)* deep-dive held 2026-10-23: sovereignty/lock, pages, lamps, encoder, commentary, walkthroughs; second pass after first FP hardware experience | closed |
@@ -793,7 +854,7 @@ OQ-18)**.
 
 | Phase | Scope | Exit |
 |---|---|---|
-| **P0** | VexRiscv vendored+P0 synth (Quartus 17.0, `5CSEBA6U23I7`); **vexgen container round-trip green** (§5.7: image built on tycho, coursier cache volume, twice-regen diff empty, manifest committed) + Mecrisp hello-world + downloadable-ROM write path sim + `fit.rpt` headroom recorded + crt0 convention verified + fallback decision | clean synth, headroom numbers logged, reproducible regen, Go/fallback |
+| **P0** | VexRiscv vendored+P0 synth (Quartus 17.0, `5CSEBA6U23I7`); **vexgen container round-trip green** (§5.7: image built on tycho, coursier cache volume, twice-regen diff empty, manifest committed); **FemtoRV32-gracilis side-spike** (OQ-20, zero-toolchain: Mecrisp REPL in sim + `fit.rpt` compare) + Mecrisp hello-world + downloadable-ROM write path sim + `fit.rpt` headroom recorded + crt0 convention verified + fallback decision | clean synth, headroom numbers logged, reproducible regen, Go/fallback (three-way core pick: VexRiscv / gracilis / PicoRV32) |
 | **P1 — console core** | bridge (regs incl. MD/AR/DR/PR, MAP0..3, MBX, WDG×2, ID), mon_uart (O9B divider), escape-break, STEP assist, reset stretcher, trampoline, MEM-SEQ (logical) + **`mon_mem_client`** (physical P/W), SNAC mux + MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export, FW: ODT skin + `G S T X K E D I O R A W V ? U F ODT PHY LOG MB` | R-01…R-09, R-12, R-19…R-25, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired |
 | **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`ODT_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, BP/`C` (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `mon_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
 | **P3 — polish** | T80 register write-back (retires trampoline), step-over, conditional BPs, `Y`, MMU writes from monitor, exclusive HDMI+kbd console (D-19), vid-write revisit (OQ-11), HPS path eval, mailbox protocol hardening with HBIOS | D-02 retired; all prior green |
@@ -815,7 +876,8 @@ OQ-18)**.
 3. Owner confirmations outstanding: OQ-10 (Reset-System scope), OQ-18
    (board-freeze UX values incl. panel BP-clear gesture), OQ-11/13/15
    (deferrals acknowledged); panel-UX second pass after first hardware.
-4. P0 spike first, absolutely (tool risk gate; §5.6).
+4. P0 spike first, absolutely (tool risk gate; §5.6; three-way core pick at
+   exit — VexRiscv / FemtoRV32-gracilis / PicoRV32, §5.8/OQ-20).
 5. RTL order: bridge with task-emulated master harness → `mon_mem_client` →
    mux hookup only after `tb_bridge_*` green with gates stubbed transparent
    (R-21 discipline) → `fp_engine` standalone (R-28) → FW.
@@ -906,3 +968,20 @@ bogus values fail exactly like guest-set ones · valid-dot display **rejected**
 (op is inherently a stopped-CPU operation; lights static) · fully engine-only
 capable both directions; FW `FP_FN[17:16]` events, `*` commentary, shadow
 self-corrects via tap → **D-24**, R-37…R-39, P2 scope.
+
+R11 **FemtoRV32 investigation note (2026-10-26, owner-initiated)**: open
+the candidate field for the debugger CPU to a third core — **FemtoRV**
+(Bruno Levy's *learn-fpga* processor collection;
+`github.com/BrunoLevy/learn-fpga/.../RTL/PROCESSOR`, background at
+`deepwiki.com/BrunoLevy/learn-fpga/3-femtorv32-processor-design`) ·
+pure-Verilog family, **no build/generation system** (same zero-toolchain
+class as PicoRV32) · first-party Mecrisp lineage: family co-developed with
+Mecrisp's author and shipped inside the Mecrisp-Quintus distribution
+(board designs hx1k/ulx3s/icebreaker-femtorv32/vega) · variant spread
+recorded in new **§5.8** (quark → petitbateau); **gracilis**
+(RV32IMC + IRQ) = our exact ISA requirement, compressed encoding
+explicitly banked against *future memory-footprint concerns* (owner) ·
+custom-CSR IRQ model matches R1's pending-register dispatch choice ·
+timer/CSR, IRQ semantics, licensing and Quartus-17 fit flagged as
+spike-verify items · added to P0-exit three-way pick as **OQ-20**
+(side-spike cost ≈ nil); D-09 unchanged until P0 data.
