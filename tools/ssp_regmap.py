@@ -120,12 +120,13 @@ def emit_fs(regs):
     o = io.StringIO()
     o.write("\\ " + GEN_TAG + "\n\n")
     for r in regs:
-        o.write("constant SSP_%s  $%08X  ( %s | %s )\n"
-                % (r["name"], BASE + r["off"], r["acc"], r["doc"]))
+        # Mecrisp CONSTANT is postfix:  value CONSTANT name
+        o.write("$%08X constant SSP_%s ( %s | %s )\n"
+                % (BASE + r["off"], r["name"], r["acc"], r["doc"]))
         for fn, hi, lo in r["fields"]:
             mask = ((1 << (hi - lo + 1)) - 1) << lo
-            o.write("constant SSP_%s_%s  $%08X  ( field %d:%d )\n"
-                    % (r["name"], fn, mask, hi, lo))
+            o.write("$%08X constant SSP_%s_%s ( field %d:%d )\n"
+                    % (mask, r["name"], fn, hi, lo))
         if r["fields"]:
             o.write("\n")
     return o.getvalue()

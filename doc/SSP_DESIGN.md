@@ -459,7 +459,11 @@ must manage the stack itself — `emit`/`qemit`/`key`/`qkey` end with
 banner); (2) instantaneous pipe bursts overrun the ns16550 RX FIFO — sim
 harnesses must pace input (real SNAC traffic is baud-paced); (3) `FOR`/`NEXT`
 are absent from the Mecrisp core by design — loop words arrive later as
-packs/EVAL'd tools (D-21), not the kernel.
+packs/EVAL'd tools (D-21), not the kernel; (4) `CONSTANT` is **postfix**
+(`value CONSTANT name`) -- the first `.fs` emitter draft wrote it prefix;
+fixed in `tools/ssp_regmap.py`, and the regenerated `ssp-regs.fs` live-load
+verified on the qemu REPL (constants define and read back; `hex.` prints
+zero-padded 8 digits; generated lines stay under the 200-char TIB).
 
 `crt0.S` trap vector → Forth dispatcher; stack-register convention verified
 against the chosen port during P0 (was OQ-09b — P0 checklist item, carried).
@@ -1483,7 +1487,9 @@ character #2 — this exact bug cost one bring-up cycle), `key`/`qkey`/`qemit`
 with `pushdatos`; (2) unpaced pipe input overruns the ns16550 RX FIFO —
 harnesses must pace bytes (real SNAC traffic is baud-paced); (3) `FOR`/`NEXT`
 not in the Mecrisp core by design — such loop words arrive later as
-packs/EVAL'd tools (D-21).
+packs/EVAL'd tools (D-21); (4) `CONSTANT` is postfix (`value CONSTANT
+name`) -- first `.fs` emitter draft had it prefix; fixed + live-load verified
+(see 5.5.1).
 · **Next**: `sim/ssp/` stub SoC (picorv32 `COMPRESSED_ISA` + ROM(hex)/DTCM
 + UART/bridge decode per §5.2 — the hex is ready today), then gracilis
 wrapper, then Quartus `fit.rpt` ×2 for the OQ-20 bake-off.
