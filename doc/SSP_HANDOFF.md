@@ -1,6 +1,6 @@
 # SSP Hand-off — working knowledge not captured elsewhere
 
-Date: 2026-10-26 · Baseline commit: `8b9f192` (branch `main`, working tree
+Date: 2026-10-26 · Baseline commit: `e6c83f9` (branch `main`, working tree
 clean) · Author: design-session agent, rounds R13–R15.
 
 **Scope.** This document holds *only* information that is not already in
@@ -28,11 +28,13 @@ are *not yet* in `SSP_DESIGN.md`; §9 suggests recording them as round R16.
 | Design docs | Complete through R15 and committed. No RTL for the SSP exists yet |
 | Cores | `picorv32.v` and `femtorv32_gracilis.v` (+`utils.v`) vendored verbatim in `Components/RISCV/`, **not** in `MrZ80.qsf` yet |
 | Phase | **P0** (two-core bake-off). Done: vendoring, license check, **toolchain
-install + smoke test**, **GHDL sim resync + green baseline**. Not started:
-regmap generator, stub SoC per core, Mecrisp bring-up, `fit.rpt` ×2 |
+install + smoke test**, **GHDL sim resync + green baseline**, **R16
+decisions logged**, **D-29 regmap pipeline live** (CSV + generator +
+`make -C sim regmap-check`). Not started: stub SoC per core (`sim/ssp/`,
+Verilator), Mecrisp REPL bring-up, `fit.rpt` ×2 |
 | Owner decisions pending | OQ-10 (Reset-System scope), OQ-18 (board-freeze UX values). OQ-22/OQ-23 are settled by simulation, not by the owner |
 
-Commit trail for these sessions (newest first): `8b9f192` sim resync
+Commit trail for these sessions (newest first): `e6c83f9` R16 decisions + regmap pipeline · `4783106` tools installed · `8b9f192` sim resync
 (H-1 closed) · `2ed69c3` hand-off doc · `e41d5fc` R15 review ·
 `77208cd` cores vendored · `5e8ae1a` R14 bake-off · `d964f59` R13 ODT→SSP
 rename · `022bb95` R12 · `b86a21d` R11.
@@ -324,11 +326,14 @@ own stacks; leave the default or point at DTCM top) · keep
    `sim/check_sync.sh` and one full-system bench (e.g. `sim/run.sh`) to
    re-establish a green baseline.~~ **DONE** — commit `8b9f192`; all
    three benches verified (§3).
-3. Decide the language seam (H-4) and gracilis `ADDR_WIDTH`/memory map
-   (H-2). Record both as R16 together with H-3/H-5/H-6.
-4. `ssp/regs/ssp_regs.csv` seeded from §6 + `tools/ssp_regmap.py`
-   (D-29) emitting `.vh`, `.vhd` package (if H-4 puts the bridge or engine
-   in VHDL), `.fs`, and Markdown.
+3. ~~Decide the language seam (H-4) and gracilis `ADDR_WIDTH`/memory map
+   (H-2). Record both as R16 together with H-3/H-5/H-6.~~ **DONE — R16
+   logged `e6c83f9`** (D-33 seam, D-34 `ADDR_WIDTH=30`, H-3 repo,
+   H-5/H-6 fixes, H-7/H-8).
+4. ~~`ssp/regs/ssp_regs.csv` seeded from §6 + `tools/ssp_regmap.py`
+   (D-29)~~ **DONE `e6c83f9`** — CSV canonical (68 regs/129 fields);
+   generator emits `.vh`/`.vhd`/`.fs`/Markdown; `make -C sim
+   regmap-check` = R-45, green.
 5. `sim/ssp/`: Verilator stub SoC per core (core + ROM/DTCM + UART MMIO +
    `TICK_US`). First milestone: a hand-written RV32 "hello" over the UART
    model. Second: Mecrisp REPL (needs H-3 cleared for vendoring sources).
@@ -352,15 +357,35 @@ own stacks; leave the default or point at DTCM top) · keep
   critical path. (`yosys` is now installed locally, which is one of its
   prerequisites; `sby` is not.)
 
-## 9. Proposed R16 entries (for the next design session)
+## 9. R16 entries -- disposition (logged 2026-10-26, commit `e6c83f9`)
 
-| # | Finding | Proposed disposition |
+| # | Finding | Disposition |
 |---|---|---|
-| H-1 | ~~`MicrocomputerZ80CPM_sim.vhd` drifted; full-system benches blocked~~ **closed `8b9f192`** | Resynced; generated-copy idea still open for R16 |
-| H-2 | gracilis `ADDR_WIDTH=24` aliases the §5.2 map | `ADDR_WIDTH=30`, or compact map, chosen at stub-SoC time |
-| H-3 | Mecrisp-Quintus is GPLv3; factory hex goes into the bitstream | Owner decision; vendor matching source in `ssp/fw/` |
-| H-4 | No mixed-language simulator available | Z80-side SSP logic in VHDL (GHDL), RV side in Verilog (Verilator); pick the bridge seam |
-| H-5 | Chain is 292/384 bits; `SSP_CHAIN` → 292–355 | Allocate in `SIGNAL-CAPTURES.md` at P2 landing |
-| H-6 | §3/§11.4 chain description and `busrq_n` anchor stale | Doc fix |
-| H-7 | D-28 named Questa; GHDL already established | Amend D-28: GHDL for integration |
-| H-8 | picorv32 `trap` output | Export to `STATUS`/chrome as "SSP FW crashed" |
+| H-1 | sim copy drift | **closed `8b9f192`** -- resynced; generated-copy idea still open (worth doing before SSP top-level edits begin) |
+| H-2 | gracilis `ADDR_WIDTH=24` aliases the 5.2 map | **closed R16 -- D-34**: `ADDR_WIDTH=30` at instantiation; map unchanged |
+| H-3 | Mecrisp-Quintus is GPLv3 | **closed R16**: owner supplied in-tree reference repo `~/mecrisp-quintus` (1.1.2a, GPL-3.0+) = compliance vehicle; assets listed in `SSP_DESIGN.md` 5.5 |
+| H-4 | No mixed-language simulator | **closed R16 -- D-33**: Z80-side VHDL (GHDL), RV-side Verilog (Verilator), seam crossed at `ssp_top` |
+| H-5 | Chain is 292/384 bits | **recorded R16**: SSP export allocated 292-355; `SIGNAL-CAPTURES.md` row lands with the P2 chain edit |
+| H-6 | stale chain description/anchors | **fixed R16** (doc pass) |
+| H-7 | D-28 named Questa | **closed R16**: D-28 amended -- GHDL for integration |
+| H-8 | picorv32 `trap` output | **closed R16**: `STATUS.rv_trap` (bit 18) in CSV + 6 |
+
+### New assets since the first version of this doc (all committed)
+
+- `~/mecrisp-quintus` -- **external reference repo** (not inside the
+  MrZ80 repo): Mecrisp-Quintus 1.1.2a full source. Key paths:
+  `mecrisp-quintus-source/` (core `.s` sections + `common/` tools incl
+  RV32IMC disassembler/assembler), `common-verilog/` (FemtoRV variants
+  incl. gracilis -- whitespace-only diff vs our vendored copy -- `uart.v`,
+  `MappedSPIFlash.v`, `celement.v`), `release/quintusemu-*` host
+  emulators, `linux-rv32imc/` native runtime, per-target build pattern
+  (`hx1k/mecrisp-quintus-hx1k.s` + `memmap` + `Makefile` +
+  `terminal.s`). Release Makefiles use legacy `riscv64-linux-gnu` +
+  `-march=rv32i` -- adapt to the 5.8 flags, don't copy verbatim.
+- D-29 regmap pipeline: `ssp/regs/ssp_regs.csv` (canonical, 68 regs /
+  129 fields) + `tools/ssp_regmap.py` + generated `ssp/rtl/ssp_regs.vh`
+  (iverilog-validated), `ssp/rtl/ssp_regs_pkg.vhd` (ghdl-validated),
+  `ssp/fw/ssp-regs.fs`, `doc/SSP_REGS.md`, and `sim/Makefile`
+  (`make -C sim regmap-check` = R-45).
+- Commit chain: `e6c83f9` R16 -- `4783106` tools installed --
+  `8b9f192` sim resync -- `2ed69c3` this doc (first version).
