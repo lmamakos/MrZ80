@@ -17,8 +17,9 @@ from the core.
 `SSP_DESIGN.md` -- draft design spec (v1.0-draft; renamed from
 `ODT_MONITOR_DESIGN.md` at R13 -- the subsystem is now the **SSP = System
 Support Processor**) for the FPGA-resident
-debug/console/assist subsystem: a compact RV32IMC support CPU (P0 focus since R12:
-FemtoRV32 `gracilis`; VexRiscv shelved) running
+debug/console/assist subsystem: a compact RV32IMC support CPU (P0 two-core
+bake-off since R14: PicoRV32 `COMPRESSED_ISA` vs FemtoRV32 `gracilis`;
+VexRiscv shelved) running
 Mecrisp-Quintus FORTH, a cycle-accurate `ssp_bridge` MMIO interface, and a
 hardware classic-console front-panel engine (halt/step/examine/deposit,
 breakpoints, jump history, downloadable monitor ROM + Forth packs via OSD).

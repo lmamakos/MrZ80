@@ -51,6 +51,10 @@ firmware a peer on the same shared functional registers; `$D0–$D3` guest
 mailbox; lamps-not-graphics philosophy with monitor state exported into the
 capture chain on profile 7; firmware-policy console routing (serial → HDMI
 mirror → later exclusive HDMI+keyboard console).
+**R14** (2026-10-26, post-rename): PicoRV32 elevated from fallback to
+**co-candidate** on external research (riscv-formal pedigree, ecosystem
+depth, simpler bus — with its RV32C/timer/atomics asymmetries corrected in
+§5.8); **P0 becomes a two-core bake-off** (D-09/OQ-20).
 
 Tags: `[verified]` (re-confirmed against source; anchors are hints — grep the
 name) · `[decided]` (locked, see §2) · `[proposed]` (review target) ·
@@ -151,7 +155,7 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-06 | `[decided]` Jump-history ring P2: T80 `CTEV*` side-band + 16-entry HW ring + FW `J` + lamps. | SW-only trace (can't keep up, §4.3) |
 | D-07 | `[decided]` Panel START runs at the live switch-set address. | two-phase LOAD-then-RUN |
 | D-08 | `[decided]` MC/TS port-out on `T80s` + bundled **`Alternate` export** (session R3; closes OQ-01) in the same P1 mod; `CEN` already ported. T-state/Mcycle step via bridge `STEP_CTL`. | BUSRQ-only stepping |
-| D-09 | `[decided, session R1; revised R11/R12]` Support core: **P0 executes on FemtoRV32 `gracilis`** (RV32IMC+IRQ, vendored single-file Verilog, zero generation toolchain, first-party Mecrisp lineage — §5.8). **VexRiscv shelved** (R12): its container-generation flow (§5.7) is spec-complete but parked; reopen only on *measured* drivers (OQ-21: FW cycle-budget shortfall in P1/P2, or a new capability need beyond atomics — `individua` already covers atomics). Baseline fallback unchanged: **PicoRV32** (architecture core-agnostic; `crt0.S` + cycle budgets only). | v0.1 "femtoRV primary" as premise; VexRiscv-first sequencing (superseded R12 — complexity without a demonstrated driver) |
+| D-09 | `[decided, session R1; revised R11/R12/R14]` Support core: **P0 = two-core bake-off (R14): PicoRV32 (`COMPRESSED_ISA`) ⟷ FemtoRV32 `gracilis`** — both pure-Verilog vendored files, zero generation toolchain, same `ssp_top` wrapper; decision at P0 exit on the §5.8 criteria (trust/verification weighted first for a debug host). Common ground that neutralizes most deltas: RV32C available on both (parameter vs native); no standard `mtime` on either ⇒ bridge MMIO 1 MHz tick is common design; same PicoRV32-lineage custom-IRQ idiom on both; atomics absent on both (Mecrisp doesn't need them). **VexRiscv shelved** (R12; reopen = OQ-21 measured drivers). Baseline if both P0 entries somehow fail: plain PicoRV32 without C (already an entry member). | v0.1 "femtoRV primary" premise; VexRiscv-first sequencing (superseded R12); gracilis sole-primary focus (superseded R14 — external research + riscv-formal pedigree elevate PicoRV32 to co-candidate) |
 | D-10 | `[decided, session R1]` **64 KiB ROM / 64 KiB RAM** (parameterized; final gate = P0 `fit.rpt`). **"ROM" is downloadable**: M10K block read-only to the RV, write port fed by the OSD download path; factory contents from committed init hex; downloaded contents persist across core resets within a session (full FPGA reconfig restores factory). | 16K/16K; refit-required ROM |
 | D-11 | `[decided]` Bridge MMIO base `0x2000_0000`, 4 KiB, word-aligned SimpleBus, slave may stall (late resp.valid). | 32-byte region |
 | D-12 | `[decided]` Formal invariants **P-A..P-D** (§2.5) + named guidance notes G-1..G-7 (session R2/R6: A–C formal per owner; P-D promoted R6). | notes-only |
@@ -292,7 +296,7 @@ numbers are hints — grep the name.
 
 | Module | Responsibility |
 |---|---|
-| `Components/RISCV/femtorv32_gracilis.v` (+`utils.v`) + `.qip` | **P0 core (D-09/R12)**: vendored single-file RV32IMC+IRQ, pinned upstream rev + provenance note (URL/commit/license check); no generation toolchain |
+| `Components/RISCV/picorv32.v` + `femtorv32_gracilis.v` (+`utils.v`) + `.qip` | **P0 bake-off entries (D-09/R14)**: vendored single-file RV32IMC cores (picorv32 with `COMPRESSED_ISA`), pinned upstream revs + provenance notes (URL/commit/license check); no generation toolchain |
 | `Components/RISCV/VexRiscv.v` + `.qip` | *Shelved (R12)* — vendored core path if reopened (OQ-21); provenance manifest + `gen/GenMrZ80.scala` + containerized regen (`tools/vexgen.sh`, §5.7) all specced, nothing scheduled |
 | `ssp/rtl/ssp_top.v` | Subsystem wrapper: core + ROM + RAM + decoder + `ssp_uart` + `ssp_bridge`; sideband bundle to CPM; `ssp_irq` out; guest controls out; `SSP_CHAIN[63:0]` export |
 | `ssp/rtl/ssp_bridge.v` | §6 register file; shared functional registers (MD/AR/DR/PR); MEM-SEQ engine + arbiter; STEP assist; BP/trap; WDG×2; IRQ; ID |
@@ -371,17 +375,23 @@ wdg→console-dead report. Main loop: parked→REPL `.`; running→background
 `F`⇄`ODT` raw-Forth / ODT-skin switch (session posture: ODT syntax is a
 skin over a scriptable core).
 
-### 5.6 Toolchain & fallback
-P0 executes on **FemtoRV32-gracilis** (R12, D-09): vendored single file,
-no generation step; FW built with the packaged
+### 5.6 Toolchain & core candidates
+P0 is a **two-core bake-off** (R14, D-09): **PicoRV32** (`picorv32.v`,
+`COMPRESSED_ISA` ⇒ RV32IMC; ISC; formally checked with riscv-formal; long
+Quartus/Cyclone-V track record incl. picosoc flows) vs
+**FemtoRV32-gracilis** (RV32IMC+IRQ native; ships inside the
+Mecrisp-Quintus distribution). Both entries are vendored single-file
+Verilog — no generation step for either; FW built with the packaged
 `riscv64-unknown-elf` GNU chain (**§5.8** toolchain note). **P0 = full tycho
-Quartus 17.0 synthesis spike** for `5CSEBA6U23I7` incl. Mecrisp hello-world
-on the UART + `fit.rpt` headroom capture. If P0 fails on core-specific
-grounds → PicoRV32 drop-in (identical bridge/FW; `crt0.S` rewrite; ~1 IPC
-acceptable). Fallback decision recorded in P0 exit note. Zero-new-environment
-note: PicoRV32 (`picorv32.v`, single file, ISC, Quartus scripts in-tree) and
-FemtoRV32 (ships *inside* the Mecrisp-Quintus distribution) need no
-generation step at all — post-R12 the *entire* toolchain surface is distro
+Quartus 17.0 synthesis spike** for `5CSEBA6U23I7`, per core, incl.
+Mecrisp hello-world
+on the UART + `fit.rpt` headroom capture; selection on the §5.8 criteria,
+recorded in the P0 exit note.
+Optional tie-breaker: riscv-formal against picorv32 in a throwaway
+yosysHQ/eqy container — the §5.7 one-shot pattern applied to
+*verification* rather than generation, off the critical path.
+Zero-new-environment
+note: post-R12/R14 the *entire* toolchain surface is distro
 packages; the §5.7 container path belongs only to the shelved VexRiscv
 route (OQ-21).
 
@@ -437,6 +447,60 @@ expected uneventful).
 **Disposition (superseded by R12 — see D-09):** gracilis is the **P0
 primary core**, not merely a candidate; VexRiscv shelved (reopen = OQ-21
 measured drivers); PicoRV32 remains the baseline fallback.
+
+**R14 addendum — PicoRV32 elevated to co-candidate (external research,
+owner-forwarded 2026-10-26).** The forwarded recommendation: PicoRV32 for
+formal verification pedigree, simple valid/ready memory interface, documented
+custom-IRQ mechanism, deep docs/examples (PicoSoC), ISC license; "slow is
+fine for a support processor"; FemtoRV framed as tiny-iCE40-oriented, less
+documented/formally verified, FemtoSoC-wrapper-oriented, no atomics.
+Assessment against *our* specifics:
+- *Endorsed:* riscv-formal pedigree is the strongest argument, and the one
+  that matters most for a **debug host** — the core we trust to inspect
+  everything else must itself be beyond doubt; picorv32 is riscv-formal's
+  reference target (optional eqy-container run at P0, off critical path).
+  Memory-interface simplicity genuinely suits the `ssp_top` decoder;
+  ecosystem depth (PicoSoC, decades of field use incl. Quartus/Cyclone V)
+  is real; speed non-issue matches our §4.3-class arithmetic.
+- *Corrected for context:* RV32C exists on picorv32 (`COMPRESSED_ISA`
+  parameter) ⇒ gracilis's footprint/coding-density advantage **neutralized**;
+  **neither** core implements standard `mtime` ⇒ the bridge-MMIO 1 MHz tick
+  (R12 verify item) is *common* design work, not a gracilis penalty; the
+  atomics critique cuts both ways — picorv32 lacks the A extension too, and
+  Mecrisp doesn't need it; gracilis is not "unverified" — it *ships in the
+  official Mecrisp-Quintus distribution* running the exact Forth we will
+  run, and the family's custom-IRQ encodings are **PicoRV32-lineage**, so
+  FW IRQ glue is near-portable across the finalists (the FW bet survives
+  either pick).
+- *External "design considerations" already in our architecture*
+  (corroboration, not new work): private program/data RAM = D-10 MROM/DTCM
+  (unreachable from the Z80 bus); Z80 halt/reset control = `CTRL`
+  `z_busreq/z_wait/z_rst` + `cen_gate` — stronger than the generic
+  WAIT-advice, and carrying our *verified* T80 nuance (FREEZE, never
+  tri-state ⇒ explicit muxes, P-D/G-2); explicit CDC = level-req +
+  toggle-done idiom (§9.2/SDRAM plan); HPS-vs-SSP job split = D-19 console
+  routing + P3 HPS-path eval (HPS = storage/config/archive host; SSP =
+  runtime observation + panel + fast reaction — deliberately no Linux
+  duplication on the board).
+
+**P0 bake-off criteria `[proposed, decide at P0 exit]`:**
+
+| Criterion | How measured | Weight |
+|---|---|---|
+| Trust / pedigree | riscv-formal pass on picorv32 (eqy container, optional-but-recommended); field history (picorv32 broad & long; gracilis = shipped-Mecrisp targets) | **highest** — debug host must be beyond doubt |
+| ISA parity | RV32IMC both ways (`COMPRESSED_ISA` vs native) | parity |
+| Bus-fit to `ssp_top` | wrapper LOC + `fit.rpt` timing on the IBus/DBus↔ROM/DTCM/decoder shim, per core | high |
+| IRQ glue | same lineage both cores; smoke-test SWI/EOI/GETI path through `ssp_bridge` IRQs | parity (verify) |
+| Timer | no `mtime` on either ⇒ bridge MMIO tick shared design (§6, `[new]` reg slot at P0 map freeze) | parity |
+| Quartus 17.0 on `5CSEBA6U23I7` | `fit.rpt` ×2 area/fmax | medium (both expected easy) |
+| Docs / community | picorv32 deeper; learn-fpga tutorials adequate, lighter | medium |
+| License | ISC (picorv32) vs learn-fpga terms `[check]` | low (both permissive-family) |
+
+**Working lean `[proposed]`:** if the riscv-formal run executes, **picorv32
++ `COMPRESSED_ISA`** takes it on trust + ecosystem at zero ISA/footprint
+cost; gracilis overturns only if its bus-fit or Mecrisp bring-up is
+*measurably* cheaper at P0. Either way Mecrisp glue is ~portable, so the
+decision is reversible long after P0.
 
 **Cross-development toolchain `[decided R12]`:** packaged **GNU
 `riscv64-unknown-elf-*`** toolchain (distro package, e.g. Debian/Ubuntu
@@ -907,7 +971,7 @@ OQ-18)**.
 | OQ-11 | vid-port **writes** revisit gate (D-15-B): after R-26 passes with reads; scope = `sdram2.sv` DQM mod; alternative = physical writes stay parked-only forever | revisit P3+ |
 | OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 54–67) future use; **MMU-switch (D-24) silkscreen labels + 9th-SPDT mounting; live-re-query-on-`S1:S0` policy; deposit valid-bit encoding check vs `MMU.vhd`** | board design time; `SSP_PANEL_UX.md` §11 checklist |
 | OQ-19 | Milestone-B scheduling: formal `sd_arb` extraction approved (R9) but unscheduled — proposal: dedicated refactor milestone after P2 green, before P3 polish work; confirm at P3 planning | `SDRAM_REWORK_PLAN.md` §6/§10 |
-| OQ-20 | **FemtoRV32 evaluation** — *promoted to P0 primary (R12)*: gracilis executes P0; remaining verify items per §5.8 (mtime CSR else MMIO tick; IRQ semantics; learn-fpga license terms for vendoring; Quartus 17.0 `fit.rpt` on `5CSEBA6U23I7`) | P0, now on critical path |
+| OQ-20 | **P0 core bake-off** (R14): **PicoRV32 (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** — same wrapper, both vendored; decide at P0 exit on the §5.8 criteria table (trust/pedigree weighted highest; optional riscv-formal eqy-container run as evidence; learn-fpga license terms check; `fit.rpt` ×2) | P0, critical path — evidence decides; FW glue portable ⇒ late reversibility |
 | OQ-21 | **VexRiscv reopen conditions** (shelved R12): reopen the §5.7 container path only on (a) measured FW cycle-budget shortfall in P1/P2 (dump/disassemble/REPL responsiveness vs §4.3-class arithmetic), or (b) a new capability need not met by the family (`individua` covers atomics; nothing else on the horizon). Record measured numbers with any reopen request | dormant until drivers |
 | OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1 |
 | OQ-15 | Graphical frame buffer for monitor *video* output (vs 80×25 ANSI on SBC terminal), including exclusive HDMI+kbd console details (D-19 P3): font, pages, keymap | later-phase design note |
@@ -920,7 +984,7 @@ OQ-18)**.
 
 | Phase | Scope | Exit |
 |---|---|---|
-| **P0 — gracilis focus (R12)** | Vendored `femtorv32_gracilis.v` (+`utils.v`) + Quartus 17.0 synth on `5CSEBA6U23I7`; **Mecrisp REPL live in sim and on the stub SoC** (UART console); toolchain package verified (`riscv64-unknown-elf`, `-print-multi-lib`, `-march=rv32imc_zicsr_zifencei -mabi=ilp32`); downloadable-ROM write path sim; `fit.rpt` headroom recorded; crt0 convention verified; §5.8 verify items closed (mtime CSR else MMIO tick; IRQ semantics; learn-fpga license terms). **VexRiscv/vexgen shelved** (§5.7; reopen = OQ-21) | clean synth; headroom logged; REPL live on harness; Go, or PicoRV32 baseline fallback — no container dependency |
+| **P0 — two-core bake-off (R14)** | Vendored `picorv32.v` (`COMPRESSED_ISA`) **and** `femtorv32_gracilis.v` (+`utils.v`); Quartus 17.0 synth on `5CSEBA6U23I7` for **both**; **Mecrisp REPL live in sim and on the stub SoC** (UART console, per core); toolchain package verified (`riscv64-unknown-elf`, `-print-multi-lib`, `-march=rv32imc_zicsr_zifencei -mabi=ilp32`); downloadable-ROM write path sim; `fit.rpt` headroom recorded ×2; crt0 convention verified; §5.8 verify items closed (bridge MMIO 1 MHz timer tick — common to both; IRQ glue smoke; learn-fpga license terms). Optional: riscv-formal on picorv32 (eqy container, off critical path). **VexRiscv/vexgen shelved** (§5.7; reopen = OQ-21) | clean synth ×2; headroom logged; REPL live on harness; **one core selected per §5.8 table**; no day-to-day container dependency |
 | **P1 — console core** | bridge (regs incl. MD/AR/DR/PR, MAP0..3, MBX, WDG×2, ID), ssp_uart (O9B divider), escape-break, STEP assist, reset stretcher, trampoline, MEM-SEQ (logical) + **`ssp_mem_client`** (physical P/W), SNAC mux + MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export, FW: ODT skin + `G S T X K E D I O R A W V ? U F ODT PHY LOG MB` | R-01…R-09, R-12, R-19…R-25, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired |
 | **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`SSP_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, BP/`C` (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `ssp_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
 | **P3 — polish** | T80 register write-back (retires trampoline), step-over, conditional BPs, `Y`, MMU writes from monitor, exclusive HDMI+kbd console (D-19), vid-write revisit (OQ-11), HPS path eval, mailbox protocol hardening with HBIOS | D-02 retired; all prior green |
@@ -942,10 +1006,12 @@ OQ-18)**.
 3. Owner confirmations outstanding: OQ-10 (Reset-System scope), OQ-18
    (board-freeze UX values incl. panel BP-clear gesture), OQ-11/13/15
    (deferrals acknowledged); panel-UX second pass after first hardware.
-4. P0 spike first, absolutely — **on FemtoRV32-gracilis** (R12, §5.8):
-   vendored file + packaged `riscv64-unknown-elf` GNU toolchain
-   (RV32IMC via `-march/-mabi`). VexRiscv/vexgen shelved (§5.7,
-   reopen conditions OQ-21); PicoRV32 remains baseline fallback.
+4. P0 spike first, absolutely — **two-core bake-off: PicoRV32
+   (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** (R14, §5.8 criteria table):
+   vendored files + packaged `riscv64-unknown-elf` GNU toolchain
+   (`-march=rv32imc_zicsr_zifencei -mabi=ilp32`); optional riscv-formal
+   tie-breaker via one-shot eqy container. VexRiscv/vexgen shelved (§5.7,
+   reopen conditions OQ-21).
 5. RTL order: bridge with task-emulated master harness → `ssp_mem_client` →
    mux hookup only after `tb_bridge_*` green with gates stubbed transparent
    (R-21 discipline) → `fp_engine` standalone (R-28) → FW.
@@ -1087,3 +1153,23 @@ FW compatibility-skin word `ODT` kept (it emulates Intel's monitor),
 `archive/ODT_CHANGE.md` keeps its historical name · design doc version
 lineage reset: **v1.0-draft** (was v0.1–v0.9 under the old name; logs
 R1–R12 unchanged).
+
+R14 **PicoRV32 elevated to co-candidate — P0 two-core bake-off
+(2026-10-26, owner-forwarded external research)**: advice recommended
+PicoRV32 over gracilis (riscv-formal pedigree, simple valid/ready memory
+interface, documented custom IRQs, PicoSoC ecosystem, ISC; "slow is fine
+for a support processor"; area irrelevant on Cyclone V) · assessed against
+our specifics: pedigree argument *endorsed* (decisive weight for the debug
+host; riscv-formal run feasible off-critical-path in a one-shot eqy
+container); corrections recorded: picorv32 **has RV32C**
+(`COMPRESSED_ISA`) ⇒ gracilis footprint edge neutralized; **no `mtime` on
+either** ⇒ bridge-MMIO tick is common design; atomics missing on *both*;
+gracilis not unverified (ships running Mecrisp-Quintus on official board
+targets; PicoRV32-lineage custom-IRQ encodings ⇒ FW glue near-portable,
+decision reversible late) · its "design considerations" (private RAM,
+WAIT/reset control, explicit CDC, HPS/SSP split) confirmed already
+architected (D-10, `CTRL` + verified T80-FREEZE nuance, level+toggle CDC,
+D-19/P3) — external corroboration · **D-09 rewritten**: P0 = bake-off on
+the §5.8 criteria table (trust weighted highest; working lean picorv32+C
+if riscv-formal executes); OQ-20 restated; P0 row, module table, resume
+checklist, §5.6 realigned; VexRiscv remains shelved (OQ-21).
