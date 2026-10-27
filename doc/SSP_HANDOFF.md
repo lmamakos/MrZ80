@@ -225,7 +225,7 @@ assembled with `tools/z80asm.sh`).
 `run_cpuregs.sh` 8/8, `run_ixmin.sh` 10/10, `run_ixstack.sh`,
 `run_forth.sh`).
 
-### Step 3 — Synthesis prerequisites
+### Step 3 — Synthesis prerequisites — **DONE (R32) except the `MrZ80.qsf` entries, which land with step 4**
 
 1. **RAM wrapper:** create `ssp/rtl/ssp_sdp_ram.vhd` from
    `bakeoff/ssp_sdp_ram.vhd` (16K×32 altsyncram `DUAL_PORT`, explicit IP —

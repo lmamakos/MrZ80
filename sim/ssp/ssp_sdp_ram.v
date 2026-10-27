@@ -11,7 +11,11 @@
 
 `timescale 1 ns / 1 ps
 
-module ssp_sdp_ram (
+module ssp_sdp_ram #(
+    parameter INIT_FILE = "UNUSED"      // synthesis: altsyncram init_file (the
+                                        // factory ROM .mif); the sim loads the
+                                        // MROM with $readmemh (+ROM) instead
+) (
     input  wire [13:0] address_w,
     input  wire [13:0] address_r,
     input  wire        clock,

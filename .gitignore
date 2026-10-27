@@ -38,3 +38,4 @@ bakeoff/c5_pin_model_dump.txt
 bakeoff/output_uartfifo8/
 bakeoff/output_uartfifo128/
 bakeoff/output_uartfifo128nohint/
+bakeoff/output_ssp_top/

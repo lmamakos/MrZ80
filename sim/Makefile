@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park integ-mux cycle-golden engine-golden
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park integ-mux cycle-golden engine-golden fw-rom fw-rom-check
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -151,3 +151,13 @@ dict-p1a: p1a
 
 smoke-p1a: p1a
 	$(ROOT)/sim/ssp/p1a_smoke.sh
+
+# Factory ROM (D-38): rebuild the monitor dictionary and regenerate the MIF
+# the MROM instance loads.  Recommit ssp/fw/forth_rom.mif when it changes.
+fw-rom: dict-p1a
+	python3 $(ROOT)/tools/bin2mif.py $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 16384
+	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 16384
+
+# Drift check only (needs a prior dict-p1a build)
+fw-rom-check:
+	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 16384

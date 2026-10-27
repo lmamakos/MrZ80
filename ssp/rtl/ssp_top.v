@@ -52,7 +52,11 @@
 `timescale 1 ns / 1 ps
 `include "ssp_regs.vh"
 
-module ssp_top (
+module ssp_top #(
+    // Factory ROM image (D-38) for the MROM's altsyncram init_file; path relative
+    // to the Quartus project directory.  Simulation ignores it (+ROM/$readmemh).
+    parameter MROM_INIT = "ssp/fw/forth_rom.mif"
+) (
     input  wire        clk,             // clk_sys 50 MHz (shared domain)
     input  wire        rst_n,         // subsystem reset (= guest reset now;
                                      //   monitor-only mount domain is P1b)
@@ -131,29 +135,25 @@ module ssp_top (
     assign mem_rbusy = 1'b0;                   // launch+1 native (D-36)
     assign mem_wbusy = 1'b0;
 
-    // RV liveness (R25): rv_stalled = core waiting on the bus for a
-    // response that may never come (hung peripheral / fabric bug);
-    // rv_alive  = core observed in the instruction-fetch state.
-    // The probe reads the gracilis FSM through the hierarchy (Verilator and
-    // Quartus RTL analysis both support read-only hierarchical refs).  If a
-    // flow rejects it, replace this guarded block with a driver on the two
-    // wires (safe constants rv_stalled=0, rv_alive=1: the watchdogs then
-    // never fire -- noted for the integration round, M5).
-    wire rv_stalled;
-    wire fetched;
-    /* synthesis translate_off */
-    // gracilis FSM: 1HOT state reg; FETCH_INSTR=bit0, WAIT_INSTR=bit1,
-    // WAIT_ALU_OR_MEM=bit3
-    assign rv_stalled = core.state[3] | (core.state[1] & ~mem_rstrb);
-    assign fetched    = core.state[0];
-    /* synthesis translate_on */
+    // RV liveness (R25; synthesizable since R31).  The first version read the
+    // gracilis FSM through a hierarchical reference inside `synthesis
+    // translate_off` -- which Quartus skips, so on hardware both wires were
+    // undriven (rv_alive stuck low, found by the standalone synthesis probe).
+    // Derived from the bus protocol instead, identically in simulation and
+    // synthesis:
+    //   rv_stalled = 0   mem_rbusy/mem_wbusy are tied 0 (launch+1 is native,
+    //                    D-36), so the core can never be held waiting on the
+    //                    fabric; WDG_RUN therefore never arms.
+    //   rv_alive         the core issued a read strobe within the last 65 535
+    //                    clocks (1.3 ms).  Every instruction fetch is a read, so
+    //                    a running core -- even a polling loop -- keeps it set;
+    //                    a hung or reset core lets it decay.
+    wire rv_stalled = 1'b0;
     reg [15:0] alive_cnt;
-    reg        stalled_q;
     always @(posedge clk) begin
-        stalled_q <= rv_stalled;
         if (!rst_n || !rv_rst_n) alive_cnt <= 16'd0;
-        else if (fetched)          alive_cnt <= 16'hFFFF;
-        else if (stalled_q && alive_cnt != 16'd0)
+        else if (mem_rstrb)      alive_cnt <= 16'hFFFF;
+        else if (alive_cnt != 16'd0)
                                  alive_cnt <= alive_cnt - 16'd1;
     end
     assign rv_alive = (alive_cnt != 16'd0);
@@ -193,7 +193,7 @@ module ssp_top (
     wire dtcm_we   = wr_fire && is_dtcm;
 
     wire [31:0] q_rom, q_dtcm;
-    ssp_sdp_ram u_mrom (
+    ssp_sdp_ram #(.INIT_FILE (MROM_INIT)) u_mrom (
         .address_w (rom_waddr),
         .address_r (ram_ix),
         .clock     (clk),

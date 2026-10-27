@@ -1,0 +1,22 @@
+# ssp_top.qsf -- standalone synthesis probe of the REAL SSP file set (R31, step 3):
+# top = ssp_top, the factory ROM as the MROM init file, every VHDL file the CPM-core
+# integration will add (analysed even though ssp_top does not instantiate them).
+# Run:  tools/quartus_build.sh --flow analysis_and_synthesis bakeoff/ssp_top -c ssp_top
+set_global_assignment -name FAMILY "Cyclone V"
+set_global_assignment -name DEVICE 5CSEBA6U23I7
+set_global_assignment -name TOP_LEVEL_ENTITY ssp_top
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_ssp_top
+set_global_assignment -name MIN_CORE_JUNCTION_TEMP 0
+set_global_assignment -name MAX_CORE_JUNCTION_TEMP 85
+set_global_assignment -name ERROR_CHECK_FREQUENCY_DIVISOR 256
+set_global_assignment -name SEARCH_PATH ../ssp/rtl
+set_global_assignment -name VERILOG_FILE ../ssp/rtl/ssp_top.v
+set_global_assignment -name VERILOG_FILE ../ssp/rtl/ssp_bridge.v
+set_global_assignment -name VERILOG_FILE ../ssp/rtl/ssp_uart.v
+set_global_assignment -name VERILOG_FILE ../Components/RISCV/femtorv32_gracilis.v
+set_global_assignment -name VHDL_FILE ../ssp/rtl/ssp_sdp_ram.vhd
+set_global_assignment -name VHDL_FILE ../ssp/rtl/ssp_regs_pkg.vhd
+set_global_assignment -name VHDL_FILE ../ssp/rtl/z80_bus_mux.vhd
+set_global_assignment -name VHDL_FILE ../ssp/rtl/ssp_tramp.vhd
+set_parameter -name MROM_INIT "../ssp/fw/forth_rom.mif"
+set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"

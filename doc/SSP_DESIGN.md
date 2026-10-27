@@ -2107,3 +2107,24 @@ always finds the strobes already released -- kept as defence in depth.
 (4) Not done: R-42's "reads/writes to SDRAM, BRAM and I/O ... engine honours MMU +
 SDRAM waits" against the real MMU/SDRAM client FSM needs the mux instantiated in the
 CPM core (step 4); the bench shape and the golden file are ready for it.
+
+R32 **Synthesis prerequisites (2026-10-27; handoff Step 3).** (1) `ssp/rtl/ssp_sdp_ram.vhd`
+is the bake-off altsyncram wrapper (D-36) plus a `INIT_FILE` generic; `ssp_top` takes
+`parameter MROM_INIT` (default `ssp/fw/forth_rom.mif`, resolved by Quartus relative to
+the project directory) and passes it to `u_mrom`. `sim/ssp/ssp_sdp_ram.v` accepts and
+ignores it. (2) Factory ROM (D-38): `tools/bin2mif.py` turns the merged kernel +
+monitor dictionary image (`ssp/fw/build/mecrisp-ssp-p1a-app.bin`) into the committed
+`ssp/fw/forth_rom.mif` (16K x 32, identical-word runs as address ranges, so a recommit
+is a small diff; `--check` verifies the MIF against a binary). `make -C sim fw-rom`
+rebuilds the dictionary and regenerates the MIF; `fw-rom-check` is the drift check.
+**Recommit the MIF whenever the FW changes.** (3) A synthesis probe of the real SSP file
+set (`bakeoff/ssp_top.qpf`, top = `ssp_top`, Quartus 17.0 docker, ~25 s, 0 errors):
+~1820 ALMs, 1346 registers, 3 DSP, 1,050,624 block-memory bits (two 16K x 32 M10K
+arrays plus the MLAB FIFO); the MIF is found and used. The probe **found a real bug**:
+the `RV_ALIVE`/`rv_stalled` probe sat inside `synthesis translate_off` and referenced
+`core.state`, so on hardware `STATUS.RV_ALIVE` was stuck low (it worked in sim only).
+It is now derived from the bus protocol, identically in sim and synthesis:
+`rv_stalled = 0` (the `mem_*busy` inputs are tied 0) and `rv_alive` = a read strobe in
+the last 65535 clocks. `p1a_smoke.sh` now checks `STATUS.RV_ALIVE` (mutation-tested:
+`rv_alive = 1'b0` makes the smoke FAIL). (4) The `MrZ80.qsf` file entries are added with
+the instantiation in step 4 (before then the files would be pruned as unused).

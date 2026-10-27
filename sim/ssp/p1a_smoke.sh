@@ -103,6 +103,7 @@ TAG=A
   printf '\x1d'; printf 'R\r'
   printf 'G 300\r'
   printf '\x1d'; printf 'R\rF\r'                    # leave to Forth
+  printf '$2000000C @ hex. cr\r'                    # STATUS (RV_ALIVE = bit 20)
 } | runmodel A +OM=1 +LINEWAIT=2 +QUIET=150000
 
 echo "--- Part A console ---"; cat "$WORK/A.norm.log"
@@ -135,6 +136,7 @@ n_pc5=$(grep -ac '^PC=5000 ' "$WORK/A.norm.log")
   || { echo "  FAIL: expected two PC=5000 R lines (G aaaa, then plain G), got $n_pc5"; fail=1; }
 check "G 300: R after the restart shows PC=0300"     '^PC=0300 '
 check "F leaves to Forth"                            '^FORTH'
+check "STATUS.RV_ALIVE (bit 20) set: the core is seen reading" '^[$]2000000[cC] @ hex\. cr 00[13579bdfBDF][0-9a-fA-F]{5} *$'
 ev    "G aaaa writes CTRL = 133 (arm + vent while parked)"   'p1a-ctrl .*CTRL <= 133 '
 ev    "G aaaa writes CTRL = 030 (release, hold dropped, console back)" 'p1a-ctrl .*CTRL <= 030 '
 ev    "plain G writes CTRL = 020 (no TRAMP_EN left set)"      'p1a-ctrl .*CTRL <= 020 '
