@@ -1848,7 +1848,7 @@ panel-engine micro-op table (D-30), FW RECURSE-fold quirk fix (5.8.3) as
 an FW hygiene item.
 
 R26 **P1a console lane: REPL green (2026-10-27)** [R24/R25 log entries
-still pending, see SSP_HANDOFF 11]: three defects found in the p1a
+still pending, see SSP_HANDOFF 1.2]: three defects found in the p1a
 Verilator lane (real ssp_top + Z80 BFM), owner-approved fixes:
 (1) **RXDATA one-pop lag (RTL, ssp_bridge)** -- R25/H5 registered the FIFO
 head into a hold reg on the pop edge and fed the hold to q_reg, while q_hold
@@ -1863,7 +1863,16 @@ pin. Per D-19 the monitor output sink is CONN_ROUTE.out_snac (reset 1, HW
 fail-safe); snac_txd = out_snac ? mon_txd : idle. Guest TX never drives the
 SNAC pin (silicon: SNAC wired to the SSP, guest ACIA TX internal);
 console_own continues to govern RX routing only. [R25 erratum: header
-"snac_txd = console_own ? monitor : guest" superseded.]
+"snac_txd = console_own ? monitor : guest" superseded.] **[R26 erratum
+(same day, owner-approved): item (2) was wrong. MrZ80.sv routes the
+guest's serial_tx to the SNAC TX (USER_OUT[1]), so gating TX by out_snac
+alone would drop all guest console output once integrated. The muted
+banner was the intended R25 behaviour (guest owns the console until ESC),
+not a defect. Final mux: snac_txd = (console_own & out_snac) ? mon_txd :
+guest_txd -- R25 ownership rule plus the D-19 sink gate. The p1a harness
+now models the operator in two steps (escape at +RXAT, rest after the
+monitor goes quiet). Consequence for FW: a banner printed before ESC is
+lost; the monitor FW should print on escape, not at boot (handoff 2, step 1).]**
 (3) **Harness (tb_p1a_main.cpp)** -- RX release fired mid-banner
 (first_tx + grace, and the +RXAT fallback) and overflowed the depth-8 RX
 FIFO before the kernel listened; now released when TX goes quiet, +RXAT

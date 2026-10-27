@@ -172,4 +172,4 @@ new tool produces a new kind of intermediate file, add it to the relevant
 built by a documented recipe, such as committed firmware `.hex` goldens or
 release `.rbf` files. Large generated files committed by mistake bloat the
 history permanently unless it is rewritten, which happened once already
-(see `doc/SSP_HANDOFF.md` §12).
+(see `doc/SSP_HANDOFF.md` §1.1).

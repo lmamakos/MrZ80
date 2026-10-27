@@ -47,23 +47,33 @@ extern "C" void tb_putc(int c) {
 
 static long long g_rxat = 400000;   // +RXAT=-1 disables cycle fallback
 
+static long long g_quiet = 100000;  // TX-quiet grace before typing on
+
 extern "C" int tb_rx_poll(void) {
-    // Console release: after the FW's TX line goes QUIET (last byte + grace:
-    // the kernel is done boot-printing and is polling KEY) OR after a fixed
-    // cycle budget (R25: CONSOLE_OWN resets 0 -- a vanilla kernel never
-    // transmits to the SNAC pin until the operator escapes into the monitor,
-    // so a TX-only gate would deadlock the ESC-first flow).
-    // +RXAT=<cycles> tunes the fallback (default 400k = 8 ms at 50 MHz).
-    // (R26: was first_tx+grace, which fired mid-banner and overflowed the
-    // depth-8 RX FIFO -- bytes lost before the kernel ever listened.)
-    // The +RXAT fallback applies only while the FW has never transmitted;
-    // once it talks, wait for it to go quiet.
-    bool released = (g_first_tx >= 0) ? (g_cycle >= g_last_tx + 100000)
-                                      : (g_rxat >= 0 && g_cycle >= g_rxat);
-    if (!released) return -1;
-    static bool rel_logged = false;
-    if (!rel_logged) { rel_logged = true;
-        fprintf(stderr, "[p1a] rx released @cycle %lld\n", g_cycle); }
+    // Operator model, two steps (R26):
+    //  1. The FIRST byte (normally the escape) goes out at +RXAT, or earlier
+    //     once the FW has transmitted and then gone quiet.  R25: CONSOLE_OWN
+    //     resets 0, so the monitor is silent on the pin until the escape --
+    //     a TX-only gate would deadlock.
+    //  2. The REST waits until the monitor's TX has been quiet for g_quiet
+    //     cycles (it has finished printing and is polling KEY).  Sending
+    //     while it prints overflows the depth-8 RX FIFO.  Precisely: the
+    //     rest goes out once g_quiet cycles have passed since both byte 1
+    //     and the last TX byte.
+    // +RXAT=<cycles> sets step 1 (default 400k = 8 ms at 50 MHz).
+    static long long sent1_at = -1;
+    static bool open = false;
+    if (!open) {
+        bool quiet = g_first_tx >= 0 && g_cycle >= g_last_tx + g_quiet;
+        if (sent1_at < 0) {
+            if (!(quiet || (g_rxat >= 0 && g_cycle >= g_rxat))) return -1;
+        } else {
+            long long since = g_last_tx > sent1_at ? g_last_tx : sent1_at;
+            if (g_cycle < since + g_quiet) return -1;
+            open = true;
+            fprintf(stderr, "[p1a] rx open @cycle %lld\n", g_cycle);
+        }
+    }
     if (g_b0 == g_bn) {
         g_b0 = g_bn = 0;
         while (!g_eof) {
@@ -81,6 +91,10 @@ extern "C" int tb_rx_poll(void) {
     unsigned char c = g_buf[g_b0++];
     if (g_b0 == g_bn) g_b0 = g_bn = 0;
     if (g_echo) { fputc(c, stdout); fflush(stdout); }
+    if (sent1_at < 0) {
+        sent1_at = g_cycle;
+        fprintf(stderr, "[p1a] rx byte 1 @cycle %lld\n", g_cycle);
+    }
     g_rx_bytes++;
     return c;
 }
