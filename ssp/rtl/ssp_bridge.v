@@ -112,6 +112,7 @@ module ssp_bridge (
     output wire        uart_tx_wr,
     output wire        uart_rx_pop,
     input  wire [7:0]  uart_rx_rdata,
+    input  wire [7:0]  uart_rx_rnext,
     input  wire        uart_tx_ready,
     input  wire        uart_rx_avail,
     input  wire        uart_rx_overrun,
@@ -454,7 +455,7 @@ module ssp_bridge (
     // SAME launch edge, so muxing uart_rx_rdata through q_reg would return
     // the PREVIOUS byte).  Stub-proven shape (rr_rxbyte).
     always @(posedge clk)
-        if (uart_rx_pop) uart_rx_rdata_hold <= uart_rx_rdata;
+        if (uart_rx_pop) uart_rx_rdata_hold <= uart_rx_rnext;
 
     // escape hand-over: park request + console taken (D-14 hardware, R24).
     // Ordered AFTER the CTRL write decode below => a same-cycle CTRL write

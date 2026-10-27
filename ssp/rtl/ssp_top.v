@@ -203,7 +203,7 @@ module ssp_top (
     wire [31:0] bridge_rdata;
     wire        uart_rx_pop;
     wire        uart_en, uart_rx_clr, uart_tx_clr, uart_tx_wr;
-    wire [7:0]  uart_tx_wdata, uart_esc_char, uart_rx_rdata;
+    wire [7:0]  uart_tx_wdata, uart_esc_char, uart_rx_rdata, uart_rx_rnext;
     wire        uart_tx_ready, uart_rx_avail, uart_rx_overrun, uart_rx_push;
     wire        uart_esc_evt, uart_esc_eff, uart_relay_en;
     wire        mon_txd, relay_txd;
@@ -233,7 +233,7 @@ module ssp_top (
         .uart_en (uart_en), .uart_rx_clr (uart_rx_clr),
         .uart_tx_clr (uart_tx_clr), .uart_tx_wdata (uart_tx_wdata),
         .uart_tx_wr (uart_tx_wr), .uart_rx_pop (uart_rx_pop),
-        .uart_rx_rdata (uart_rx_rdata),
+        .uart_rx_rdata (uart_rx_rdata), .uart_rx_rnext (uart_rx_rnext),
         .uart_tx_ready (uart_tx_ready), .uart_rx_avail (uart_rx_avail),
         .uart_rx_overrun (uart_rx_overrun), .uart_rx_push (uart_rx_push),
         .esc_char (uart_esc_char), .uart_esc_eff (uart_esc_eff),

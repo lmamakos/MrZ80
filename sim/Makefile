@@ -96,11 +96,23 @@ lint-ssp:
 p1a:
 	cd $(ROOT) && verilator --cc --exe --build \
 	  -CFLAGS "-std=c++17" \
+	  -Issp/rtl \
 	  --top-module ssp_p1a_top -o ssp_p1a \
 	  sim/ssp/tb_p1a_main.cpp sim/ssp/p1a_sim_top.v sim/ssp/z80_bfm.v \
 	  ssp/rtl/ssp_top.v ssp/rtl/ssp_bridge.v ssp/rtl/ssp_uart.v \
 	  sim/ssp/ssp_sdp_ram.v Components/RISCV/femtorv32_gracilis.v \
 	  -Mdir sim/ssp/obj_p1a
+
+# trace-instrumented twin for problem triage (+VCD -> sim/ssp/p1a.vcd)
+p1a-vcd:
+	cd $(ROOT) && verilator --cc --exe --build --trace \
+	  -CFLAGS "-std=c++17" \
+	  -Issp/rtl \
+	  --top-module ssp_p1a_top -o ssp_p1a_dbg \
+	  sim/ssp/tb_p1a_main.cpp sim/ssp/p1a_sim_top.v sim/ssp/z80_bfm.v \
+	  ssp/rtl/ssp_top.v ssp/rtl/ssp_bridge.v ssp/rtl/ssp_uart.v \
+	  sim/ssp/ssp_sdp_ram.v Components/RISCV/femtorv32_gracilis.v \
+	  -Mdir sim/ssp/obj_p1adbg
 
 # P1a dictionary build (monitor.fs into the p1a model; separate artifact
 # name space -- P0 goldens untouched)

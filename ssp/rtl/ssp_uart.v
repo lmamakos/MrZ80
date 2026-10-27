@@ -75,7 +75,9 @@ module ssp_uart (
     reg [1:0] rx_sync;
     always @(posedge clk) rx_sync <= {rx_sync[0], snac_rxd};
     wire rxd = rx_sync[1];
+    reg rxd_q;                            // start must be a true h->l edge:
 
+    always @(posedge clk) rxd_q <= rxd;   // lock only after an idle-high bit
     reg         rx_act;
     reg  [15:0] rx_acc;
     reg  [7:0]  rx_tcnt;                 // ticks since start-bit edge
@@ -118,7 +120,7 @@ module ssp_uart (
                 rx_stop <= rxd;
                 if (rxd) byte_done <= 1'b1;     // D7 arrived one tick earlier
             end
-        end else if (en && !rx_act && snac_rxd == 1'b0) begin
+        end else if (en && !rx_act && rxd == 1'b0 && rxd_q) begin
             rx_act  <= 1'b1;                 // start edge (raw pin)
             rx_acc  <= 16'd32768;           // first tick ~ mid start bit
             rx_tcnt <= 8'd0;
@@ -130,6 +132,11 @@ module ssp_uart (
     reg [3:0] wp, rp;                      // mod-16 free-running == depth 8
     wire [3:0] fifo_count = wp - rp;
     assign rx_avail = (fifo_count != 4'd0);
+    // R25: RXDATA must present the popped byte at launch+1.  A bridge flop
+    // sampling rx_rdata (a register) in the SAME timestep as the pop sees
+    // the PREVIOUS byte (both read the old value) -- one-byte skew.  The
+    // bridge must instead capture this combinational head value.
+    assign rx_rnext = fifo[rp[2:0]];
 
     // escape consumption (OQ-22a): match only while the guest runs
     wire esc_hit = byte_done && rx_stop && esc_eff && !parked
@@ -164,7 +171,7 @@ module ssp_uart (
     // ------------------------------------------------ monitor TX ---------
     reg         mon_hold_v, mon_act;
     reg  [7:0]  mon_hold;
-    reg  [8:0]  mon_shift;
+    reg  [9:0]  mon_shift;              // {stop,d7..d0,start}, bit0 first
     reg  [15:0] mon_acc;
     reg  [7:0]  mon_tcnt;
     wire [16:0] mon_nsum = {1'b0, mon_acc} + {1'b0, baud_increment};
@@ -176,7 +183,7 @@ module ssp_uart (
     always @(posedge clk) begin
         if (!rst_n) begin
             mon_hold_v <= 1'b0; mon_act <= 1'b0;
-            mon_hold   <= 8'd0; mon_shift <= 9'h1FF; mon_acc <= 16'd0;
+            mon_hold   <= 8'd0; mon_shift <= 10'h3FF; mon_acc <= 16'd0;
             mon_tcnt   <= 8'd0;
         end else if (en) begin
             mon_acc <= mon_nsum[15:0];         // free-running divider residue
@@ -186,7 +193,7 @@ module ssp_uart (
                 mon_hold_v <= 1'b1;
             end
             if (!mon_act && mon_hold_v) begin
-                mon_shift  <= {1'b1, mon_hold};  // {stop,d7..d0}; start out next
+                mon_shift  <= {1'b1, mon_hold, 1'b0};  // stop+d7..d0+start
                 mon_act    <= 1'b1;
                 mon_hold_v <= 1'b0;
                 mon_acc    <= 16'd0;
@@ -194,7 +201,7 @@ module ssp_uart (
             end else if (mon_act && mon_tick) begin
                 mon_tcnt <= mon_tcnt + 8'd1;
                 if (mon_tcnt[3:0] == 4'd15)
-                    mon_shift <= {1'b1, mon_shift[8:1]};   // bit edge d0..d7, stop
+                    mon_shift <= {1'b1, mon_shift[9:1]};   // bit edge d0..d7, stop
                 if (mon_tcnt == 8'd159) mon_act <= 1'b0;   // stop done
             end
         end else begin
@@ -207,7 +214,7 @@ module ssp_uart (
     // 2-deep queue + inter-byte stretch (R25/H8).
     reg         rel_hold_v, rel_hold2_v, rel_act;
     reg  [7:0]  rel_hold, rel_hold2;
-    reg  [8:0]  rel_shift;
+    reg  [9:0]  rel_shift;              // {stop,d7..d0,start}, bit0 first
     reg  [15:0] rel_acc;
     reg  [7:0]  rel_tcnt;
     reg  [3:0]  rel_run;                     // back-to-back run counter
@@ -224,7 +231,7 @@ module ssp_uart (
         if (!rst_n) begin
             rel_hold_v <= 1'b0; rel_hold2_v <= 1'b0; rel_act <= 1'b0;
             rel_hold <= 8'd0; rel_hold2 <= 8'd0;
-            rel_shift <= 9'h1FF; rel_acc <= 16'd0;
+            rel_shift <= 10'h3FF; rel_acc <= 16'd0;
             rel_tcnt <= 8'd0; rel_run <= 4'd0; rel_stretch <= 1'b0;
         end else if (en) begin
             rel_acc <= rel_nsum[15:0];
@@ -240,7 +247,7 @@ module ssp_uart (
                 // 2-deep overrun: impossible at <=0.8%/8 skew -- ignore
             end
             if (!rel_act && rel_hold_v) begin
-                rel_shift   <= {1'b1, rel_hold};
+                rel_shift   <= {1'b1, rel_hold, 1'b0};  // stop+d7..d0+start
                 rel_hold    <= rel_hold2;
                 rel_hold_v  <= rel_hold2_v;
                 rel_hold2_v <= 1'b0;
@@ -250,7 +257,7 @@ module ssp_uart (
             end else if (rel_act && rel_tick) begin
                 rel_tcnt <= rel_tcnt + 8'd1;
                 if (rel_tcnt[3:0] == 4'd15)
-                    rel_shift <= {1'b1, rel_shift[8:1]};
+                    rel_shift <= {1'b1, rel_shift[9:1]};
                 if (rel_tcnt == 8'd159) begin
                     if (rel_q) begin
                         if (rel_stretch) begin

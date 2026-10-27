@@ -430,3 +430,68 @@ own stacks; leave the default or point at DTCM top) · keep
   (`make -C sim regmap-check` = R-45).
 - Commit chain: `e6c83f9` R16 -- `4783106` tools installed --
   `8b9f192` sim resync -- `2ed69c3` this doc (first version).
+
+---
+
+## 11. Resumed-session state (2026-10-27 PM — P1a console debug in flight)
+
+**Committed (branch `r24-p1a`):** R25 review fixes — T80 freeze gate
+(`would_boundary` computed at the decode edge, BusAck asserted only when the
+*next* state is M1; prefix-gated, excl. NextIs_XY_Fetch/MCycle="111"/
+"110"&Mode1&ISet≠"01"), T80↔T80_Pack↔T80s↔CPUREGS port sync (check_sync
+OK), regmap HI/LO/sized-reset macros, CSV regen. Verification: lint clean,
+GHDL `run.sh` 115 iter/0 mismatch (= baseline), cpuregs 8/8, ixmin 10/10,
+ixstack pass, run_forth exit 0.
+
+**P1a Verilator lane (uncommitted, mechanically working):**
+`sim/ssp/z80_bfm.v` + `sim/ssp/p1a_sim_top.v` + `sim/ssp/tb_p1a_main.cpp`,
+`make -C sim p1a` → `sim/ssp/obj_p1a/ssp_p1a`. Pin-level serial models with
+the true O9B divider; `+RXAT=<cyc>` RX release (default 400k; CONSOLE_OWN
+resets 0 per R25, so ESC-first flow: `printf '\x1d1 2 + . cr\r' |
+./sim/ssp/obj_p1a/ssp_p1a +ROM=ssp/fw/build/mecrisp-ssp.hex +OM=1
++MAXCYCLES=12000000 +IDLE=2000000 +RXAT=700000 +DBG` from repo root).
+Proven: flash boot on gracilis, ESC w/OM → esc_evt + park (earlier builds),
+rx FIFO PUSH trace ovf=0 ⇒ **rx_avail asserts at the FIRST push** (owner
+query answered — no full-FIFO wait).
+
+**Open item (the last P1a blocker): REPL line does not complete.**
+Findings:
+1. RXDATA one-byte skew = Verilator same-timestep NBA race (bridge POP pops
+   the uart FIFO but samples uart's registered `rx_rdata` one launch late).
+   FIXED via combinational FIFO head `rx_rnext` (uart→bridge→top), proven
+   correct in POPD trace. Also fixed: ssp_uart RX level start-lock
+   (`!rxd_q && tcnt==0`); harness `mon_shift`/`rel_shift` widened to
+   `{1'b1, hold, 1'b0}` (stop bit) with `[9:1]` shifts.
+2. Latest run (`+RXAT=700000`, 12 chars ESC,'1',' ','2',' ','+',' ','.',' ',
+   'c','r',CR): `tx=9 rx=12`, TX pin shows exactly `1 2 + . c`, then kernel
+   polls MMIO **offset 0x80** (RX_OVF!) every 9 cycles reading stale RXDATA
+   0x72 with STAT=0x01 avail=0 forever; `dbg_rx_push/pop=0`, no ESC evt,
+   NO banner. => kernel characters arrive via the **BFM io-0x80 ACIA model**
+   (fed by `guest_rxd` passthrough), NOT via the SS UART; and the kernel's
+   MMIO polling targets offset 0x80, not RXDATA(0x00)/STAT(0x04).
+   **Prime suspects for next session:**
+   a) `mecrisp-ssp.hex` may have been built with wrong/old register offsets
+      (`ssp/fw/ssp-regs.fs` RX0_CHAR/STAT offset mapping vs CSV vs
+      ssp_regs.vh — verify FW sees STAT at the offset the bridge decodes;
+      the banner never printing suggests TX worked at boot (9 writes counted
+      on TXDATA) yet no banner => compare what `SPIN`/`TYPE` actually emit).
+   b) harness `assign guest_txd = 1'b1;` (p1a_sim_top.v ~line 100) starves
+      any path that forwards guest TX; intentional for P1a but keep in mind.
+   c) with OM=1, RX flows ONLY through the uart+bridge (monitor path) once
+      own=1 — but before own=1 the kernel (ACIA io) steals bytes via
+      `guest_rxd` passthrough. ESC at own=0 goes to BOTH (uart FIFO + BFM
+      ACIA). Decide intended P1a flow: kernel owns line until ESC; after ESC
+      monitor owns; uart must also see bytes pre-ESC for the *monitor FW*
+      (it does — uart always deserializes snac_rxd independent of mux).
+   Trace plan: add probes at ssp_top `snac_rxd` and uart rx pin; confirm the
+   uart itself completes bytes pre-ESC; then confirm bridge RXDATA offset:
+   kernel reading 0x80 means FW regmap mismatch — rebuild FW with current
+   ssp-regs.fs (`cd ssp/fw && make` or the forth/Makefile recipe) and retry.
+3. Hygiene: batched parallel TB edits silently reverted once — grep-verify
+   file contents after batch edits before rebuilding.
+
+**Not yet written:** `ssp/fw/apps/monitor.fs`, `sim/ssp/p1a_dictbuild.sh`,
+`sim/ssp/p1a_smoke.sh` (patterns: `dictbuild_stub.sh`/`smoke_stub.sh`);
+docs R24/R25 entries in SSP_DESIGN §17, OQ-22 CLOSED row, D-25 amendment
+(grant now gated INSIDE the T80; bridge asserts a level request only).
+Owner-pending: OQ-10, OQ-18.
