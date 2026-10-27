@@ -153,3 +153,23 @@ Cyclone V `5CSEBA6U23I7` (DE10-Nano / MiSTer).
 - When adding pins, add both the `set_location_assignment` and
   `set_instance_assignment` IO standard, matching the pattern of existing
   entries in the `.qsf`.
+
+## What not to commit
+
+Do **not** track intermediate files that are ephemeral or can easily be
+regenerated from sources in the repo. Examples:
+
+- Simulator build/work dirs: Verilator `sim/ssp/obj*/`, GHDL
+  `work-obj*.cf`, `/tmp/<name>` work dirs.
+- Waveform/debug dumps: `*.vcd`, `*.fst`, `*.ghw`, `*.lxt`, `*.wlf`, etc.
+- Compiler/tool outputs: object files, executables, Quartus `db/`,
+  `incremental_db/`, `output_files/`, scratch logs and captured traces.
+
+Before committing, check `git status` for new build or debug output, and
+stage files explicitly rather than with `git add -A` or `git add .`. When a
+new tool produces a new kind of intermediate file, add it to the relevant
+`.gitignore` in the same change. Exceptions are deliberate deliverables
+built by a documented recipe, such as committed firmware `.hex` goldens or
+release `.rbf` files. Large generated files committed by mistake bloat the
+history permanently unless it is rewritten, which happened once already
+(see `doc/SSP_HANDOFF.md` §12).
