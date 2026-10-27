@@ -1369,6 +1369,7 @@ OQ-18)**.
 | OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1. R15: flash emulation explicitly **not** pursued (D-32) |
 | OQ-22 | `[new R15]` **Escape-byte consumption mechanism** (D-14): when the guest owns the SNAC link and `OM` is On, the escape byte must not reach the guest ACIA, but recognition completes only at the stop bit. Options: (a) byte-level relay (deserialize → filter → re-serialize at the `O9B` rate; adds one character time of latency, only while `OM` On; RTS/CTS passed through), (b) let the byte through and accept the guest sees it, (c) inject into the ACIA receive path instead of the wire | **CLOSED `[R24/R25, documented R30]`: option (a), byte-level relay**, implemented in `ssp/rtl/ssp_uart.v` (deserialize -> ESC filter -> re-serialize, 2-deep queue + inter-byte stretch); raw-vs-relay guest-RX mux switches at `ssp_top` (raw when `OM` Off = bit-transparent R-43, relay when On; mutually exclusive, no byte duplication). Cost: one character time of latency, only while `OM` is On |
 | OQ-23 | `[new R15]` **BP self-loop injection** (D-25): confirm in integration sim — BP on a prefix byte (inject at the prefix M1; does T80 prefix state reset cleanly?), interaction with trampoline window (OQ-05), interrupt taken at the injected `JR`'s boundary, `BP_SKIP` resume path | P1a/P2 sim (R-41); fallback = stop-after with corrected PC report |
+| OQ-24 | `[new R35]` **Physical-access command surface** (owner first-light requirements, D-15-P/D-22): canonical is modal (`PHY`/`LOG` set `MD`, then `E`/`D` act logical-or-physical per mode); also add explicit physical verbs (e.g. `PE`/`PD`, `I a`, `O a d`, `MAP`)? Letters to be confirmed with the P1b FW ODT-skin pass | owner letter ruling; R35 next-phase note |
 | OQ-15 | Graphical frame buffer for monitor *video* output (vs 80×25 ANSI on SBC terminal), including exclusive HDMI+kbd console details (D-19 P3): font, pages, keymap | later-phase design note |
 | OQ-16b | *(closed by R8 →* `SSP_PANEL_UX.md` v0.1*)* deep-dive held 2026-10-23: sovereignty/lock, pages, lamps, encoder, commentary, walkthroughs; second pass after first FP hardware experience | closed |
 | OQ-17 | Doc naming: CamelFORTH (guest) vs Mecrisp (monitor) glossaries in `doc/` — two files naming | lean: `MONITOR-FORTH-GLOSSARY.md` new beside existing |
@@ -1380,7 +1381,7 @@ OQ-18)**.
 | Phase | Scope | Exit |
 |---|---|---|
 | **P0 — two-core bake-off (R14)** | Vendored `picorv32.v` (`COMPRESSED_ISA`) **and** `femtorv32_gracilis.v` (+`utils.v`); Quartus 17.0 synth on `5CSEBA6U23I7` for **both**; **Mecrisp REPL live in sim and on the stub SoC** (UART console, per core); toolchain package verified (`riscv64-unknown-elf`, `-print-multi-lib`, `-march=rv32imc_zicsr_zifencei -mabi=ilp32`); downloadable-ROM write path sim; `fit.rpt` headroom recorded ×2; crt0 convention verified; §5.8 verify items closed (bridge `TICK_US` timer — common to both; ~~IRQ glue smoke~~ moot under polled FW, D-27; ~~learn-fpga license~~ closed). **R15 additions:** **simulation infrastructure** (D-28: `sim/ssp` Verilator + GHDL integration benches `sim/run_ssp_*.sh`, Makefile) — Mecrisp REPL in Verilator per core; **register-map generator** (D-29: CSV → `.vh`/`.fs`/Markdown, `make regmap-check`); Mecrisp RAM-only build confirmed (D-32: `compiletoram`, flash primitives stubbed). Optional: riscv-formal on picorv32 (eqy container, off critical path). **VexRiscv/vexgen shelved** (§5.7; reopen = OQ-21) | clean synth ×2; headroom logged; REPL live on harness; **one core selected per §5.8 table — DONE R23: FemtoRV32-gracilis (D-37, OQ-20 closed)**; sim flows + regmap generator runnable; no day-to-day container dependency |
-| **P1a — "first light"** `[new R15]` | Minimum vertical slice that exercises the riskiest RTL on real hardware: bridge `ID/CTRL/STATUS/TICK_US/ESC_CHAR/IRQ_PENDING/MEM_CTL/MEM_ADDR/MEM_DATA/SNAP_REG`, **`insn_end` export + boundary parking** (D-25), **`z80_bus_mux` + cycle-faithful engine (logical mem + I/O)** (D-26), micro-op sequencer core (D-30, FW kicks only), `ssp_uart` + **OSD `OM` escape recognizer** (D-14, OQ-22 resolved), SNAC console mux; FW (polled, D-27): `E D G H R X` + `ESC` **[R27: FW command set per D-39 (examine, modify-with-prompt, `G aaaa`, bare `G` continue); the trampoline moves here from P1b]** | R-40, R-42, R-43, R-45, R-46, R-23, R-25 + the R-01…R-09 subset covering halt/examine/deposit/go green; **on hardware**: escape into the SSP, examine/deposit guest memory, resume — with `OM` Off proven bit-transparent |
+| **P1a — "first light"** `[new R15]` | Minimum vertical slice that exercises the riskiest RTL on real hardware: bridge `ID/CTRL/STATUS/TICK_US/ESC_CHAR/IRQ_PENDING/MEM_CTL/MEM_ADDR/MEM_DATA/SNAP_REG`, **`insn_end` export + boundary parking** (D-25), **`z80_bus_mux` + cycle-faithful engine (logical mem + I/O)** (D-26), micro-op sequencer core (D-30, FW kicks only), `ssp_uart` + **OSD `OM` escape recognizer** (D-14, OQ-22 resolved), SNAC console mux; FW (polled, D-27): `E D G H R X` + `ESC` **[R27: FW command set per D-39 (examine, modify-with-prompt, `G aaaa`, bare `G` continue); the trampoline moves here from P1b]** | R-40, R-42, R-43, R-45, R-46, R-23, R-25 + the R-01…R-09 subset covering halt/examine/deposit/go green; **on hardware**: escape into the SSP, examine/deposit guest memory, resume — with `OM` Off proven bit-transparent **[CLOSED R35: all exit items PASS on hardware, 2026-10-27]** |
 | **P1b — console complete** | Remaining P1 scope: `MD/AR/DR/PR` shared regs, `MAP0..3`, `MBX`, WDG×2, STEP assist (INSN/MCYCLE/TSTATE), reset stretcher, trampoline / `G aaaa`, **`ssp_mem_client`** (physical P/W), MROM/MPKG mount path (monitor-only reset), T80s MC/TS/ALT export completion; FW: ODT skin + `S T K I O A W V ? U F ODT PHY LOG MB` | rest of R-01…R-09, R-12, R-19…R-22, R-24, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-guest-image boot; panel *not* yet wired. **Bridge board (OQ-09) designed in parallel with P1a/P1b** |
 | **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, guest sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`SSP_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, panel macros on the D-30 sequencer, profile-7 interlock (D-31, R-44), BP/`C` with **self-loop stop-before-execute** (D-25, R-41/OQ-23) (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `ssp_sd` READ (R-26 gate), MPKG auto-eval polish, HDMI mirror (`CONN_ROUTE`), serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
 | **P3 — polish** | T80 register write-back (retires trampoline), step-over, conditional BPs, `Y`, MMU writes from monitor, exclusive HDMI+kbd console (D-19), vid-write revisit (OQ-11), HPS path eval, mailbox protocol hardening with HBIOS | D-02 retired; all prior green |
@@ -2181,3 +2182,44 @@ in the monitor.  Note the macro emits LF then CR (`"\n\r"`), not CR LF; both cha
 present, which is what a terminal needs.  Kernel and factory ROM changed: `ssp/fw/forth_rom.mif`
 regenerated (`make -C sim fw-rom`).  `p1a_smoke.sh` checks that every banner carries both
 characters.  Re-verified: smoke-p1a, tramp-p1a, smoke/dict stub (picorv32, gracilis), smoke/dict qemu.
+
+R35 **Hardware first light — P1a EXIT (2026-10-27).** Owner built, deployed and tested the
+R34 image on the board.  ALL P1a exit items PASS on hardware: escape (`^]`, OSD `OM` On)
+into the monitor; examine/deposit guest memory (`E`/`D`); register snapshot (`R`);
+`G aaaa` (trampoline) and bare `G` (continue); `?` help; RomWBW/CP/M boots and runs
+normally; console line ends CR+LF (R34 fix confirmed).  P1a is CLOSED.
+
+**Next-phase requirements raised at first light (owner, 2026-10-27) and capability check.**
+(1) *Physical (28-bit) memory examine/deposit*; (2) *Z80 I/O port access from the monitor*;
+(3) *easy MMU-register inspection and logical→physical translation display in the monitor*;
+(4) distinct command surface for physical ops.  Assessment against the current RTL:
+- **I/O: no hardware gap.** The D-30 sequencer already implements IO_RD/IO_WR
+  (`MEM_CTL.IS_IO`), golden-verified (R-42) and exercised by `tb_integ_core`; the mux
+  carries IORQ.  Needs monitor FW commands only (`I a`, `O a d`).
+- **Physical: no change to `z80_bus_mux` — and it is deliberately NOT the vehicle.**
+  The mux arbitrates *Z80 cycle semantics* at the T80 boundary; those are inherently
+  logical (MMU-translated) addresses, and its engine is address-shaped 16-bit on purpose.
+  Physical access bypasses the MMU downstream, at the point where the fabric already
+  sees physical addresses: this is exactly the already-decided **`ssp_mem_client`**
+  (D-15-P, P1b, §9): parked client borrowing the *wiring* — drive the existing SDRAM
+  client interface (`sdram_addr/din/we/rd`) and the BRAM mux (same seam the `dl_bram_*`
+  download port already uses) while the guest is parked AND the primary client FSM is
+  idle.  The rejected alternative (driving physical through the mux by widening
+  `eng_addr` to 28 bits and bypassing the MMU there) would split translation semantics
+  across two places and make the mux's R-42 golden story two-mode; the client approach
+  keeps the mux single-purpose.  The retracted MMU-direct-port trick ($B8–$BC, guest-
+  owned pointer — D-15) is confirmed bad practice from the R33 bench: 5 port cycles per
+  access, perturbs guest pointer state.  Mode is the designed `MD` reg (0x80:
+  logical/physical), FW `PHY`/`LOG` (D-22); `G` stays logical-only (CPU state is
+  logical) — matches the owner's note.
+- **MMU regs/translation: two designed paths.** (a) today, usable already: the engine
+  I/O-reads $B0..$BF (state-neutral; proven by `tb_integ_core`), so FW can dump frames
+  and the pointer without any HW change — enough for a `MAP` command in P1b-first;
+  (b) the dedicated `MAP0..3` frame taps (0xE0–0xEC, `{valid,page}×4`, P-D neutral,
+  §9.3): needs MMU.vhd to export `mmu_frame` as tap outputs (our file, allowed; not
+  `sys/`), wired CPM entity → ssp seam → bridge.  Logical→physical *display* is FW math
+  (4 frames × 16 KiB) from either source: annotate `E`/`D` rows with the physical
+  address while in `PHY`-shadow mode.
+- **Command surface:** canonical design is modal (`PHY`/`LOG` switch + same `E`/`D`,
+  D-22); whether to ALSO add explicit physical verbs (e.g. `PE`/`PD`) is an open FW
+  letter choice (owner, P1b FW scope) — see OQ-24.

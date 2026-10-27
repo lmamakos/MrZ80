@@ -303,19 +303,26 @@ monitor-absent).
 (CP/M boots and runs; GHDL regressions unchanged); full compile passes
 timing.
 
-### Step 5 — Hardware first light (P1a exit)
+### Step 5 — Hardware first light (P1a exit) — **DONE (R35): all items PASS on hardware 2026-10-27; P1a CLOSED**
 
 `tools/build.sh` (full compile on `tycho`), then `make install` (scp to
 host `mister`). P1a exit criteria (`SSP_DESIGN.md` §15): on hardware,
 escape into the SSP, examine/deposit guest memory, resume — with OM off
 proven bit-transparent. Record results as a design round.
 
-### After P1a — P1b preview
+### After P1a — P1b preview (owner priorities at first light, R35)
 
-Shared registers `MD/AR/DR/PR`, `MAP0..3`, mailbox, step assist
-(INSN/MCYCLE/TSTATE), reset stretcher, trampoline / `G aaaa`,
-`ssp_mem_client` (physical access), MROM/MPKG mount path, ODT skin and the
-rest of the command set. Bridge board design (OQ-09) runs in parallel.
+Owner requirements raised at first light — all already in P1b scope, now the
+leading items: **(a)** physical 28-bit memory examine/deposit -> `MD`/`AR`/`DR`
+shared regs + `ssp_mem_client` (parked physical client borrowing the SDRAM
+client wiring + BRAM mux; `z80_bus_mux` unchanged — it stays the logical,
+cycle-faithful Z80 path, R35 assessment); **(b)** Z80 I/O port commands ->
+FW-only (`I`/`O`; the D-30 sequencer's IO_RD/IO_WR are already golden-verified);
+**(c)** MMU inspection + logical->physical display -> FW `MAP` via engine I/O
+reads of $B0..$BF immediately, `MAP0..3` frame taps later (needs MMU.vhd tap
+export, our file, allowed); `PHY`/`LOG` mode verbs; physical-vs-logical command
+letters = OQ-24. Also pending: `PR`/mailbox, step assist, MROM/MPKG mount path,
+ODT skin. Bridge board design (OQ-09) runs in parallel.
 
 ### Owner questions outstanding
 
