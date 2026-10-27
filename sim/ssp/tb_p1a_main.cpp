@@ -4,7 +4,7 @@
 // from the RTL $display task; input-release gate identical (operator bytes
 // flow only after FW proves life: first TX + grace).
 //
-// Plusargs: +ROM=<hex> +DUMP=<hex> +IDLE=<n> +MAXCYCLES=<n> +ECHO=1
+// Plusargs: +ROM=<hex> +DUMP=<hex> +IDLE=<n> +MAXCYCLES=<n> +ECHO=1 +PAUSE=<n>
 //           plus the RTL-side switches (+OSD_OK/+OM/+WAIT/+RVRST/+NOGUEST).
 // Exit codes: 0 normal, 3 nothing ever transmitted (boot dead),
 //             1 counted bus/rom-illegal errors (after dump).
@@ -48,6 +48,8 @@ extern "C" void tb_putc(int c) {
 static long long g_rxat = 400000;   // +RXAT=-1 disables cycle fallback
 
 static long long g_quiet = 100000;  // TX-quiet grace before typing on
+static long long g_pause = 400000;  // +PAUSE: length of an in-band 0x01 pause
+static long long g_pause_until = 0;
 
 extern "C" int tb_rx_poll(void) {
     // Operator model, two steps (R26):
@@ -63,6 +65,12 @@ extern "C" int tb_rx_poll(void) {
     // +RXAT=<cycles> sets step 1 (default 400k = 8 ms at 50 MHz).
     static long long sent1_at = -1;
     static bool open = false;
+    // In-band pause (R27): a 0x01 byte in the input is consumed by the
+    // harness, never sent, and holds the input for +PAUSE cycles.  Lets a
+    // script wait out a slow Mecrisp line (each token is a full dictionary
+    // search, ~50k cycles) before the next escape, so a late-executing
+    // line cannot overwrite the escape's hardware hand-over.
+    if (g_cycle < g_pause_until) return -1;
     if (!open) {
         bool quiet = g_first_tx >= 0 && g_cycle >= g_last_tx + g_quiet;
         if (sent1_at < 0) {
@@ -90,6 +98,10 @@ extern "C" int tb_rx_poll(void) {
     }
     unsigned char c = g_buf[g_b0++];
     if (g_b0 == g_bn) g_b0 = g_bn = 0;
+    if (c == 0x01) {                        // pause marker
+        g_pause_until = g_cycle + g_pause;
+        return -1;
+    }
     if (g_echo) { fputc(c, stdout); fflush(stdout); }
     if (sent1_at < 0) {
         sent1_at = g_cycle;
@@ -116,6 +128,7 @@ int main(int argc, char **argv) {
     long long idle = plusarg_ll("+IDLE=", 8000000);
     long long maxc = plusarg_ll("+MAXCYCLES=", 600000000);
     g_rxat = plusarg_ll("+RXAT=", 400000);
+    g_pause = plusarg_ll("+PAUSE=", 400000);
 
     struct termios tio_save;
     bool tty = isatty(0);

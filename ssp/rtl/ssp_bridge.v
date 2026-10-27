@@ -121,6 +121,11 @@ module ssp_bridge (
     output wire        uart_esc_eff,   // OM & CTRL.esc_break_en & ssp_active
     output wire        uart_relay_en,  // OM & ssp_active: RX via relay
     output wire        conn_out_snac, // CONN_ROUTE.out_snac (D-19, TX policy)
+
+    // ---------------- trampoline (G aaaa, D-02/D-39) ------------------------
+    output wire        tramp_arm,      // CTRL.TRAMP_EN (effective) -> ssp_tramp
+    output wire [15:0] tramp_target,   // TRAMP_ADDR -> ssp_tramp
+    input  wire        tramp_done,     // 1-clk: 3 bytes injected -> clear arm
     input  wire        uart_esc_evt,
 
     // ---------------- console / park state (to top console mux) -----------
@@ -141,7 +146,14 @@ module ssp_bridge (
     assign is_bridge    = (mem_addr[31:12] == 20'h20000);
     wire rd_fire = rst_n && mem_rstrb  && is_bridge;
     wire wr_fire = rst_n && (mem_wmask != 4'b0) && is_bridge;
-    wire [7:0] w = mem_wdata[7:0];
+    // Per-lane write data.  A 32-bit store (sw) delivers byte n of the value on
+    // mem_wdata[8n+7:8n] with mem_wmask[n] set; lane n of a multi-byte
+    // register MUST take lane n's data.  (R27: the bridge used lane 0 data
+    // for every lane, so e.g. TRAMP_ADDR <= $0200 loaded $0000.)
+    wire [7:0] w  = mem_wdata[7:0];
+    wire [7:0] w1 = mem_wdata[15:8];
+    wire [7:0] w2 = mem_wdata[23:16];
+    wire [7:0] w3 = mem_wdata[31:24];
 
     assign mem_rbusy = 1'b0;
     assign mem_wbusy = 1'b0;
@@ -272,6 +284,8 @@ module ssp_bridge (
     assign z_reset_n   = ~ctr_eff[`SSP_BIT_CTRL_Z_RST_N];
     assign z_wait_n    = ~ctr_eff[`SSP_BIT_CTRL_Z_WAIT_N];
     assign z_cen_gate  =  ctr_eff[`SSP_BIT_CTRL_CEN_GATE];
+    assign tramp_arm    = ctr_eff[`SSP_BIT_CTRL_TRAMP_EN];
+    assign tramp_target = tramp_addr;
     assign freeze_any  = 1'b0;          // P1a: step modes P1b (D-25)
     assign parked      = park_act;
     assign console_own = own_fw & ssp_active & rv_ctrl_ok;  // fw_console_ok
@@ -507,54 +521,59 @@ module ssp_bridge (
             if (!rv_ctrl_ok && park_act)
                 halt_reason <= 4'd9;             // wdg_park expiry (D-13)
 
+            // G aaaa completion: the injector delivered all 3 bytes -> disarm.
+            // Ordered before the CTRL write decode: a same-cycle FW write
+            // (re-arm) wins.
+            if (tramp_done) ctr[`SSP_BIT_CTRL_TRAMP_EN] <= 1'b0;
+
             if (wr_fire) begin
                 case (widx)
                 `SSP_RIDX_CTRL: begin
                     // lane0 covers bits 0..7 (used: 0..5); lane1 8..9
                     if (mem_wmask[0]) ctr[5:0] <= w[5:0];  // CTRL lane 0
-                    if (mem_wmask[1]) ctr[9:8] <= w[1:0];  // CTRL lane 1
+                    if (mem_wmask[1]) ctr[9:8] <= w1[1:0];  // CTRL lane 1
                 end
                 `SSP_RIDX_TRAMP_ADDR: begin
                     if (mem_wmask[0]) tramp_addr[7:0]  <= w;
-                    if (mem_wmask[1]) tramp_addr[15:8] <= w;
+                    if (mem_wmask[1]) tramp_addr[15:8] <= w1;
                 end
                 `SSP_RIDX_STEP_CTL:   step_ctl[7:0] <= w;   // P1b: mode bits
                 `SSP_RIDX_BP0:      begin bp0[7:0] <= w;
-                                      if (mem_wmask[2]) bp0[16] <= w[0]; end
+                                      if (mem_wmask[2]) bp0[16] <= w2[0]; end
                 `SSP_RIDX_BP1:      begin bp1[7:0] <= w;
-                                      if (mem_wmask[2]) bp1[16] <= w[0]; end
+                                      if (mem_wmask[2]) bp1[16] <= w2[0]; end
                 `SSP_RIDX_BP2:      begin bp2[7:0] <= w;
-                                      if (mem_wmask[2]) bp2[16] <= w[0]; end
+                                      if (mem_wmask[2]) bp2[16] <= w2[0]; end
                 `SSP_RIDX_BP3:      begin bp3[7:0] <= w;
-                                      if (mem_wmask[2]) bp3[16] <= w[0]; end
+                                      if (mem_wmask[2]) bp3[16] <= w2[0]; end
                 `SSP_RIDX_BP_SKIP:    if (mem_wmask[0]) bp_skip   <= w[3:0];
                 `SSP_RIDX_TRAP_CTL:   if (mem_wmask[0]) trap_ctl  <= w[2:0];
                 `SSP_RIDX_TRAP_ADDR:  if (mem_wmask[0]) trap_addr_r <= w;
                 `SSP_RIDX_TRAP_DATA: begin
                     if (mem_wmask[0]) trap_data[7:0]   <= w;
-                    if (mem_wmask[1]) trap_data[15:8]  <= w;
+                    if (mem_wmask[1]) trap_data[15:8]  <= w1;
                 end
                 `SSP_RIDX_MEM_ADDR: begin       // 28-bit: lanes 0..3
                     if (mem_wmask[0]) mem_addr_r[7:0]   <= w;
-                    if (mem_wmask[1]) mem_addr_r[15:8]  <= w;
-                    if (mem_wmask[2]) mem_addr_r[23:16] <= w;
-                    if (mem_wmask[3]) mem_addr_r[27:24] <= w[3:0];
+                    if (mem_wmask[1]) mem_addr_r[15:8]  <= w1;
+                    if (mem_wmask[2]) mem_addr_r[23:16] <= w2;
+                    if (mem_wmask[3]) mem_addr_r[27:24] <= w3[3:0];
                 end
                 `SSP_RIDX_MEM_DATA:   if (mem_wmask[0]) mem_data_w <= w;
                 `SSP_RIDX_MD:         if (mem_wmask[0]) md_phys    <= w[0];
                 `SSP_RIDX_AR: begin
                     if (mem_wmask[0]) ar_r[7:0]   <= w;
-                    if (mem_wmask[1]) ar_r[15:8]  <= w;
-                    if (mem_wmask[2]) ar_r[23:16] <= w;
-                    if (mem_wmask[3]) ar_r[27:24] <= w[3:0];
+                    if (mem_wmask[1]) ar_r[15:8]  <= w1;
+                    if (mem_wmask[2]) ar_r[23:16] <= w2;
+                    if (mem_wmask[3]) ar_r[27:24] <= w3[3:0];
                 end
                 `SSP_RIDX_DR:         if (mem_wmask[0]) dr_r <= w;
                 `SSP_RIDX_PR:         if (mem_wmask[0]) pr_r <= w;
                 `SSP_RIDX_SD_ADDR: begin
                     if (mem_wmask[0]) sd_addr[7:0]   <= w;
-                    if (mem_wmask[1]) sd_addr[15:8]  <= w;
-                    if (mem_wmask[2]) sd_addr[23:16] <= w;
-                    if (mem_wmask[3]) sd_addr[27:24] <= w[3:0];
+                    if (mem_wmask[1]) sd_addr[15:8]  <= w1;
+                    if (mem_wmask[2]) sd_addr[23:16] <= w2;
+                    if (mem_wmask[3]) sd_addr[27:24] <= w3[3:0];
                 end
                 `SSP_RIDX_SD_WDATA:   if (mem_wmask[0]) sd_wdata <= w;
                 `SSP_RIDX_SD_CTL:     if (mem_wmask[0]) sd_ctl   <= w & 8'h01;
@@ -562,7 +581,7 @@ module ssp_bridge (
                 `SSP_RIDX_WDG_PARK_KICK: wdg_park_kick <= 1'b1;
                 `SSP_RIDX_IRQ_EN:   begin
                     if (mem_wmask[0]) irq_en[7:0]   <= w;
-                    if (mem_wmask[1]) irq_en[11:8]  <= w[3:0];
+                    if (mem_wmask[1]) irq_en[11:8]  <= w1[3:0];
                 end
                 `SSP_RIDX_CONN_ROUTE: if (mem_wmask[0]) conn_route <= w[3:0];
                 `SSP_RIDX_MBX0:       if (mem_wmask[0]) mbx0 <= w;
@@ -573,12 +592,12 @@ module ssp_bridge (
                 `SSP_RIDX_LED_ADDR:   if (mem_wmask[0]) led_addr   <= w;
                 `SSP_RIDX_LED_DATA0: begin
                     if (mem_wmask[0]) led_data0[7:0]  <= w;
-                    if (mem_wmask[1]) led_data0[9:8]  <= w[1:0];
+                    if (mem_wmask[1]) led_data0[9:8]  <= w1[1:0];
                 end
                 `SSP_RIDX_LED_DATA1: begin
                     if (mem_wmask[0]) led_data1[7:0]   <= w;
-                    if (mem_wmask[1]) led_data1[15:8]  <= w;
-                    if (mem_wmask[2]) led_data1[23:16] <= w;
+                    if (mem_wmask[1]) led_data1[15:8]  <= w1;
+                    if (mem_wmask[2]) led_data1[23:16] <= w2;
                 end
                 `SSP_RIDX_ESC_CHAR:   if (mem_wmask[0]) esc_char <= w;
                 `SSP_RIDX_UART_TXDATA: if (mem_wmask[0]) begin

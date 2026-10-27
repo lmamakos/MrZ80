@@ -40,6 +40,12 @@
 // on FW liveness: the hardware escape parks the guest by itself; a dead FW
 // then auto-releases the park (WDG_PARK, D-13) after ~0.4 s.
 //
+// "G aaaa" (D-02, D-39): the bridge exports tramp_arm/tramp_target (CTRL.TRAMP_EN
+// / TRAMP_ADDR) and takes tramp_done, which hardware-clears TRAMP_EN.  The reset
+// vent and the reset-vector JP injection are Z80-side logic in ssp_tramp.vhd at
+// the CPM boundary (verified against the real T80, sim/tb_tramp.vhd).  FW order:
+// arm + vent while parked, then release reset and drop the park together.
+//
 // P1b mounts (OSD MROM/MPKG download write port) hook the spare ROM write
 // port `dl_*` below (currently tied inactive at the integrator).
 
@@ -76,6 +82,10 @@ module ssp_top (
     output wire        z_reset_n,
     output wire        z_wait_n,
     output wire        z_cen_gate,
+    // trampoline / G aaaa (D-02, D-39): to ssp_tramp.vhd at the CPM boundary
+    output wire        tramp_arm,
+    output wire [15:0] tramp_target,
+    input  wire        tramp_done,
     output wire        freeze_any,   // 0 in P1a (step modes P1b)
     // engine master (mux inputs)
     output wire        eng_own,
@@ -242,6 +252,8 @@ module ssp_top (
         .uart_rx_overrun (uart_rx_overrun), .uart_rx_push (uart_rx_push),
         .esc_char (uart_esc_char), .uart_esc_eff (uart_esc_eff),
         .uart_relay_en (uart_relay_en), .conn_out_snac (conn_out_snac),
+        .tramp_arm (tramp_arm), .tramp_target (tramp_target),
+        .tramp_done (tramp_done),
         .uart_esc_evt (uart_esc_evt),
         .console_own (console_own), .parked (parked),
         .ssp_irq (ssp_irq)

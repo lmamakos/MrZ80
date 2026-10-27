@@ -341,6 +341,7 @@ numbers are hints — grep the name.
 | `ssp/rtl/ssp_top.v` | Subsystem wrapper: core + ROM + RAM + decoder + `ssp_uart` + `ssp_bridge`; sideband bundle to CPM; `ssp_irq` out; guest controls out; `SSP_CHAIN[63:0]` export |
 | `ssp/rtl/ssp_bridge.v` | §6 register file; shared functional registers (MD/AR/DR/PR); MEM-SEQ engine + arbiter; STEP assist; BP/trap; WDG×2; IRQ; ID |
 | `ssp/rtl/ssp_uart.v` | 8N1 UART, divider select from `O9B` table index (session R4, §5.3); RX FIFO (8) `[proposed]`; **escape-character recognizer** on the SNAC RX stream (`ESC_CHAR`, OSD `OM`-gated, D-14 rev R15) → boundary park + console hand-over; sticky `rx`/`esc` status bits |
+| `ssp/rtl/ssp_tramp.vhd` | `[new R28]` `G aaaa` support at the CPM boundary (VHDL, D-33): guest-CPU-only reset vent (>= 8 `cpu_cen` stretch) + reset-vector `JP aaaa` injector (data-input override on the first three reads at $0000..$0002; primed only when armed during reset; `done` pulse hardware-clears `CTRL.TRAMP_EN`). Verified against the real T80 (`sim/tb_tramp.vhd`) |
 | `ssp/rtl/z80_bus_mux.vhd` | `[new R15]` D-26 single mux at the T80 output boundary (A, D-out, strobes, `MRD_T1`, `M1_n`; `cpu_wait_n` sense back to the sequencer); select BusAck-gated (P-A); lives at the CPM-core boundary (VHDL, beside the T80) |
 | `ssp/regs/ssp_regs.csv` + `tools/ssp_regmap.py` | `[new R15]` D-29 single-source register map → `ssp_regs.vh`, `ssp-regs.fs`, §6 Markdown table |
 | `sim/` | `[new R15; R16 pattern]` D-28: `sim/ssp/` (Verilator: cores + bridge + BFM, Mecrisp REPL); integration = new `sim/run_ssp_*.sh` + `sim/tb_ssp_*.vhd` in the existing GHDL flow (T80 + MMU + SDRAM client FSM + VHDL-side units per D-33); Makefile targets = §13 TB names |
@@ -995,6 +996,26 @@ reset-vent, inject `C3 lo hi` at the first three fetches from $0000 (mux
 select over `cpuDataIn`), auto-disarm; plain `G` = resume (never injects).
 BP suppression during injection $0000–$0002 (OQ-05 lean carried: matches
 suppressed while injecting).
+**[R28 implemented -- `ssp/rtl/ssp_tramp.vhd`, tests `sim/tb_tramp.vhd` (real
+T80) + `sim/ssp/p1a_tramp.sh`]** Reset vent: `t80_rst_n = sys_rst_n AND
+vent_q`, only the T80 is reset (peripherals/MMU stay on the system reset),
+release stretched to >= 8 `cpu_cen` after `CTRL.Z_RST_N` drops. Injector:
+primed only if `CTRL.TRAMP_EN` is set *while* the T80 is in reset (a stale arm
+can never intercept a normal read of $0000); after release the first three
+read cycles at $0000/$0001/$0002 get `C3`/lo/hi via a combinational override
+of the CPU data input, then `tramp_done` pulses and the bridge hardware-clears
+`TRAMP_EN`. Wait states, refresh cycles and a reset re-asserted mid-window are
+handled (the sequence restarts). **FW order for `G aaaa` (full-register
+writes, bit 5 kept or the escape is disabled):** `TRAMP_ADDR <- aaaa`;
+`CTRL <- {TRAMP_EN, hold, own, esc_break, Z_RST_N}` (arm + vent while parked);
+then `CTRL <- {TRAMP_EN, esc_break}` -- reset released, park request dropped
+and console returned in ONE write. **Ordering rule:** the park request must
+drop no later than the reset release. The T80 does not grant BUSRQ until an
+instruction boundary, and its first instruction after reset is the injected
+3-cycle JP, so a request still pending at release parks the guest *at the
+target* (PC = aaaa, nothing executed): a free "set PC and stay parked" mode
+(release reset but keep hold/own). Plain `G` (no address) = drop hold/own
+only, never injects. Park request = `BUSRQ_n` (see R28 finding).
 
 ---
 
@@ -1900,3 +1921,34 @@ modify memory by prompting with the current contents (bare CR leaves it
 unchanged), go to an address, continue the CPU (bare `G`) -> D-39; the
 trampoline therefore moves into P1a. Framework expected to grow. (4) Work
 to date committed and pushed to origin (lmamakos/MrZ80), branch r24-p1a.
+
+R28 **`G aaaa` hardware: reset vent + reset-vector trampoline (2026-10-27)**
+(D-39 consequence; the trampoline moved from P1b into P1a). New
+`ssp/rtl/ssp_tramp.vhd` (VHDL, Z80 side, D-33), bridge exports
+`tramp_arm`/`tramp_target` and auto-clears `CTRL.TRAMP_EN` on `tramp_done`;
+`ssp_top` carries the three ports; design in 7.4 above. Verification:
+`sim/tb_tramp.vhd` -- real T80s, production configuration (Mode 1, T2Write 1,
+IOWait 0, `cpu_cen` 1-of-5), 176 checks over: idle transparency, park -> G,
+park-at-target, plain reset without arm, arm without reset never intercepts,
+wait states, reset re-asserted at three points in the window, targets
+$0000/$FFFF/$C3C3, vent minimum/maximum width; mutation-tested (injection
+removed, never-disarm, prime-without-reset, vent stretch removed/lengthened,
+early done, no index restart: all caught; two guard mutants are equivalent
+and documented). `sim/ssp/p1a_tramp.sh` -- the same handshake driven from the
+Mecrisp REPL at register level on the p1a lane (G $0200, plain reset, park at
+$0300). Findings: (1) **bridge multi-byte-register write bug (pre-existing,
+R25-R27 era)**: `w = mem_wdata[7:0]` was used for EVERY byte lane, so a 32-bit
+store loaded the low byte into all lanes (`TRAMP_ADDR <- $0200` gave $0000;
+`CTRL <- $133` spuriously set `PANEL_LOCK`, bit 9). Fixed: per-lane
+`w1/w2/w3` on all 20 `mem_wmask[1..3]` registers (CTRL, TRAMP_ADDR, BP0-3,
+TRAP_DATA, MEM_ADDR, AR, SD_ADDR, IRQ_EN, LED_DATA0/1); nothing had written a
+multi-byte register from FW before. (2) **`FREEZE_req_n` is a dead port in
+`T80.vhd`** (declared, never read); the park request is the ordinary
+**`BUSRQ_n`**, gated by `freeze_ok`. Integration must drive `n_BUSRQ` from the
+bridge's `z_busrq_n`; the earlier note naming `FREEZE_req_n` was wrong.
+(3) T80 reset is asynchronous and clears `BusAck`; BFM now models reset,
+real `JP`, and a freeze grant with no further instruction cycle (PC at park =
+next instruction). (4) Mecrisp spends ~170k cycles per input line (each token
+is a full dictionary search): scripts need `+RXGAP` pacing and the new
+in-band pause marker (`0x01`, `+PAUSE`) before an escape, else a late-executing
+line overwrites the escape hand-over.

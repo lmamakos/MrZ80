@@ -74,6 +74,8 @@ module ssp_p1a_top (
     wire        cpu_cen;
     wire        z_busrq_n, z_reset_n, z_wait_n, z_cen_gate, freeze_any;
     wire        z_busack_n, would_boundary, z_m1_n, z_halt_n;
+    wire        tramp_arm, tramp_done;
+    wire [15:0] tramp_target;
     wire [15:0] cpu_addr_bfm;
     wire [7:0]  cpu_din_bfm;
     wire        cpu_wait_n_bfm;
@@ -112,6 +114,8 @@ module ssp_p1a_top (
         .z_busrq_n (z_busrq_n), .z_reset_n (z_reset_n),
         .z_wait_n (z_wait_n), .z_cen_gate (z_cen_gate),
         .freeze_any (freeze_any),
+        .tramp_arm (tramp_arm), .tramp_target (tramp_target),
+        .tramp_done (tramp_done),
         .eng_own (eng_own), .eng_addr (eng_addr), .eng_dout (eng_dout),
         .eng_mreq_n (eng_mreq_n), .eng_iorq_n (eng_iorq_n),
         .eng_rd_n (eng_rd_n), .eng_wr_n (eng_wr_n),
@@ -130,6 +134,9 @@ module ssp_p1a_top (
         .cen_gate_n (z_cen_gate),
         .cpu_cen (cpu_cen),
         .freeze_req_n (z_busrq_n),
+        .z_reset_n (z_reset_n),
+        .tramp_arm (tramp_arm), .tramp_target (tramp_target),
+        .tramp_done (tramp_done),
         .busack_n (z_busack_n),
         .would_boundary (would_boundary),
         .t80_reg (t80_reg),
@@ -283,6 +290,29 @@ module ssp_p1a_top (
         if (sim_dbg && rst_n && u_dut.console_own != own_q)
             $display("[p1a-evt @%0d] console_own -> %b (parked=%b)",
                      tb_cycle, u_dut.console_own, u_dut.parked);
+    end
+    // R27 trampoline / reset-vent trace: FW writes and the guest-side
+    // handshake (CTRL, TRAMP_ADDR) -- widx 0x01 / 0x02 (SSP_RIDX_CTRL/TRAMP_ADDR)
+    reg zrst_q, tarm_q, tdone_q;
+    always @(posedge clk) begin
+        zrst_q <= z_reset_n;  tarm_q <= tramp_arm;  tdone_q <= tramp_done;
+        if (sim_dbg && rst_n) begin
+            if (u_dut.u_bridge.wr_fire && u_dut.u_bridge.widx == 10'h001)
+                $display("[p1a-ctrl @%0d] CTRL <= %03x (mask %b)", tb_cycle,
+                         u_dut.u_bridge.mem_wdata[9:0], u_dut.u_bridge.mem_wmask);
+            if (u_dut.u_bridge.wr_fire && u_dut.u_bridge.widx == 10'h002)
+                $display("[p1a-ctrl @%0d] TRAMP_ADDR <= %04x", tb_cycle,
+                         u_dut.u_bridge.mem_wdata[15:0]);
+            if (z_reset_n !== zrst_q)
+                $display("[p1a-go   @%0d] z_reset_n -> %b (guest pc=%04x)",
+                         tb_cycle, z_reset_n, u_guest.pc);
+            if (tramp_arm !== tarm_q)
+                $display("[p1a-go   @%0d] tramp_arm -> %b target=%04x", tb_cycle,
+                         tramp_arm, tramp_target);
+            if (tramp_done)
+                $display("[p1a-go   @%0d] tramp_done (guest pc=%04x)", tb_cycle,
+                         u_guest.pc);
+        end
     end
     // RX FIFO + kernel read probes
     reg popd1;

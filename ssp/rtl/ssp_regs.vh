@@ -11,7 +11,7 @@
 `define SSP_HI_ID_REV        27          // field high index
 `define SSP_LO_ID_REV        0          // field low index
 
-`define SSP_CTRL             32'h20000004  // RW reset 32'h00000020 | park/hold/trampoline/escape enables; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
+`define SSP_CTRL             32'h20000004  // RW reset 32'h00000020 | park/hold/trampoline/escape enables; Z_RST_N: set = assert guest CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the guest reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the guest parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
 `define SSP_RIDX_CTRL         10'h001      // word index (offset/4)
 `define SSP_CTRL_RESET 32'h00000020          // reset value
 `define SSP_CTRL_RESET_10 10'h20     // reset, 10-bit sized
@@ -32,7 +32,7 @@
 `define SSP_CTRL_PANEL_LOCK     32'h00000200  // 9:9
 `define SSP_BIT_CTRL_PANEL_LOCK 9         // bit index
 
-`define SSP_TRAMP_ADDR       32'h20000008  // RW reset 32'h00000000 | G aaaa / START trampoline target
+`define SSP_TRAMP_ADDR       32'h20000008  // RW reset 32'h00000000 | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a guest reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02)
 `define SSP_RIDX_TRAMP_ADDR   10'h002      // word index (offset/4)
 `define SSP_TRAMP_ADDR_RESET 32'h00000000          // reset value
 `define SSP_TRAMP_ADDR_RESET_16 16'h0     // reset, 16-bit sized

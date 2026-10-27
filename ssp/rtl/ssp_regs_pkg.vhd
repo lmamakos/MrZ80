@@ -10,7 +10,7 @@ package ssp_regs_pkg is
     constant C_SSP_ID             : natural := 536870912;  -- 0x20000000 R | bridge ID 0x4D52_5Axx; rev-stamped
     constant C_SSP_ID_REV          : natural range 0 to 31 := 27;  -- field 27:0
 
-    constant C_SSP_CTRL           : natural := 536870916;  -- 0x20000004 RW | park/hold/trampoline/escape enables; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
+    constant C_SSP_CTRL           : natural := 536870916;  -- 0x20000004 RW | park/hold/trampoline/escape enables; Z_RST_N: set = assert guest CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the guest reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the guest parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
     constant C_SSP_CTRL_Z_RST_N      : natural range 0 to 31 := 0;  -- field 0:0
     constant C_SSP_CTRL_Z_BUSRQ_N    : natural range 0 to 31 := 1;  -- field 1:1
     constant C_SSP_CTRL_Z_WAIT_N     : natural range 0 to 31 := 2;  -- field 2:2
@@ -20,7 +20,7 @@ package ssp_regs_pkg is
     constant C_SSP_CTRL_CONSOLE_OWN  : natural range 0 to 31 := 8;  -- field 8:8
     constant C_SSP_CTRL_PANEL_LOCK   : natural range 0 to 31 := 9;  -- field 9:9
 
-    constant C_SSP_TRAMP_ADDR     : natural := 536870920;  -- 0x20000008 RW | G aaaa / START trampoline target
+    constant C_SSP_TRAMP_ADDR     : natural := 536870920;  -- 0x20000008 RW | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a guest reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02)
     constant C_SSP_TRAMP_ADDR_ADDR         : natural range 0 to 31 := 15;  -- field 15:0
 
     constant C_SSP_STATUS         : natural := 536870924;  -- 0x2000000C R | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25)

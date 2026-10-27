@@ -1,7 +1,7 @@
 # SSP Hand-off — current state and how to proceed
 
 Date: 2026-10-27 · Branch `r24-p1a` (unpushed; `main` = `origin/main` =
-`b12e7aa` R23) · Last design round: **R27** · Phase: **P1a ("first light")**,
+`b12e7aa` R23) · Last design round: **R28** · Phase: **P1a ("first light")**,
 simulation lane green, hardware integration not started.
 
 This document is for the next agent picking up the System Support Processor
@@ -33,8 +33,8 @@ theories) are in git history; the design-relevant parts were logged in
 | P0 (core bake-off) | Closed R23: **FemtoRV32-gracilis** selected (D-37), `ADDR_WIDTH=30` (D-34). picorv32 kept vendored as fallback. Both in `Components/RISCV/` (provenance in `PROVENANCE.md`) |
 | Firmware base | Mecrisp-Quintus 1.1.2a port in `ssp/fw/` (RAM dictionary, no flash, D-32). Kernel source referenced in place from `~/mecrisp-quintus` (GPLv3; compliance vehicle per H-3/R16). Build: `cd ssp/fw && make` → `ssp/fw/build/mecrisp-ssp.hex` (build dir is git-ignored) |
 | Register map | `ssp/regs/ssp_regs.csv` is canonical (72 regs / 138 fields). `make -C sim regmap` regenerates `ssp/rtl/ssp_regs.vh`, `ssp/rtl/ssp_regs_pkg.vhd`, `ssp/fw/ssp-regs.fs`, `doc/SSP_REGS.md`; `regmap-check` fails on drift (R-45) |
-| P1a RTL (written, sim-verified at RV side) | `ssp/rtl/ssp_top.v` (core + MROM/DTCM + decoder + bridge + UART + console mux), `ssp_bridge.v` (P1a registers, park controller, D-30 micro-op sequencer for FW mem/IO kicks, WDG×2, `TICK_US`), `ssp_uart.v` (8N1, RX FIFO 8, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` (D-26 mux, not yet instantiated anywhere) |
-| T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + FREEZE gate (BusAck only when next state is M1; prefix-gated). In `MicrocomputerZ80CPM.vhd` the gate is **tied off** (`FREEZE_req_n => '1'`, `n_BUSRQ <= '1'`) — zero behaviour change. Regression benches passed at R25 (run.sh 115/0, cpuregs 8/8, ixmin 10/10, ixstack, run_forth) |
+| P1a RTL (written, sim-verified at RV side) | `ssp/rtl/ssp_top.v` (core + MROM/DTCM + decoder + bridge + UART + console mux), `ssp_bridge.v` (P1a registers, park controller, D-30 micro-op sequencer for FW mem/IO kicks, WDG×2, `TICK_US`), `ssp_uart.v` (8N1, RX FIFO 8, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` (D-26 mux, not yet instantiated anywhere), **`ssp_tramp.vhd` (R28: guest reset vent + reset-vector `JP aaaa` injector for `G aaaa`; verified on the real T80, not yet instantiated in the CPM core)** |
+| T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + FREEZE gate (BusAck only when next state is M1; prefix-gated). In `MicrocomputerZ80CPM.vhd` the gate is **tied off** (`n_BUSRQ <= '1'`; `FREEZE_req_n => '1'` is a dead port) — zero behaviour change. Regression benches passed at R25 (run.sh 115/0, cpuregs 8/8, ixmin 10/10, ixstack, run_forth) |
 | P1a Verilator lane | `make -C sim p1a` → real `ssp_top` + behavioural Z80 (`sim/ssp/z80_bfm.v`) + pin-level serial. **REPL green (R26)**: escape → park → console hand-over → Mecrisp evaluates input (`1 2 + . cr` → `3 ok.`; `q` → `q not found.`) |
 | Hygiene | Build dirs and waveform dumps untracked and ignored; history purged (old→new hashes: `513a539`→`9ef7346`, `ba6cc92`→`d3a8b33`, `07a4ee9`→`12ad50b`) |
 
@@ -43,8 +43,9 @@ theories) are in git history; the design-relevant parts were logged in
 - Monitor application FW (`ssp/fw/apps/monitor.fs`) — the P1a command set.
 - `sim/ssp/p1a_dictbuild.sh`, `sim/ssp/p1a_smoke.sh` — the Makefile targets
   `dict-p1a` / `smoke-p1a` already call them and currently fail.
-- GHDL integration benches (`tb_integ_park` R-40, `tb_integ_mux` R-42,
-  `tb_ssp_esc` R-43) — nothing exercises the real T80 FREEZE gate yet.
+- GHDL integration benches `tb_integ_park` (R-40), `tb_integ_mux` (R-42) —
+  the real T80 FREEZE gate is only exercised indirectly (by `tb_tramp`'s
+  park cases) so far.
 - Synthesis: no SSP file is in `MrZ80.qsf`; the synthesis RAM wrapper lives
   only in `bakeoff/`; no factory-ROM init path for Quartus.
 - Top-level integration (`MicrocomputerZ80CPM.vhd`, `MrZ80.sv`).
@@ -66,6 +67,25 @@ theories) are in git history; the design-relevant parts were logged in
 3. **Harness** (`tb_p1a_main.cpp`): models an operator in two steps (first
    byte — the escape — at `+RXAT`, remaining bytes once the monitor's output
    has been quiet for 100k cycles); `+ECHO=0` fixed.
+
+### 1.4 R28: `G aaaa` hardware (done; design in `SSP_DESIGN.md` §7.4 / §17 R28)
+
+- **`ssp/rtl/ssp_tramp.vhd`**: guest-CPU-only reset vent (release stretched
+  to >= 8 `cpu_cen`) + reset-vector injector (`C3 lo hi` on the first three
+  reads at `$0000..$0002`, primed only if `TRAMP_EN` is set *during* reset),
+  `done` pulse -> bridge hardware-clears `CTRL.TRAMP_EN`.
+- **Bridge/top:** ports `tramp_arm`, `tramp_target`, `tramp_done`.
+- **Tests:** `make -C sim tramp` (GHDL, real T80s, 176 checks, mutation-tested)
+  and `make -C sim tramp-p1a` (firmware-side handshake from the Mecrisp REPL:
+  `G $0200`, plain reset -> `$0100`, park-at-target `$0300`).
+- **Bug found and fixed:** the bridge used lane-0 write data for *every* byte
+  lane, so any 32-bit store to a multi-byte register was wrong (TRAMP_ADDR,
+  CTRL bits 9:8, MEM_ADDR, AR, BPn, ...). All 20 lane lines now use `w1/w2/w3`.
+  **Any new multi-byte register must follow that pattern.**
+- **Finding:** `FREEZE_req_n` is unused in `T80.vhd`; the park request is
+  `BUSRQ_n` (gated inside the T80 by `freeze_ok`). See step 4.
+- BFM: now resets like a T80 (PC=0, BusAck dropped), executes a real `JP`,
+  and grants a freeze with PC = next instruction.
 
 ---
 
@@ -117,16 +137,27 @@ smoke and dictionary-build scripts.
    write a small dedicated command loop entered on escape. The design's ODT
    protocol (§10.1: `.` prompt, uppercase responses) suggests the latter;
    choose and record it.
-2. **Trampoline RTL for `G aaaa` (moved from P1b to P1a by D-39).** Only
-   the `TRAMP_ADDR` register and `CTRL.TRAMP_EN` bit exist in
-   `ssp_bridge.v`; the mechanism does not. Per D-02 / `SSP_DESIGN.md` §7.4:
-   reset-vent the guest, then substitute `C3 lo hi` (`JP aaaa`) on
-   `cpu_din` for the opcode fetches at the reset vector, then release.
-   This needs a data-mux over the guest's `cpuDataIn` (a new `ssp_top`
-   output plus a mux at the CPM boundary, next to `z80_bus_mux`), and the
-   BFM must model it (reset, fetch from `0000`, honour the substituted
-   bytes). Read §7.4 and OQ-05 (breakpoints at `$0000–$0002` during the
-   injection window) first.
+2. **`G aaaa` — hardware is DONE (R28); the monitor word remains.** Use the
+   register-level recipe proven by `sim/ssp/p1a_tramp.sh` (all writes are
+   32-bit stores of full values; keep bit 5 `ESC_BREAK_EN` or the escape is
+   disabled; do NOT read-modify-write `CTRL` after the injection completes —
+   hardware clears bit 4 and a stale RMW would re-arm):
+
+   ```
+   \ G aaaa  (guest parked, console owned: CTRL = $122)
+   aaaa  SSP_TRAMP_ADDR !            \ target
+   $133  SSP_CTRL !                  \ arm + vent: TRAMP_EN|hold|own|esc|Z_RST_N
+   $030  SSP_CTRL !                  \ release reset, drop hold, return console
+   \ plain G (no address):  $020 SSP_CTRL !   (never injects)
+   \ "set PC, stay parked": $132 SSP_CTRL !   (reset released, hold+own kept;
+   \    guest executes the injected JP and parks AT aaaa; console stays)
+   ```
+   After the `$030` write the monitor is muted (guest owns the console), so
+   print any "going to aaaa" text *before* it. The T80 does not grant the
+   park until an instruction boundary; the 8-`cpu_cen` vent is enforced in
+   hardware, so no FW delay is needed between the two `CTRL` writes (the
+   p1a lane has ~100k cycles between them anyway). OQ-05 (a breakpoint inside
+   the `$0000..$0002` window) is a P2 concern: no BP logic exists yet.
 3. **Print on escape, not at boot.** A banner printed while the guest owns
    the console is lost. Have the monitor wait for `STATUS.FW_CONSOLE_OK`
    (bit 13) and print its banner/prompt when it gains the console. The
@@ -162,15 +193,18 @@ tied off) and R-23 demonstrated on the p1a lane; `lint-ssp`,
 
 **Goal:** prove the Z80-side RTL with the real T80, MMU and SDRAM client
 FSM — the BFM in step 1 does **not** model the T80 FREEZE gate.
+`sim/tb_tramp.vhd` (R28) is a working template: real `T80s` in the production
+configuration, `cpu_cen` 1-of-5, a protected-type memory and read-cycle log, a
+wait-state generator, and park/BusAck helpers.
 
 GHDL cannot read Verilog (D-33), so these benches drive the bridge-side
-signals (`FREEZE_req_n`, engine master inputs) from a small VHDL stimulus
+signals (`BUSRQ_n` park request, engine master inputs) from a small VHDL stimulus
 model instead of `ssp_top`. Follow the existing runner pattern
 (`sim/run_*.sh`, `ghdl --std=08 -fsynopsys --workdir=/tmp/<name>`; payloads
 assembled with `tools/z80asm.sh`).
 
 1. **`sim/tb_integ_park.vhd` + `sim/run_integ_park.sh` (R-40):** assert
-   `FREEZE_req_n` at random points across a directed instruction mix — DD/FD/
+   `BUSRQ_n` at random points across a directed instruction mix — DD/FD/
    CB/ED prefixes, DDCB-indexed bit ops, LDIR/OTIR, HALT, EI + interrupt
    shadow, IM2 acknowledge. Check every park lands with `would_boundary`
    true and the snapshot PC equals the next instruction. Start from the
@@ -207,7 +241,7 @@ assembled with `tools/z80asm.sh`).
    an issue (owner): the source is always available.
 3. **`MrZ80.qsf`:** add `VERILOG_FILE` entries for `ssp_top.v`,
    `ssp_bridge.v`, `ssp_uart.v`, `Components/RISCV/femtorv32_gracilis.v`;
-   `VHDL_FILE` for `ssp_sdp_ram.vhd`, `z80_bus_mux.vhd`,
+   `VHDL_FILE` for `ssp_sdp_ram.vhd`, `z80_bus_mux.vhd`, `ssp_tramp.vhd`,
    `ssp_regs_pkg.vhd`; a `SEARCH_PATH` for `ssp/rtl` (for
    `` `include "ssp_regs.vh" ``). Per `AGENTS.md`, run Analysis & Synthesis
    after `.qsf` changes. Gracilis has file-scope `` `define``s (§7.1) —
@@ -227,9 +261,19 @@ monitor-absent).
      MREQ/IORQ/RD/WR, `mrd_t1`, `M1_n`); export the engine-master ports and
      T80 status (`busak_n`, `m1_n`, `halt_n`, `would_boundary`, MC/TS/ALT,
      `REG`) through new entity ports.
-   - Replace the tie-offs: `FREEZE_req_n => '1'` (~line 407) and
-     `n_BUSRQ <= '1'` (~line 416) with the SSP request; `cpu_wait_n` is at
-     ~475.
+   - Park request: drive `n_BUSRQ` (~line 416, currently `'1'`) from the
+     bridge's `z_busrq_n`. **`FREEZE_req_n` (~line 407) is a dead port in the
+     T80 — leave it `'1'`.** `cpu_wait_n` is at ~475.
+   - Instantiate `ssp_tramp` (R28): `sys_rst_n` = `reset_n_internal`,
+     `z_reset_n` = bridge, `t80_rst_n` -> the T80's `reset_n` (replacing
+     `reset_n => reset_n_internal`, ~line 387), `cen` = **ungated** `cpu_cen`,
+     `arm`/`target`/`done` to the bridge, `addr`/`mreq_n`/`rd_n` = the guest
+     nets *after* `z80_bus_mux`, `din_in` = today's `cpuDataIn` mux output
+     (~line 965) and `din_out` -> the T80 `di`. Decide whether the capture
+     chain's bus-data view (`fpStaticDataBus`) should see the raw or the
+     injected byte (injected is more truthful). With the SSP idle the module
+     is transparent: `t80_rst_n = reset_n_internal` and `din_out = din_in`
+     (confirm with the golden regressions).
    - Update `sim/MicrocomputerZ80CPM_sim.vhd` in the same change
      (`sim/check_sync.sh`; recipe and gotcha in §5).
 2. **`MrZ80.sv`** (core shell):
@@ -296,6 +340,15 @@ rest of the command set. Bridge board design (OQ-09) runs in parallel.
   must feed `q_reg` combinationally.
 - **Verilog `$display` goes to stdout**, interleaved with console bytes;
   harness messages go to stderr. Separate them when reading output.
+- **Bridge register lanes (R28):** byte lane *n* of a multi-byte register
+  takes `mem_wdata[8n+7:8n]` (`w1/w2/w3`), never `w`. A test that writes
+  such a register with `sw` and reads it back is the only thing that catches
+  this; `p1a_tramp.sh` covers TRAMP_ADDR and CTRL.
+- **Mecrisp line latency:** ~170k cycles per input line (each token is a full
+  dictionary search). Scripts must pace input (`+RXGAP=30000`, 8-deep RX FIFO)
+  and put an in-band pause (byte `0x01`, `+PAUSE=<cycles>`, default 400000)
+  before an escape that follows a command, or the late-executing line
+  overwrites the escape's hardware hand-over (hold/own).
 - **`+DBG` is noisy:** the `p1a-mt3` probe in `p1a_sim_top.v` prints on
   every cycle while the monitor TX sits at the end of a byte (thousands of
   lines). Redirect to a file and grep; consider tightening that probe.
@@ -333,6 +386,8 @@ make -C sim smoke-qemu dict-qemu
 make -C sim bench-gracilis        # cycle benchmarks (R22)
 make -C sim p1a                   # P1a lane -> sim/ssp/obj_p1a/ssp_p1a
 make -C sim p1a-vcd               # traced twin, +VCD -> sim/ssp/p1a.vcd
+make -C sim tramp                 # G aaaa: ssp_tramp vs the REAL T80 (GHDL, 176 checks)
+make -C sim tramp-p1a             # G aaaa: FW-side handshake on the p1a lane
 
 # P1a interactive run (escape = ^] = 0x1d)
 printf '\x1d1 2 + . cr\r' | ./sim/ssp/obj_p1a/ssp_p1a \
@@ -354,7 +409,7 @@ make install                      # scp rbf to host 'mister'
 **p1a plusargs.** Harness (`tb_p1a_main.cpp`): `+MAXCYCLES=` `+IDLE=`
 (stop after this many cycles of TX silence once input is exhausted)
 `+RXAT=` (send the first input byte at this cycle; default 400000)
-`+ECHO=0/1` `+VCD` (traced build only); env `TXTRACE=1` stamps each TX
+`+ECHO=0/1` `+PAUSE=` (length of an in-band `0x01` input pause) `+VCD` (traced build only); env `TXTRACE=1` stamps each TX
 byte. RTL (`p1a_sim_top.v`): `+ROM=` `+DUMP=` `+OSD_OK=0/1` `+OM=0/1`
 `+WAIT` (engine wait-state injection) `+RVRST` `+RVRST_AT=` `+NOGUEST`
 `+RXGAP=` `+DBG` (event traces on stdout: RX bytes, escape, ownership,
@@ -499,8 +554,8 @@ overrun), CTRL `+0x12C`.
 
 ## 9. History pointer
 
-Commit trail on `r24-p1a` (newest first): R27 owner rulings D-38…D-40
-(this commit) · `e7e23be` R26 TX-mux erratum + handoff rewrite · `8727a10` AGENTS.md what-not-to-commit ·
+Commit trail on `r24-p1a` (newest first): R28 `G aaaa` hardware (this
+commit) · `54d6f42`/`f28289a` R27 owner rulings D-38…D-40 · `e7e23be` R26 TX-mux erratum + handoff rewrite · `8727a10` AGENTS.md what-not-to-commit ·
 `4de3ae1` handoff purge record · `9391356`/`aed8f48` untrack VCD / obj dirs
 · `12ad50b` R26 REPL green · `d3a8b33` rx_rnext wiring · `9ef7346` P1a lane
 WIP · `e94018b` R25 · then `main`: `b12e7aa` R23 · `864903c` R22 ·

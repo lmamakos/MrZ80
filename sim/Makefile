@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a tramp tramp-p1a
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -113,6 +113,15 @@ p1a-vcd:
 	  ssp/rtl/ssp_top.v ssp/rtl/ssp_bridge.v ssp/rtl/ssp_uart.v \
 	  sim/ssp/ssp_sdp_ram.v Components/RISCV/femtorv32_gracilis.v \
 	  -Mdir sim/ssp/obj_p1adbg
+
+# "G aaaa" (D-02/D-39): reset vent + reset-vector JP injector.
+#   tramp      : ssp_tramp.vhd vs the REAL T80s (GHDL, sim/tb_tramp.vhd)
+#   tramp-p1a  : bridge <-> FW <-> BFM handshake from the Mecrisp REPL
+tramp:
+	$(ROOT)/sim/run_tramp.sh
+
+tramp-p1a: p1a
+	$(ROOT)/sim/ssp/p1a_tramp.sh
 
 # P1a dictionary build (monitor.fs into the p1a model; separate artifact
 # name space -- P0 goldens untouched)
