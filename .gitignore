@@ -17,8 +17,8 @@ __pycache__/
 # AI assistant session transcripts
 session-ses_*.md
 .Xauthority
-sim/ssp/obj_dir/
-sim/ssp/obj_grac/
+# Verilator build/working dirs (obj_dir, obj_grac, obj_p1a, obj_p1adbg, ...)
+sim/ssp/obj*/
 bakeoff/db/
 bakeoff/incremental_db/
 bakeoff/output_picorv32/
