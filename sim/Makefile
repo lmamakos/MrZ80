@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park cycle-golden engine-golden
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park integ-mux cycle-golden engine-golden
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -126,6 +126,10 @@ tramp-p1a: p1a
 # R-40: every SSP park lands on an instruction boundary (GHDL, real T80s)
 integ-park:
 	$(ROOT)/sim/run_integ_park.sh
+
+# R-42: z80_bus_mux + real T80s + engine model (GHDL)
+integ-mux:
+	$(ROOT)/sim/run_integ_mux.sh
 
 # R-42: SSP engine waveform == real T80 waveform.  cycle-golden captures the
 # T80's data cycles (GHDL) and checks the committed sim/ssp/golden_cycles.txt;

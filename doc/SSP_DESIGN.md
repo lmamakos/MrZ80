@@ -1336,7 +1336,7 @@ New:
 | R-39 | MMU ops full-function with FW held in reset (engine-only: tap exam + deposit) | `tb_fw_panel` |
 | R-40 | `[R15]` **Boundary parking** (D-25): every STOP/escape/STEP-INSN park lands on `insn_end` (`at_boundary`=1) across a directed instruction mix incl. DD/FD/CB/ED prefixes, DDCB-indexed bit ops, LDIR/OTIR, HALT, EI+INT shadow, IM2 acknowledge; snapshot PC == next instruction | `tb_integ_park` (integration level) |
 | R-41 | `[R15]` **BP self-loop injection** (D-25/OQ-23): stop-before-execute ⇒ PC = BP addr, AF/regs unchanged, R +1 only; resume executes the real instruction once | `tb_integ_bp` |
-| R-42 | `[R15]` **Bus mux fidelity** (D-26): engine reads/writes to SDRAM, BRAM and I/O produce the same `MRD_T1`/strobe/wait waveforms as T80 cycles (golden compare); engine honours MMU + SDRAM waits; mux select never flips without `BusAck` | `tb_integ_mux` |
+| R-42 | `[R15]` **Bus mux fidelity** (D-26): engine reads/writes to SDRAM, BRAM and I/O produce the same `MRD_T1`/strobe/wait waveforms as T80 cycles (golden compare); engine honours MMU + SDRAM waits; mux select never flips without `BusAck` | `tb_integ_mux` + `tb_cycle_golden` + `p1a_engine_golden.sh` **[done R31]** |
 | R-43 | `[R15]` **Serial escape** (D-14 rev): `OM` Off ⇒ every byte incl. `ESC_CHAR` reaches the guest bit-transparently, no park; `OM` On ⇒ `ESC_CHAR` parks at boundary, console handed over, byte not delivered to guest; other bytes pass; `ESC_CHAR` reprogrammable; FW disable honoured | `tb_ssp_esc` |
 | R-44 | `[R15]` Profile-7 interlock (D-31): guest writes to profile 7 dropped, profiles 0–6 unaffected; SSP writes land | `tb_fp_led` |
 | R-45 | `[R15]` Register-map consistency (D-29): generated `.vh`/`.fs`/Markdown match the CSV; build fails on drift | `make regmap-check` |
@@ -2054,3 +2054,56 @@ C escape consumed with OM on, D idle at the prompt 0.8 s without WDG_PARK
 expiry. Mutation-tested: deposit not advancing, `G aaaa` not arming, plain G
 leaving TRAMP_EN set, BFM writes dropped, kernel not kicking the watchdog --
 each caught.
+
+R31 **GHDL integration benches on the real T80 (R-40, R-42); three engine bugs
+found and fixed (2026-10-27)**.
+(1) `sim/tb_integ_park.vhd` (R-40, `make -C sim integ-park`): production-config
+T80s runs a directed mix (DD/FD, CB, DDCB/FDCB, ED incl. the custom PUSHIX/POPIX,
+LDIR/LDDR/CPIR/CPDR/INIR/OTIR, DJNZ, CALL/RET, RST, EX (SP), EXX, I/O, EI shadow,
+IM2 interrupts, HALT) under random BUSRQ requests and holds, with and without wait
+states. The oracle is an unparked reference run: REG at every instruction start,
+found by a bus-level prefix state machine independent of the T80's own `freeze_ok`.
+A grant after n starts must show REG == reference[n+1] and `would_boundary`=1, REG
+and bus idle for the hold; final REG and memory hash equal the reference. At an
+interrupt-acknowledge boundary the reference start has already cleared IFF1/IFF2
+(the T80 takes the interrupt on the same T_Res edge) while a park there is before the
+acknowledge, so only those boundaries are compared without the IFF bits (and the
+bench checks IFF is still 11). HALT parks anywhere, PC = HALT+1; an INT raised while
+parked is acknowledged only after the release. ~2400 grants, 9036 checks, 4 s.
+Mutation-tested on `freeze_ok` (listed in the bench header): catches vanilla
+any-T_Res grants, a missing prefix gate, DJNZ without the zero test, "always" and an
+extra MCycle=1 boundary; survivors are redundant with the Prefix gate in the
+production configuration (NextIs_XY_Fetch, MCycle/="111", the Mode-1 "110"
+exclusion) or merely coarser (No_BTR) -- recorded, not defects. Pitfall: the T80
+register file is not reset, so the program defines every register (INITOK) and the
+bench compares from there.
+(2) **R-42 waveform golden compare.** The bridge is Verilog and GHDL cannot read it
+(D-33), so `sim/tb_cycle_golden.vhd` captures the REAL T80's four data-cycle shapes
+(memory/I-O, read/write; with and without one wait state), one vector per T-state
+(MREQ IORQ RD WR M1 MRD_T1, sampled at each cpu_cen edge), into the committed
+`sim/ssp/golden_cycles.txt` (`run_cycle_golden.sh` flags drift, `--update` rewrites
+it), and `sim/ssp/p1a_engine_golden.sh` replays the same eight cases through the
+real bridge engine on the p1a lane (`+ENGLOG`, `+WAIT`) and compares line for line.
+It found: memory strobes held through T3 (T80: T2 only), I/O read with IORQ alone in
+T2 and RD alone in T3, and **the I/O write never asserted WR_n** (the IO_WR primitive
+was a no-op). `ssp_bridge.v` fixed: all four cycle types assert MREQ/IORQ with RD/WR in
+T2 and release at the T2 exit (the wait-sensed edge), T3 is bus-hold only. (The R25
+claim "T80s-literal" was not.) The BFM `+WAIT` now injects the same stimulus as the
+golden (one wait state in T2 of every engine data cycle) and the p1a lane flags any
+BUSRQ release during an engine cycle (`[p1a-ERR]`).
+(3) `sim/tb_integ_mux.vhd` (`make -C sim integ-mux`): `z80_bus_mux` + real T80s + an
+engine model (the bridge FSM transcribed; its pin waveform is checked against the
+golden file, so bridge == golden == T80) + a fabric model that sees only the mux
+outputs. Per clock: running = T80 nets, parked/idle = strobes and MRD_T1 idle, engine
+cycle = engine nets, select never without BusAck (hierarchical `sel_eng`), select back
+on the T80 once the engine is done; plus a directed protocol-violation test (engine
+claims the bus before BusAck). At the end the T80 program (120-step running sum with
+memory writes/reads and OUTs) is exact, memory-write and OUT cycle counts are exact
+(no lost/doubled/glitched strobe at any select change) and every engine access lands.
+Four phases: boundary parking and FREEZE_any (off-boundary grants, the P1b step-mode
+shape), each with and without wait states. 250k checks. Mutation-tested (listed in
+the bench header); the strobe idle-gate in the mux survives because a T80 grant
+always finds the strobes already released -- kept as defence in depth.
+(4) Not done: R-42's "reads/writes to SDRAM, BRAM and I/O ... engine honours MMU +
+SDRAM waits" against the real MMU/SDRAM client FSM needs the mux instantiated in the
+CPM core (step 4); the bench shape and the golden file are ready for it.

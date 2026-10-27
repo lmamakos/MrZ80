@@ -293,6 +293,12 @@ module ssp_p1a_top (
             $display("[p1a-evt @%0d] console_own -> %b (parked=%b)",
                      tb_cycle, u_dut.console_own, u_dut.parked);
     end
+    // Protocol: the park request must be held until the engine's cycle is done
+    // (R25: no truncated engine access under a released park).  Always on.
+    always @(posedge clk)
+        if (rst_n && z_busrq_n && eng_own)
+            $display("[p1a-ERR @%0d] BUSRQ released during an engine cycle", tb_cycle);
+
     // R-42: engine data-cycle waveform, one vector per T-state sampled at the END
     // of the T-state (each cpu_cen edge, pre-edge values), the format of
     // sim/ssp/golden_cycles.txt:  MREQ IORQ RD WR M1 MRD_T1 (1 = asserted).

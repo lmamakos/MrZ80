@@ -1,7 +1,7 @@
 # SSP Hand-off — current state and how to proceed
 
 Date: 2026-10-27 · Branch `r24-p1a` (unpushed; `main` = `origin/main` =
-`b12e7aa` R23) · Last design round: **R30** · Phase: **P1a ("first light")**,
+`b12e7aa` R23) · Last design round: **R31** · Phase: **P1a ("first light")**,
 simulation lane green, hardware integration not started.
 
 This document is for the next agent picking up the System Support Processor
@@ -36,6 +36,7 @@ theories) are in git history; the design-relevant parts were logged in
 | P1a RTL (written, sim-verified at RV side) | `ssp/rtl/ssp_top.v` (core + MROM/DTCM + decoder + bridge + UART + console mux), `ssp_bridge.v` (P1a registers, park controller, D-30 micro-op sequencer for FW mem/IO kicks, WDG×2, `TICK_US`), `ssp_uart.v` (8N1, RX FIFO 8, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` (D-26 mux, not yet instantiated anywhere), **`ssp_tramp.vhd` (R28: guest reset vent + reset-vector `JP aaaa` injector for `G aaaa`; verified on the real T80, not yet instantiated in the CPM core)** |
 | T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + FREEZE gate (BusAck only when next state is M1; prefix-gated). In `MicrocomputerZ80CPM.vhd` the gate is **tied off** (`n_BUSRQ <= '1'`; `FREEZE_req_n => '1'` is a dead port) — zero behaviour change. Regression benches passed at R25 (run.sh 115/0, cpuregs 8/8, ixmin 10/10, ixstack, run_forth) |
 | Monitor FW (R30) | `ssp/fw/apps/monitor.fs`: `E` `D` `G aaaa` `G` `R` `F` `?` (D-39), dedicated command loop, `init` runs it. `make -C sim dict-p1a` builds the dictionary artifact (`ssp/fw/build/mecrisp-ssp-p1a-app.hex`), `make -C sim smoke-p1a` runs the operator session + OM-off/on + idle-watchdog checks. Kernel `serial_key` kicks `WDG_PARK` while waiting |
+| GHDL integration benches (R31) | `make -C sim integ-park` (R-40: every park on an instruction boundary vs an unparked reference), `integ-mux` (R-42: mux + real T80 + engine model), `cycle-golden` + `engine-golden` (engine strobe waveform == real T80's, per T-state, committed `sim/ssp/golden_cycles.txt`). Fixed in `ssp_bridge.v`: strobes were held through T3, I/O read split IORQ/RD, **I/O write had no WR_n** |
 | P1a Verilator lane | `make -C sim p1a` → real `ssp_top` + behavioural Z80 (`sim/ssp/z80_bfm.v`) + pin-level serial. **REPL green (R26)**: escape → park → console hand-over → Mecrisp evaluates input (`1 2 + . cr` → `3 ok.`; `q` → `q not found.`) |
 | Hygiene | Build dirs and waveform dumps untracked and ignored; history purged (old→new hashes: `513a539`→`9ef7346`, `ba6cc92`→`d3a8b33`, `07a4ee9`→`12ad50b`) |
 
@@ -44,9 +45,6 @@ theories) are in git history; the design-relevant parts were logged in
 - **RTL gap (owner decision):** WDG_PARK expiry only latches `park_dead_l`;
   D-13 says it also demotes the console and releases the FW hold
   (`SSP_DESIGN.md` R30 hazard 2). Not fixed.
-- GHDL integration benches `tb_integ_park` (R-40), `tb_integ_mux` (R-42) —
-  the real T80 FREEZE gate is only exercised indirectly (by `tb_tramp`'s
-  park cases) so far.
 - Synthesis: no SSP file is in `MrZ80.qsf`; the synthesis RAM wrapper lives
   only in `bakeoff/`; no factory-ROM init path for Quartus.
 - Top-level integration (`MicrocomputerZ80CPM.vhd`, `MrZ80.sv`).
@@ -187,7 +185,13 @@ smoke and dictionary-build scripts.
 tied off) and R-23 demonstrated on the p1a lane; `lint-ssp`,
 `smoke-gracilis`, `dict-gracilis` still PASS.
 
-### Step 2 — GHDL integration benches (real T80, VHDL side)
+### Step 2 — GHDL integration benches (real T80, VHDL side) — **DONE (R31)**
+
+*(Kept below for reference.)* Delivered: `tb_integ_park` (R-40),
+`tb_integ_mux` + the golden-waveform pair `tb_cycle_golden` / `p1a_engine_golden.sh`
+(R-42), which found and fixed three engine bugs (see `SSP_DESIGN.md` R31).
+**Still open for step 4:** R-42's "SDRAM/BRAM/MMU" half -- re-run `tb_integ_mux`'s
+engine cycles against the real fabric once the mux is in the CPM core.
 
 **Goal:** prove the Z80-side RTL with the real T80, MMU and SDRAM client
 FSM — the BFM in step 1 does **not** model the T80 FREEZE gate.
@@ -403,6 +407,8 @@ make -C sim tramp                 # G aaaa: ssp_tramp vs the REAL T80 (GHDL, 176
 make -C sim tramp-p1a             # G aaaa: FW-side handshake on the p1a lane
 make -C sim uart-fifo             # ssp_uart RX FIFO unit bench, depths 8 and 128 (iverilog)
 make -C sim dict-p1a smoke-p1a    # monitor dictionary build (~45 s) + operator-session smoke (~60 s)
+make -C sim integ-park integ-mux cycle-golden   # GHDL, real T80 (seconds each)
+make -C sim engine-golden         # real bridge engine vs the golden T80 waveforms
 
 # P1a interactive run (escape = ^] = 0x1d)
 printf '\x1d1 2 + . cr\r' | ./sim/ssp/obj_p1a/ssp_p1a \

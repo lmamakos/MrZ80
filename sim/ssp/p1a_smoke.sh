@@ -146,6 +146,9 @@ n_esc=$(grep -ac 'ESC matched' "$WORK/A.events.log")
 n_ban=$(grep -ac '^MRZ80 SSP MONITOR' "$WORK/A.norm.log")
 [ "$n_ban" -eq 4 ] && echo "  ok: banner on every escape (4)" || { echo "  FAIL: expected 4 banners, got $n_ban"; fail=1; }
 absent "no unknown words"                            'not found'
+if grep -aq 'p1a-ERR' "$WORK/A.events.log"; then
+  echo "  FAIL: BUSRQ released during an engine cycle"; fail=1
+else echo "  ok: BUSRQ held through every engine cycle"; fi
 grep -E 'bus_errs=[1-9]|rom_illegal=[1-9]' "$WORK/A.info.log" \
   && { echo "  FAIL: harness diagnostics flagged"; fail=1; }
 

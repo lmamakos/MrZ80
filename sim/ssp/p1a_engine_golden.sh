@@ -62,5 +62,9 @@ for variant in plain w1; do
   done
 done
 
+if grep -aq 'p1a-ERR' "$WORK"/*.console.log; then
+  echo "  FAIL: protocol violation reported by the lane (BUSRQ released during an engine cycle)"; fail=1
+else echo "  ok: BUSRQ held through every engine cycle"; fi
+
 [ $fail -eq 0 ] && echo "p1a_engine_golden: PASS" || echo "p1a_engine_golden: FAIL"
 exit $fail
