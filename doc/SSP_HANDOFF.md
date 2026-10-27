@@ -495,3 +495,28 @@ Findings:
 docs R24/R25 entries in SSP_DESIGN §17, OQ-22 CLOSED row, D-25 amendment
 (grant now gated INSIDE the T80; bridge asserts a level request only).
 Owner-pending: OQ-10, OQ-18.
+
+### §11-addendum (same day, final state before compaction)
+
+- `rx_rnext` port now fully wired (ssp_uart port decl + ssp_top instance
+  connect were missing — the silent-revert hazard strikes repeatedly: ALWAYS
+  grep-verify each edit lands). lint OK, p1a build OK.
+- Fresh run with fixed RTL: `tx=10 rx=12`, kernel boots ('M' banner byte at
+  @195757 via **bridge TXDATA write path — TX base works**), polls MMIO
+  offset 0x80 every 9 cyc, rx PUSH/POP never fire, ESC never evaluated.
+- **ROOT-CAUSE CANDIDATE (prime, unverified):** FW↔RTL console-base drift.
+  `ssp/fw/ssp-regs.fs` (generated from current CSV) places STATUS at
+  `$2000000C`, RX block at `$20000080+` — but the running
+  `mecrisp-ssp.hex` appears to poll/observe differently (observed reads at
+  0x…080 = RX_OVF region while STAT bit7 never gates it). VERIFY next
+  session: (1) what base/offsets does the RTL bridge decode (grep
+  ssp_bridge.v `addr[31:12]`/SSP_REG_*) vs CSV ($2000_0000) vs the hex's
+  actually-compiled constants; (2) rebuild FW hex fresh from current
+  ssp-regs.fs (`cd ssp/fw && make`; NOTE: hex currently predates the R25
+  STATUS widening — rebuild required regardless); (3) confirm uart RX byte
+  completion with a probe directly on ssp_uart rx_idle (PUSH=0 despite
+  clean tb waveforms => suspect `snac_rxd` 2FF-sync + level-lock interaction
+  or `uart_en`). Also note DBG $display goes to STDOUT (was confused with
+  TX earlier).
+- Work committed: `513a539` (branch r24-p1a) + one more commit for the
+  rx_rnext lint fix. Nothing pushed yet.

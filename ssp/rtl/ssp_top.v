@@ -249,6 +249,7 @@ module ssp_top (
         .tx_ready (uart_tx_ready), .rx_avail (uart_rx_avail),
         .rx_overrun (uart_rx_overrun),
         .rx_pop (uart_rx_pop), .rx_rdata (uart_rx_rdata),
+        .rx_rnext (uart_rx_rnext),
         .tx_wdata (uart_tx_wdata), .tx_wr (uart_tx_wr),
         .esc_char (uart_esc_char), .esc_eff (uart_esc_eff),
         .relay_en (uart_relay_en), .parked (parked),

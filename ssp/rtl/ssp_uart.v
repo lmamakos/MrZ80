@@ -64,7 +64,8 @@ module ssp_uart (
 
     // ---------------- events -----------------------------------------------
     output wire        esc_evt,          // 1-cycle: escape matched, guest ran
-    output reg         rx_push         // 1-cycle: byte pushed into RX FIFO
+    output reg         rx_push,        // 1-cycle: byte pushed into RX FIFO
+    output wire [7:0]  rx_rnext        // FIFO head valid at pop-launch time
 );
 
     // ------------------------------------------------ RX path ------------
