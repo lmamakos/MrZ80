@@ -2171,3 +2171,13 @@ Mutation-tested (see the bench header).  Bench lesson: the MMU reset map puts fr
 the block RAM page and frames 1..3 on SDRAM pages 1..3 (not block RAM everywhere).
 Remaining: Step 5, hardware first light (`make install`, then escape, `E`/`D`, `G`, OM-off
 transparency on the board).
+
+R34 **Console line ends (2026-10-27; first-light finding).** On hardware the monitor (and
+the Forth REPL) ended lines with a bare LF: the Mecrisp-Quintus `cr` word and kernel
+messages come from the `writeln` macro (`common/forth-core.s`), which appends CR only when
+the build defines `crlf`, and `ssp/fw/mecrisp-quintus-ssp.s` did not.  Fix (owner's
+diagnosis): `.equ crlf, 1` in the target file, as the thejas32 port does; no custom words
+in the monitor.  Note the macro emits LF then CR (`"\n\r"`), not CR LF; both characters are
+present, which is what a terminal needs.  Kernel and factory ROM changed: `ssp/fw/forth_rom.mif`
+regenerated (`make -C sim fw-rom`).  `p1a_smoke.sh` checks that every banner carries both
+characters.  Re-verified: smoke-p1a, tramp-p1a, smoke/dict stub (picorv32, gracilis), smoke/dict qemu.

@@ -27,6 +27,11 @@
 # so "erased" reads as all-zero -- NOT SPI-flash 0xFF.
 .equ erasedflashcontainszero, 1
 
+# Line ends: upstream's `crlf` switch makes `cr` and the kernel messages (the
+# `writeln` macro, common/forth-core.s) emit CR as well as LF, so the operator's
+# terminal need not translate a bare LF.  Same setting as the thejas32 port.
+.equ crlf, 1
+
 # softwaremultiply deliberately NOT set: both bake-off cores (picorv32
 # ENABLE_MUL, gracilis) implement the M extension in hardware.
 

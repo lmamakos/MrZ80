@@ -147,6 +147,13 @@ n_esc=$(grep -ac 'ESC matched' "$WORK/A.events.log")
 [ "$n_esc" -eq 4 ] && echo "  ok: four escapes matched" || { echo "  FAIL: expected 4 escapes, got $n_esc"; fail=1; }
 n_ban=$(grep -ac '^MRZ80 SSP MONITOR' "$WORK/A.norm.log")
 [ "$n_ban" -eq 4 ] && echo "  ok: banner on every escape (4)" || { echo "  FAIL: expected 4 banners, got $n_ban"; fail=1; }
+# monitor lines carry both CR and LF (kernel built with `crlf`: the writeln macro
+# emits LF then CR); a terminal that does not translate a bare LF must still work
+read -r n_crlf n_lf < <(python3 -c "
+import re, sys
+b = bytes(int(m.group(1), 16) for m in re.finditer(r'^\[tb-tx @[0-9]+\] byte ([0-9a-f]+) ', open('$WORK/A.events.log').read(), re.M))
+print(len(re.findall(rb'MRZ80 SSP MONITOR  \? = HELP(?:\r\n|\n\r)', b)), len(re.findall(rb'MRZ80 SSP MONITOR  \? = HELP(?!\r\n|\n\r)', b)))")
+[ "$n_crlf" -eq 4 ] && [ "$n_lf" -eq 0 ] && echo "  ok: monitor lines carry CR and LF" || { echo "  FAIL: banner CR LF count $n_crlf (want 4), bare-LF $n_lf (want 0)"; fail=1; }
 absent "no unknown words"                            'not found'
 if grep -aq 'p1a-ERR' "$WORK/A.events.log"; then
   echo "  FAIL: BUSRQ released during an engine cycle"; fail=1
