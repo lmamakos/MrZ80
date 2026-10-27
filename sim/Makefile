@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -122,6 +122,10 @@ tramp:
 
 tramp-p1a: p1a
 	$(ROOT)/sim/ssp/p1a_tramp.sh
+
+# R-40: every SSP park lands on an instruction boundary (GHDL, real T80s)
+integ-park:
+	$(ROOT)/sim/run_integ_park.sh
 
 # ssp_uart RX FIFO unit bench (iverilog, depth 8 and 128; D-41)
 uart-fifo:
