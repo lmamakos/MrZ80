@@ -19,6 +19,16 @@ session-ses_*.md
 .Xauthority
 # Verilator build/working dirs (obj_dir, obj_grac, obj_p1a, obj_p1adbg, ...)
 sim/ssp/obj*/
+
+# Simulation waveform/debug dumps (regenerable, often huge)
+*.vcd
+*.fst
+*.ghw
+*.lxt
+*.lxt2
+*.wlf
+*.vpd
+*.fsdb
 bakeoff/db/
 bakeoff/incremental_db/
 bakeoff/output_picorv32/
