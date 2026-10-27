@@ -293,6 +293,29 @@ module ssp_p1a_top (
             $display("[p1a-evt @%0d] console_own -> %b (parked=%b)",
                      tb_cycle, u_dut.console_own, u_dut.parked);
     end
+    // R-42: engine data-cycle waveform, one vector per T-state sampled at the END
+    // of the T-state (each cpu_cen edge, pre-edge values), the format of
+    // sim/ssp/golden_cycles.txt:  MREQ IORQ RD WR M1 MRD_T1 (1 = asserted).
+    // Printed as "[p1a-eng] v v v ..." when the engine releases the bus.
+    // (+ENGLOG; the sampling edge is the BFM's cpu_cen, the one the bridge
+    // engine FSM also advances on.)
+    wire sim_englog = $test$plusargs("ENGLOG");
+    string eng_line;
+    reg    eng_in;
+    initial begin eng_line = ""; eng_in = 1'b0; end
+    always @(posedge clk) begin
+        if (sim_englog && rst_n && cpu_cen) begin
+            if (eng_own) begin
+                eng_line = {eng_line, $sformatf(" %b%b%b%b%b%b",
+                    ~eng_mreq_n, ~eng_iorq_n, ~eng_rd_n, ~eng_wr_n, ~eng_m1_n,
+                    eng_mrd_t1)};
+                eng_in = 1'b1;
+            end else if (eng_in) begin
+                $display("[p1a-eng]%s", eng_line);
+                eng_line = "";  eng_in = 1'b0;
+            end
+        end
+    end
     // R30: WDG_PARK expiry (park held ~0.4 s with no WDG_PARK_KICK from the FW)
     reg pdead_q;
     always @(posedge clk) begin

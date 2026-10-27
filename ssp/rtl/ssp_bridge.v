@@ -295,12 +295,18 @@ module ssp_bridge (
     // FW-kick only (panel macro input joins P1b; simultaneity rule then:
     // panel wins, macros atomic).  Cycles are T80s-LITERAL (R25/H3,
     // production generics mode=1/t2write=1/iowait=0), advancing one T-state
-    // per cpu_cen pulse (D-26):
+    // per cpu_cen pulse (D-26).  R-42/R31: the waveform is the REAL T80's
+    // (sim/ssp/golden_cycles.txt, captured by sim/tb_cycle_golden.vhd and
+    // compared by sim/ssp/p1a_engine_golden.sh) -- all four cycle types have
+    // the same shape, strobes in T2 only:
     //   T1: address + MRD_T1 (mem reads); strobes inactive
-    //   T2 entry: MREQ_n/iorq_n + (read: RD_n mem | write: WR_n t2write)
-    //   T2 exit (wait-sensed): READ DATA CAPTURED (T80 DI_Reg discipline)
-    //   io read: RD_n asserted at T2 exit, held through T3 (single-T)
-    //   T3 exit: strobes release, ownership done
+    //   T2 entry: MREQ_n or IORQ_n, together with RD_n or WR_n
+    //   T2 exit (wait-sensed, T2 stretches while cpu_wait_n is low): READ
+    //     DATA CAPTURED (T80 DI_Reg discipline) and ALL strobes release
+    //   T3: bus still ours (address/data hold), no strobe; exit: ownership done
+    // (R31: before this the strobes stayed asserted through T3, an I/O read had
+    // IORQ without RD in T2 and RD alone in T3, and an I/O WRITE never asserted
+    // WR_n at all.)
     reg         q_valid, q_rnw, q_isio;
     reg  [15:0] q_addr;
     reg  [7:0]  q_wdata;
@@ -370,25 +376,19 @@ module ssp_bridge (
                   end
             2'd1: if (cpu_clk_en) begin                  // T1 -> T2 entry
                       eng_mrd_t1 <= 1'b0;
-                      if (q_isio) begin
-                          eng_iorq_n <= 1'b0;                  // IORQ T2..T3
-                      end else begin
-                          eng_mreq_n <= 1'b0;                  // MREQ T2..T3
-                          if (q_rnw) eng_rd_n <= 1'b0;         // RD  T2..T3
-                          else       eng_wr_n <= 1'b0;          // WR  T2..T3
-                      end
+                      if (q_isio) eng_iorq_n <= 1'b0;         // IORQ in T2
+                      else        eng_mreq_n <= 1'b0;         // MREQ in T2
+                      if (q_rnw)  eng_rd_n   <= 1'b0;         // RD   in T2
+                      else        eng_wr_n   <= 1'b0;         // WR   in T2 (t2write)
                       st <= 2'd2;
                   end
             2'd2: if (cpu_clk_en && cpu_wait_n) begin         // T2 -> T3
-                      if (q_rnw) begin
-                          rd_cap <= cpu_din;                   // DI_Reg @EoT2
-                          if (q_isio) eng_rd_n <= 1'b0;       // io RD single-T
-                      end
+                      if (q_rnw) rd_cap <= cpu_din;           // DI_Reg @EoT2
+                      eng_mreq_n <= 1'b1; eng_iorq_n <= 1'b1;  // strobes are T2-only
+                      eng_rd_n   <= 1'b1; eng_wr_n   <= 1'b1;
                       st <= 2'd3;
                   end
             2'd3: if (cpu_clk_en) begin                       // T3 -> done
-                      eng_mreq_n <= 1'b1; eng_iorq_n <= 1'b1;
-                      eng_rd_n   <= 1'b1; eng_wr_n   <= 1'b1;
                       eng_own    <= 1'b0;
                       q_valid    <= 1'b0;
                       eng_stat_last_op <= q_isio ? (q_rnw ? 4'd3 : 4'd4)
@@ -398,11 +398,9 @@ module ssp_bridge (
             endcase
         end
     end
-    // Strobes match production T80s (mode=1, t2write=1, iowait=0) exactly:
-    //   mem read : MREQ_n+RD_n low T2..T3      (data sampled at EoT2)
-    //   mem write: MREQ_n+WR_n low T2..T3     (t2write: WR from T2 entry)
-    //   io  read : IORQ_n low T2..T3, RD_n low T3 only (single-T)
-    //   io  write: IORQ_n+WR_n low T2..T3
+    // Strobes match production T80s (mode=1, t2write=1, iowait=0) exactly --
+    // T2 only, for memory and I/O, reads and writes (proved against the real T80
+    // by the golden compare above).
     // MRD_T1 for T1 of memory reads only (SDRAM speculative trigger, D-26);
     // M1_n never asserted by the engine (cycles are never opcode fetches).
 

@@ -27,8 +27,10 @@
 //     fetches from (initial pattern addr[7:0]^addr[15:8]), so deposit /
 //     examine round trips -- and code the operator pokes in -- work; io reads
 //     return port^0x0F; io writes are captured for inspection.
-//   * WAIT injection (+WAIT): one extra wait-state cycle on engine memory
-//     reads (mem rd held one cycle) -- engine must ride it (R25/H3).
+//   * WAIT injection (+WAIT): one wait state in T2 of every engine data cycle
+//     (cpu_wait_n low for the first cpu_cen period of the strobe) -- the
+//     engine must ride it (R25/H3) and its waveform must match the T80's
+//     (R-42, sim/ssp/p1a_engine_golden.sh).
 //   * Guest ACIA RX model: deserializes the ssp_top guest_rxd wire at the
 //     same O9B baud_increment, counts bytes (transparency proof R-43).
 //   * t80_reg vector per doc/t80_reg_debug_vector.md 1.1: only PC/SP/R/A
@@ -234,8 +236,6 @@ module z80_bfm (
 
     // ------------------------------------------------ bus mux + answers --
     wire [15:0] addr_eff = sel_eng ? eng_addr : pc;
-    wire        mem_rd   = sel_eng ? (eng_mreq_n == 1'b0 && eng_rd_n == 1'b0)
-                                  : 1'b1;                    // guest fetches
     wire        io_rd    = sel_eng ? (eng_iorq_n == 1'b0 && eng_rd_n == 1'b0)
                                   : 1'b0;
     wire        io_wr    = sel_eng ? (eng_iorq_n == 1'b0 && eng_wr_n == 1'b0)
@@ -246,16 +246,20 @@ module z80_bfm (
     assign cpu_addr = addr_eff;
     assign cpu_din  = io_rd ? d_io : d_mem;
 
-    // WAIT injection: stall engine memory reads by one cen (release the
-    // cycle AFTER rd asserted so the engine's EoT2 capture sees wait).
-    reg rd_seen;
+    // WAIT injection (+WAIT): hold cpu_wait_n low for the first cpu_cen period
+    // (5 clk) of every engine data-cycle strobe, i.e. one wait state in T2 --
+    // the same stimulus as sim/tb_cycle_golden.vhd (R-42), so the stretched
+    // waveform can be compared with the real T80's.
+    wire strobe_act = sel_eng & (~eng_mreq_n | ~eng_iorq_n) &
+                      (~eng_rd_n | ~eng_wr_n);
+    reg        strobe_q;
+    reg  [2:0] wcnt;
     always @(posedge clk) begin
-        if (!rst_n) rd_seen <= 1'b0;
-        else        rd_seen <= mem_rd;
+        strobe_q <= strobe_act;
+        if (strobe_act && !strobe_q) wcnt <= 3'd5;
+        else if (wcnt != 3'd0)       wcnt <= wcnt - 3'd1;
     end
-    wire wait_mem = inject_wait & sel_eng & (mem_rd | rd_seen) & ~eng_wr_n
-                    & ~eng_mreq_n;
-    assign cpu_wait_n = ~wait_mem;
+    assign cpu_wait_n = ~(inject_wait & strobe_act & (wcnt != 3'd0));
 
     // engine memory write (T2..T3, WR_n low): store into the shared image
     // (gated by rst_n: before the first reset edge the engine strobes are
