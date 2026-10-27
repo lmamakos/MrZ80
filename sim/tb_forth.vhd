@@ -76,7 +76,8 @@ begin
 			NMI_n => '1', BUSRQ_n => '1', M1_n => m1_n, MREQ_n => mreq_n,
 			IORQ_n => iorq_n, RD_n => rd_n, WR_n => wr_n, RFSH_n => rfsh_n,
 			HALT_n => halt_n, BUSAK_n => busak_n, A => a, DI => di, DO => do,
-			REG => open);
+			REG => open,
+			FREEZE_req_n => '1', FREEZE_any => '0');  -- LOCAL D-25: no SSP park in this bench
 
 	di <= mem(to_integer(unsigned(a))) when iorq_n = '1' else
 	      "0000001" & '1' when a(7 downto 0) = x"82" and rx_gate and rx_pos <= SCRIPT'length else

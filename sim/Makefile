@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -80,3 +80,32 @@ bench-stub-fab: stub
 bench-gracilis: stub-gracilis
 	TAG=gracilis MODEL=sim/ssp/obj_grac/ssp_gracilis \
 	$(ROOT)/sim/ssp/bench_stub.sh
+
+# ---- P1a "first light" (gracilis + bridge + uart + BFM, D-28 lane 1) -------
+# Lint gate (R25/P1): -Wall over the whole Verilator lane; waivers are
+# deliberate (phased-reg scaffold + vendor core + inert pins).
+lint-ssp:
+	cd $(ROOT) && verilator --lint-only -Wall \
+	  -Wno-VARHIDDEN -Wno-DECLFILENAME -Wno-PINCONNECTEMPTY \
+	  -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM \
+	  -Issp/rtl --top-module ssp_top \
+	  ssp/rtl/ssp_top.v ssp/rtl/ssp_bridge.v ssp/rtl/ssp_uart.v \
+	  sim/ssp/ssp_sdp_ram.v Components/RISCV/femtorv32_gracilis.v
+	@echo lint-ssp: OK
+
+p1a:
+	cd $(ROOT) && verilator --cc --exe --build \
+	  -CFLAGS "-std=c++17" \
+	  --top-module ssp_p1a_top -o ssp_p1a \
+	  sim/ssp/tb_p1a_main.cpp sim/ssp/p1a_sim_top.v sim/ssp/z80_bfm.v \
+	  ssp/rtl/ssp_top.v ssp/rtl/ssp_bridge.v ssp/rtl/ssp_uart.v \
+	  sim/ssp/ssp_sdp_ram.v Components/RISCV/femtorv32_gracilis.v \
+	  -Mdir sim/ssp/obj_p1a
+
+# P1a dictionary build (monitor.fs into the p1a model; separate artifact
+# name space -- P0 goldens untouched)
+dict-p1a: p1a
+	$(ROOT)/sim/ssp/p1a_dictbuild.sh
+
+smoke-p1a: p1a
+	$(ROOT)/sim/ssp/p1a_smoke.sh

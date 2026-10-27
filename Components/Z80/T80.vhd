@@ -109,6 +109,10 @@ entity T80 is
 		IntCycle_n	: out std_logic;
 		IntE		: out std_logic;
 		Stop		: out std_logic;
+		ALT		: out std_logic;	-- LOCAL (MrZ80 D-08): EXX bank in effect
+		FREEZE_req_n	: in std_logic;	-- LOCAL (MrZ80 D-25): park request (assert-low)
+		FREEZE_any	: in std_logic;	-- LOCAL (MrZ80 D-25): allow off-boundary grant (step M/T)
+		would_boundary	: out std_logic;	-- LOCAL (MrZ80 D-25): last-T_Res-of-instruction qualifier
 		REG		: out std_logic_vector(211 downto 0) -- IFF2, IFF1, IM, IY, HL', DE', BC', IX, HL, DE, BC, PC, SP, R, I, F', A', F, A
 	);
 end T80;
@@ -160,6 +164,7 @@ architecture rtl of T80 is
 	signal Halt_FF			: std_logic;
 	signal BusReq_s			: std_logic;
 	signal BusAck			: std_logic;
+	signal freeze_ok			: std_logic;	-- LOCAL (MrZ80 D-25)
 	signal ClkEn			: std_logic;
 	signal NMI_s			: std_logic;
 	signal INT_s			: std_logic;
@@ -251,6 +256,34 @@ begin
 	  else IntE_FF2 & IntE_FF1 & IStatus &
                DOR(127 downto 112) & DOR(47 downto 0) & DOR(63 downto 48) & DOR(111 downto 64) &
                std_logic_vector(PC) & std_logic_vector(SP) & std_logic_vector(R) & I & Fp & Ap & F & ACC;
+
+	-- LOCAL (MrZ80 D-08/D-25, sessions R24/R25): debug + freeze exports.
+	-- ALT = EXX bank in effect (was internal).
+	--
+	-- freeze_ok is the boundary qualifier used by the main FSM's BusAck
+	-- grant below (D-25).  The original core grants BUSRQ at the T_Res of
+	-- ANY M-cycle; here the grant additionally requires that the branch
+	-- that branch would take at this same T_Res is the "next cycle is M1"
+	-- (instruction-end) branch -- i.e. replicating the FSM's own priority
+	-- order over NextIs_XY_Fetch, the XY-pair return cycles, MCycles,
+	-- No_BTR and the DJNZ zero-test, with Prefix="00" so DD/FD/CB/ED
+	-- fetches are never boundaries.  A request (FREEZE_req_n low) that
+	-- arrives at a non-boundary simply persists until the next (aligned)
+	-- T_Res.  FREEZE_any=1 bypasses the alignment (M-cycle/T-state step
+	-- modes, D-25 "deliberately off-boundary"; tie 0 in P1a).
+	-- would_boundary exports the qualifier for STATUS.at_boundary.
+	-- HALT repeats an M1-like cycle (MCycle=MCycles="001") => parks
+	-- anywhere (PC = HALT+1).  Wait-stalled T-states never reach T_Res, so
+	-- the qualifier is only ever sampled at genuine cycle ends.
+	ALT <= Alternate;
+	freeze_ok <= '1' when ( FREEZE_any = '1' or
+	           ( (MCycle = MCycles) or (No_BTR = '1') or
+	             (MCycle = "010" and I_DJNZ = '1' and IncDecZ = '1') ) )
+	           and ( not (NextIs_XY_Fetch = '1')
+	                 and (MCycle /= "111")
+	                 and not (MCycle = "110" and Mode = 1 and ISet /= "01") )
+	           and (Prefix = "00") else '0';
+	would_boundary <= freeze_ok;
 
 	mcode : T80_MCode
 		generic map(
@@ -1038,7 +1071,17 @@ begin
 					if Halt = '1' then
 						Halt_FF <= '1';
 					end if;
-					if BusReq_s = '1' then
+					if BusReq_s = '1' and freeze_ok = '1' then
+						-- LOCAL (MrZ80 D-25, R25): grant only on an
+						-- instruction boundary (freeze_ok) unless
+						-- FREEZE_any (step modes).  When a request is
+						-- pending but NOT aligned, fall through to the
+						-- normal-advance branch below so the core runs
+						-- on until the next boundary -- the request
+						-- line stays low and re-samples at each T_Res.
+						-- (Vanilla T80s granted at ANY M-cycle T_Res;
+						-- FREEZE_req_n tied high => freeze_ok irrelevant
+						-- and this branch is dead => byte-identical.)
 						BusAck <= '1';
 					else
 						TState <= "001";

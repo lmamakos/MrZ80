@@ -10,7 +10,7 @@ package ssp_regs_pkg is
     constant C_SSP_ID             : natural := 536870912;  -- 0x20000000 R | bridge ID 0x4D52_5Axx; rev-stamped
     constant C_SSP_ID_REV          : natural range 0 to 31 := 27;  -- field 27:0
 
-    constant C_SSP_CTRL           : natural := 536870916;  -- 0x20000004 RW | park/hold/trampoline/escape enables; esc effective only with OSD OM (D-14); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
+    constant C_SSP_CTRL           : natural := 536870916;  -- 0x20000004 RW | park/hold/trampoline/escape enables; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
     constant C_SSP_CTRL_Z_RST_N      : natural range 0 to 31 := 0;  -- field 0:0
     constant C_SSP_CTRL_Z_BUSRQ_N    : natural range 0 to 31 := 1;  -- field 1:1
     constant C_SSP_CTRL_Z_WAIT_N     : natural range 0 to 31 := 2;  -- field 2:2
@@ -23,23 +23,24 @@ package ssp_regs_pkg is
     constant C_SSP_TRAMP_ADDR     : natural := 536870920;  -- 0x20000008 RW | G aaaa / START trampoline target
     constant C_SSP_TRAMP_ADDR_ADDR         : natural range 0 to 31 := 15;  -- field 15:0
 
-    constant C_SSP_STATUS         : natural := 536870924;  -- 0x2000000C R | live status; MC/TS/ALT/insn_end from T80s P1a mod; AT_BOUNDARY per D-25; OSD_ESC_EN live OM; RV_TRAP = picorv32 trap halted (H-8)
+    constant C_SSP_STATUS         : natural := 536870924;  -- 0x2000000C R | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25)
     constant C_SSP_STATUS_BUSACK       : natural range 0 to 31 := 0;  -- field 0:0
     constant C_SSP_STATUS_HALT_N       : natural range 0 to 31 := 1;  -- field 1:1
     constant C_SSP_STATUS_M1_N         : natural range 0 to 31 := 2;  -- field 2:2
-    constant C_SSP_STATUS_MC           : natural range 0 to 31 := 4;  -- field 4:3
-    constant C_SSP_STATUS_TS           : natural range 0 to 31 := 7;  -- field 7:5
-    constant C_SSP_STATUS_ALT          : natural range 0 to 31 := 8;  -- field 8:8
-    constant C_SSP_STATUS_CPU_RUNNING  : natural range 0 to 31 := 9;  -- field 9:9
-    constant C_SSP_STATUS_SSP_ACTIVE   : natural range 0 to 31 := 10;  -- field 10:10
-    constant C_SSP_STATUS_S32          : natural range 0 to 31 := 11;  -- field 11:11
-    constant C_SSP_STATUS_FW_CONSOLE_OK : natural range 0 to 31 := 12;  -- field 12:12
-    constant C_SSP_STATUS_ENG_STOP_LATCH : natural range 0 to 31 := 13;  -- field 13:13
-    constant C_SSP_STATUS_SEQ_BUSY     : natural range 0 to 31 := 14;  -- field 14:14
-    constant C_SSP_STATUS_WDG_DEAD     : natural range 0 to 31 := 15;  -- field 15:15
-    constant C_SSP_STATUS_AT_BOUNDARY  : natural range 0 to 31 := 16;  -- field 16:16
-    constant C_SSP_STATUS_OSD_ESC_EN   : natural range 0 to 31 := 17;  -- field 17:17
-    constant C_SSP_STATUS_RV_TRAP      : natural range 0 to 31 := 18;  -- field 18:18
+    constant C_SSP_STATUS_MC           : natural range 0 to 31 := 5;  -- field 5:3
+    constant C_SSP_STATUS_TS           : natural range 0 to 31 := 8;  -- field 8:6
+    constant C_SSP_STATUS_ALT          : natural range 0 to 31 := 9;  -- field 9:9
+    constant C_SSP_STATUS_CPU_RUNNING  : natural range 0 to 31 := 10;  -- field 10:10
+    constant C_SSP_STATUS_SSP_ACTIVE   : natural range 0 to 31 := 11;  -- field 11:11
+    constant C_SSP_STATUS_S32          : natural range 0 to 31 := 12;  -- field 12:12
+    constant C_SSP_STATUS_FW_CONSOLE_OK : natural range 0 to 31 := 13;  -- field 13:13
+    constant C_SSP_STATUS_ENG_STOP_LATCH : natural range 0 to 31 := 14;  -- field 14:14
+    constant C_SSP_STATUS_SEQ_BUSY     : natural range 0 to 31 := 15;  -- field 15:15
+    constant C_SSP_STATUS_WDG_DEAD     : natural range 0 to 31 := 16;  -- field 16:16
+    constant C_SSP_STATUS_AT_BOUNDARY  : natural range 0 to 31 := 17;  -- field 17:17
+    constant C_SSP_STATUS_OSD_ESC_EN   : natural range 0 to 31 := 18;  -- field 18:18
+    constant C_SSP_STATUS_RV_TRAP      : natural range 0 to 31 := 19;  -- field 19:19
+    constant C_SSP_STATUS_RV_ALIVE     : natural range 0 to 31 := 20;  -- field 20:20
 
     constant C_SSP_HALT_REASON    : natural := 536870928;  -- 0x20000010 R | halt reason codes sec 10.3 (+wdg); read clears
     constant C_SSP_HALT_REASON_REASON       : natural range 0 to 31 := 3;  -- field 3:0

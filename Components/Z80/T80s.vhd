@@ -80,6 +80,11 @@
 --	        so a slow memory can start the read a full T-state before
 --	        RD_n/MREQ_n fall. Purely combinational from registered state;
 --	        may be left open.
+--	LOCAL : (MrZ80, sessions R24/R25, D-08/D-25) added the MC/TS/ALT and
+--	        would_boundary exports plus the FREEZE_req_n/FREEZE_any park
+--	        inputs (boundary-aligned parking, doc/SSP_DESIGN.md 7.2b).
+--	        Purely additive: with FREEZE_req_n high the core behaves
+--	        exactly as the vanilla T80s.
 --
 
 library IEEE;
@@ -113,6 +118,12 @@ entity T80s is
 		DI			: in std_logic_vector(7 downto 0);
 		DO			: out std_logic_vector(7 downto 0);
 		MRD_T1		: out std_logic;
+		MC		: out std_logic_vector(2 downto 0);  -- LOCAL (MrZ80 D-08): MCycle
+		TS		: out std_logic_vector(2 downto 0);  -- LOCAL (MrZ80 D-08): TState
+		ALT		: out std_logic;                    -- LOCAL (MrZ80 D-08): EXX bank
+		FREEZE_req_n	: in std_logic;                   -- LOCAL (MrZ80 D-25): park request (assert-low)
+		FREEZE_any	: in std_logic;                   -- LOCAL (MrZ80 D-25): off-boundary grant (step; tie 0 P1a)
+		would_boundary	: out std_logic;                -- LOCAL (MrZ80 D-25): boundary qualifier
 		REG		: out std_logic_vector(211 downto 0)  -- IFF2, IFF1, IM, IY, HL', DE', BC', IX,
                                                                       -- HL, DE, BC, PC, SP, R, I, F', A', F, A
 	);
@@ -161,6 +172,10 @@ begin
 			MC => MCycle,
 			TS => TState,
 			IntCycle_n => IntCycle_n,
+			ALT => ALT,
+			FREEZE_req_n => FREEZE_req_n,
+			FREEZE_any => FREEZE_any,
+			would_boundary => would_boundary,
 			REG => REG);
 
 	process (RESET_n, CLK_n)

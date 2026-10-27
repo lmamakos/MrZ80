@@ -71,6 +71,7 @@ def load():
         hi = int(bits.split(":")[0]) if bits else 31
         regs.append({
             "off": off, "name": r["name"].strip(), "acc": r["access"],
+            "bits_hi": hi,
             "reset": int(r["reset"], 16),
             "fields": parse_fields(r["fields"], hi),
             "doc": r["doc"].strip(),
@@ -88,10 +89,26 @@ def emit_vh(regs):
     for r in regs:
         o.write("`define SSP_%-16s 32'h%08X  // %s reset 32'h%08X | %s\n"
                 % (r["name"], BASE + r["off"], r["acc"], r["reset"], r["doc"]))
+        o.write("`define SSP_RIDX_%-12s 10'h%03X      // word index (offset/4)\n"
+                % (r["name"], r["off"] // 4))
+        o.write("`define SSP_%s_RESET 32'h%08X          // reset value\n"
+                % (r["name"], r["reset"]))
+        width = r["bits_hi"] + 1
+        if width != 32:
+            o.write("`define SSP_%s_RESET_%d %d'h%0X     // reset, %d-bit sized\n"
+                    % (r["name"], width, width, r["reset"], width))
         for fn, hi, lo in r["fields"]:
             mask = ((1 << (hi - lo + 1)) - 1) << lo
             o.write("`define SSP_%s_%-14s 32'h%08X  // %d:%d\n"
                     % (r["name"], fn, mask, hi, lo))
+            if hi == lo:
+                o.write("`define SSP_BIT_%s_%-10s %d         // bit index\n"
+                        % (r["name"], fn, lo))
+            else:
+                o.write("`define SSP_HI_%s_%-10s %d          // field high index\n"
+                        % (r["name"], fn, hi))
+                o.write("`define SSP_LO_%s_%-10s %d          // field low index\n"
+                        % (r["name"], fn, lo))
         if r["fields"]:
             o.write("\n")
     o.write("`endif  // SSP_REGS_VH\n")

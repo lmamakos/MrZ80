@@ -402,6 +402,9 @@ port map(
 	di => cpuDataIn,
 	do => cpuDataOut,
 	mrd_t1 => cpu_mrd_t1,
+	-- LOCAL (D-25, R25): SSP park request (tie inactive until ssp_top
+	-- integration; vanilla behavior, zero golden drift).
+	FREEZE_req_n => '1', FREEZE_any => '0',
         REG => cpuDbgRegisters
 );
 

@@ -87,6 +87,10 @@ package T80_Pack is
 		IntCycle_n	: out std_logic;
 		IntE		: out std_logic;
 		Stop		: out std_logic;
+		ALT		: out std_logic;		-- LOCAL (MrZ80 D-08)
+		FREEZE_req_n	: in std_logic;		-- LOCAL (MrZ80 D-25)
+		FREEZE_any	: in std_logic;		-- LOCAL (MrZ80 D-25)
+		would_boundary	: out std_logic;	-- LOCAL (MrZ80 D-25)
 		REG		: out std_logic_vector(211 downto 0) -- IFF2, IFF1, IM, IY, HL', DE', BC', IX, HL, DE, BC, PC, SP, R, I, F', A', F, A
 	);
 	end component;

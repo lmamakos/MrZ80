@@ -5,268 +5,655 @@
 `define SSP_BRIDGE_BASE 32'h20000000
 
 `define SSP_ID               32'h20000000  // R reset 32'h4D525A03 | bridge ID 0x4D52_5Axx; rev-stamped
+`define SSP_RIDX_ID           10'h000      // word index (offset/4)
+`define SSP_ID_RESET 32'h4D525A03          // reset value
 `define SSP_ID_REV            32'h0FFFFFFF  // 27:0
+`define SSP_HI_ID_REV        27          // field high index
+`define SSP_LO_ID_REV        0          // field low index
 
-`define SSP_CTRL             32'h20000004  // RW reset 32'h00000000 | park/hold/trampoline/escape enables; esc effective only with OSD OM (D-14); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
+`define SSP_CTRL             32'h20000004  // RW reset 32'h00000020 | park/hold/trampoline/escape enables; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
+`define SSP_RIDX_CTRL         10'h001      // word index (offset/4)
+`define SSP_CTRL_RESET 32'h00000020          // reset value
+`define SSP_CTRL_RESET_10 10'h20     // reset, 10-bit sized
 `define SSP_CTRL_Z_RST_N        32'h00000001  // 0:0
+`define SSP_BIT_CTRL_Z_RST_N    0         // bit index
 `define SSP_CTRL_Z_BUSRQ_N      32'h00000002  // 1:1
+`define SSP_BIT_CTRL_Z_BUSRQ_N  1         // bit index
 `define SSP_CTRL_Z_WAIT_N       32'h00000004  // 2:2
+`define SSP_BIT_CTRL_Z_WAIT_N   2         // bit index
 `define SSP_CTRL_CEN_GATE       32'h00000008  // 3:3
+`define SSP_BIT_CTRL_CEN_GATE   3         // bit index
 `define SSP_CTRL_TRAMP_EN       32'h00000010  // 4:4
+`define SSP_BIT_CTRL_TRAMP_EN   4         // bit index
 `define SSP_CTRL_ESC_BREAK_EN   32'h00000020  // 5:5
+`define SSP_BIT_CTRL_ESC_BREAK_EN 5         // bit index
 `define SSP_CTRL_CONSOLE_OWN    32'h00000100  // 8:8
+`define SSP_BIT_CTRL_CONSOLE_OWN 8         // bit index
 `define SSP_CTRL_PANEL_LOCK     32'h00000200  // 9:9
+`define SSP_BIT_CTRL_PANEL_LOCK 9         // bit index
 
 `define SSP_TRAMP_ADDR       32'h20000008  // RW reset 32'h00000000 | G aaaa / START trampoline target
+`define SSP_RIDX_TRAMP_ADDR   10'h002      // word index (offset/4)
+`define SSP_TRAMP_ADDR_RESET 32'h00000000          // reset value
+`define SSP_TRAMP_ADDR_RESET_16 16'h0     // reset, 16-bit sized
 `define SSP_TRAMP_ADDR_ADDR           32'h0000FFFF  // 15:0
+`define SSP_HI_TRAMP_ADDR_ADDR       15          // field high index
+`define SSP_LO_TRAMP_ADDR_ADDR       0          // field low index
 
-`define SSP_STATUS           32'h2000000C  // R reset 32'h00000000 | live status; MC/TS/ALT/insn_end from T80s P1a mod; AT_BOUNDARY per D-25; OSD_ESC_EN live OM; RV_TRAP = picorv32 trap halted (H-8)
+`define SSP_STATUS           32'h2000000C  // R reset 32'h00000000 | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25)
+`define SSP_RIDX_STATUS       10'h003      // word index (offset/4)
+`define SSP_STATUS_RESET 32'h00000000          // reset value
+`define SSP_STATUS_RESET_21 21'h0     // reset, 21-bit sized
 `define SSP_STATUS_BUSACK         32'h00000001  // 0:0
+`define SSP_BIT_STATUS_BUSACK     0         // bit index
 `define SSP_STATUS_HALT_N         32'h00000002  // 1:1
+`define SSP_BIT_STATUS_HALT_N     1         // bit index
 `define SSP_STATUS_M1_N           32'h00000004  // 2:2
-`define SSP_STATUS_MC             32'h00000018  // 4:3
-`define SSP_STATUS_TS             32'h000000E0  // 7:5
-`define SSP_STATUS_ALT            32'h00000100  // 8:8
-`define SSP_STATUS_CPU_RUNNING    32'h00000200  // 9:9
-`define SSP_STATUS_SSP_ACTIVE     32'h00000400  // 10:10
-`define SSP_STATUS_S32            32'h00000800  // 11:11
-`define SSP_STATUS_FW_CONSOLE_OK  32'h00001000  // 12:12
-`define SSP_STATUS_ENG_STOP_LATCH 32'h00002000  // 13:13
-`define SSP_STATUS_SEQ_BUSY       32'h00004000  // 14:14
-`define SSP_STATUS_WDG_DEAD       32'h00008000  // 15:15
-`define SSP_STATUS_AT_BOUNDARY    32'h00010000  // 16:16
-`define SSP_STATUS_OSD_ESC_EN     32'h00020000  // 17:17
-`define SSP_STATUS_RV_TRAP        32'h00040000  // 18:18
+`define SSP_BIT_STATUS_M1_N       2         // bit index
+`define SSP_STATUS_MC             32'h00000038  // 5:3
+`define SSP_HI_STATUS_MC         5          // field high index
+`define SSP_LO_STATUS_MC         3          // field low index
+`define SSP_STATUS_TS             32'h000001C0  // 8:6
+`define SSP_HI_STATUS_TS         8          // field high index
+`define SSP_LO_STATUS_TS         6          // field low index
+`define SSP_STATUS_ALT            32'h00000200  // 9:9
+`define SSP_BIT_STATUS_ALT        9         // bit index
+`define SSP_STATUS_CPU_RUNNING    32'h00000400  // 10:10
+`define SSP_BIT_STATUS_CPU_RUNNING 10         // bit index
+`define SSP_STATUS_SSP_ACTIVE     32'h00000800  // 11:11
+`define SSP_BIT_STATUS_SSP_ACTIVE 11         // bit index
+`define SSP_STATUS_S32            32'h00001000  // 12:12
+`define SSP_BIT_STATUS_S32        12         // bit index
+`define SSP_STATUS_FW_CONSOLE_OK  32'h00002000  // 13:13
+`define SSP_BIT_STATUS_FW_CONSOLE_OK 13         // bit index
+`define SSP_STATUS_ENG_STOP_LATCH 32'h00004000  // 14:14
+`define SSP_BIT_STATUS_ENG_STOP_LATCH 14         // bit index
+`define SSP_STATUS_SEQ_BUSY       32'h00008000  // 15:15
+`define SSP_BIT_STATUS_SEQ_BUSY   15         // bit index
+`define SSP_STATUS_WDG_DEAD       32'h00010000  // 16:16
+`define SSP_BIT_STATUS_WDG_DEAD   16         // bit index
+`define SSP_STATUS_AT_BOUNDARY    32'h00020000  // 17:17
+`define SSP_BIT_STATUS_AT_BOUNDARY 17         // bit index
+`define SSP_STATUS_OSD_ESC_EN     32'h00040000  // 18:18
+`define SSP_BIT_STATUS_OSD_ESC_EN 18         // bit index
+`define SSP_STATUS_RV_TRAP        32'h00080000  // 19:19
+`define SSP_BIT_STATUS_RV_TRAP    19         // bit index
+`define SSP_STATUS_RV_ALIVE       32'h00100000  // 20:20
+`define SSP_BIT_STATUS_RV_ALIVE   20         // bit index
 
 `define SSP_HALT_REASON      32'h20000010  // R reset 32'h00000000 | halt reason codes sec 10.3 (+wdg); read clears
+`define SSP_RIDX_HALT_REASON  10'h004      // word index (offset/4)
+`define SSP_HALT_REASON_RESET 32'h00000000          // reset value
+`define SSP_HALT_REASON_RESET_4 4'h0     // reset, 4-bit sized
 `define SSP_HALT_REASON_REASON         32'h0000000F  // 3:0
+`define SSP_HI_HALT_REASON_REASON     3          // field high index
+`define SSP_LO_HALT_REASON_REASON     0          // field low index
 
 `define SSP_PC_LATCH         32'h20000014  // R reset 32'h00000000 | PC latched at match/park instant
+`define SSP_RIDX_PC_LATCH     10'h005      // word index (offset/4)
+`define SSP_PC_LATCH_RESET 32'h00000000          // reset value
+`define SSP_PC_LATCH_RESET_16 16'h0     // reset, 16-bit sized
 `define SSP_PC_LATCH_PC             32'h0000FFFF  // 15:0
+`define SSP_HI_PC_LATCH_PC         15          // field high index
+`define SSP_LO_PC_LATCH_PC         0          // field low index
 
 `define SSP_SNAP_REG0        32'h20000018  // R reset 32'h00000000 | REG snapshot word 0 (frozen at park/match)
+`define SSP_RIDX_SNAP_REG0    10'h006      // word index (offset/4)
+`define SSP_SNAP_REG0_RESET 32'h00000000          // reset value
 `define SSP_SNAP_REG1        32'h2000001C  // R reset 32'h00000000 | REG snapshot word 1
+`define SSP_RIDX_SNAP_REG1    10'h007      // word index (offset/4)
+`define SSP_SNAP_REG1_RESET 32'h00000000          // reset value
 `define SSP_SNAP_REG2        32'h20000020  // R reset 32'h00000000 | REG snapshot word 2
+`define SSP_RIDX_SNAP_REG2    10'h008      // word index (offset/4)
+`define SSP_SNAP_REG2_RESET 32'h00000000          // reset value
 `define SSP_SNAP_REG3        32'h20000024  // R reset 32'h00000000 | REG snapshot word 3
+`define SSP_RIDX_SNAP_REG3    10'h009      // word index (offset/4)
+`define SSP_SNAP_REG3_RESET 32'h00000000          // reset value
 `define SSP_SNAP_REG4        32'h20000028  // R reset 32'h00000000 | REG snapshot word 4
+`define SSP_RIDX_SNAP_REG4    10'h00A      // word index (offset/4)
+`define SSP_SNAP_REG4_RESET 32'h00000000          // reset value
 `define SSP_SNAP_REG5        32'h2000002C  // R reset 32'h00000000 | REG snapshot word 5
+`define SSP_RIDX_SNAP_REG5    10'h00B      // word index (offset/4)
+`define SSP_SNAP_REG5_RESET 32'h00000000          // reset value
 `define SSP_SNAP_REG6        32'h20000030  // R reset 32'h00000000 | REG snapshot word 6 (212-bit REG in 7 words)
+`define SSP_RIDX_SNAP_REG6    10'h00C      // word index (offset/4)
+`define SSP_SNAP_REG6_RESET 32'h00000000          // reset value
 `define SSP_LIVE_REG0        32'h20000034  // R reset 32'h00000000 | combinational REG word 0 (meaningful when parked)
+`define SSP_RIDX_LIVE_REG0    10'h00D      // word index (offset/4)
+`define SSP_LIVE_REG0_RESET 32'h00000000          // reset value
 `define SSP_LIVE_REG1        32'h20000038  // R reset 32'h00000000 | combinational REG word 1
+`define SSP_RIDX_LIVE_REG1    10'h00E      // word index (offset/4)
+`define SSP_LIVE_REG1_RESET 32'h00000000          // reset value
 `define SSP_LIVE_REG2        32'h2000003C  // R reset 32'h00000000 | combinational REG word 2
+`define SSP_RIDX_LIVE_REG2    10'h00F      // word index (offset/4)
+`define SSP_LIVE_REG2_RESET 32'h00000000          // reset value
 `define SSP_LIVE_REG3        32'h20000040  // R reset 32'h00000000 | combinational REG word 3
+`define SSP_RIDX_LIVE_REG3    10'h010      // word index (offset/4)
+`define SSP_LIVE_REG3_RESET 32'h00000000          // reset value
 `define SSP_LIVE_REG4        32'h20000044  // R reset 32'h00000000 | combinational REG word 4
+`define SSP_RIDX_LIVE_REG4    10'h011      // word index (offset/4)
+`define SSP_LIVE_REG4_RESET 32'h00000000          // reset value
 `define SSP_LIVE_REG5        32'h20000048  // R reset 32'h00000000 | combinational REG word 5
+`define SSP_RIDX_LIVE_REG5    10'h012      // word index (offset/4)
+`define SSP_LIVE_REG5_RESET 32'h00000000          // reset value
 `define SSP_LIVE_REG6        32'h2000004C  // R reset 32'h00000000 | combinational REG word 6
+`define SSP_RIDX_LIVE_REG6    10'h013      // word index (offset/4)
+`define SSP_LIVE_REG6_RESET 32'h00000000          // reset value
 `define SSP_STEP_CTL         32'h20000050  // RW reset 32'h00000000 | step assist: off/INSN/MCYCLE/TSTATE x n (P-C)
+`define SSP_RIDX_STEP_CTL     10'h014      // word index (offset/4)
+`define SSP_STEP_CTL_RESET 32'h00000000          // reset value
+`define SSP_STEP_CTL_RESET_11 11'h0     // reset, 11-bit sized
 `define SSP_STEP_CTL_MODE           32'h00000600  // 10:9
+`define SSP_HI_STEP_CTL_MODE       10          // field high index
+`define SSP_LO_STEP_CTL_MODE       9          // field low index
 `define SSP_STEP_CTL_N              32'h000001FF  // 8:0
+`define SSP_HI_STEP_CTL_N          8          // field high index
+`define SSP_LO_STEP_CTL_N          0          // field low index
 
 `define SSP_BP0              32'h20000054  // RW reset 32'h00000000 | breakpoint 0
+`define SSP_RIDX_BP0          10'h015      // word index (offset/4)
+`define SSP_BP0_RESET 32'h00000000          // reset value
+`define SSP_BP0_RESET_17 17'h0     // reset, 17-bit sized
 `define SSP_BP0_EN             32'h00010000  // 16:16
+`define SSP_BIT_BP0_EN         16         // bit index
 `define SSP_BP0_ADDR           32'h0000FFFF  // 15:0
+`define SSP_HI_BP0_ADDR       15          // field high index
+`define SSP_LO_BP0_ADDR       0          // field low index
 
 `define SSP_BP1              32'h20000058  // RW reset 32'h00000000 | breakpoint 1
+`define SSP_RIDX_BP1          10'h016      // word index (offset/4)
+`define SSP_BP1_RESET 32'h00000000          // reset value
+`define SSP_BP1_RESET_17 17'h0     // reset, 17-bit sized
 `define SSP_BP1_EN             32'h00010000  // 16:16
+`define SSP_BIT_BP1_EN         16         // bit index
 `define SSP_BP1_ADDR           32'h0000FFFF  // 15:0
+`define SSP_HI_BP1_ADDR       15          // field high index
+`define SSP_LO_BP1_ADDR       0          // field low index
 
 `define SSP_BP2              32'h2000005C  // RW reset 32'h00000000 | breakpoint 2
+`define SSP_RIDX_BP2          10'h017      // word index (offset/4)
+`define SSP_BP2_RESET 32'h00000000          // reset value
+`define SSP_BP2_RESET_17 17'h0     // reset, 17-bit sized
 `define SSP_BP2_EN             32'h00010000  // 16:16
+`define SSP_BIT_BP2_EN         16         // bit index
 `define SSP_BP2_ADDR           32'h0000FFFF  // 15:0
+`define SSP_HI_BP2_ADDR       15          // field high index
+`define SSP_LO_BP2_ADDR       0          // field low index
 
 `define SSP_BP3              32'h20000060  // RW reset 32'h00000000 | breakpoint 3
+`define SSP_RIDX_BP3          10'h018      // word index (offset/4)
+`define SSP_BP3_RESET 32'h00000000          // reset value
+`define SSP_BP3_RESET_17 17'h0     // reset, 17-bit sized
 `define SSP_BP3_EN             32'h00010000  // 16:16
+`define SSP_BIT_BP3_EN         16         // bit index
 `define SSP_BP3_ADDR           32'h0000FFFF  // 15:0
+`define SSP_HI_BP3_ADDR       15          // field high index
+`define SSP_LO_BP3_ADDR       0          // field low index
 
 `define SSP_BP_SKIP          32'h20000064  // RW reset 32'h00000000 | suppress-next-match mask (C command)
+`define SSP_RIDX_BP_SKIP      10'h019      // word index (offset/4)
+`define SSP_BP_SKIP_RESET 32'h00000000          // reset value
+`define SSP_BP_SKIP_RESET_4 4'h0     // reset, 4-bit sized
 `define SSP_BP_SKIP_SKIP_MASK      32'h0000000F  // 3:0
+`define SSP_HI_BP_SKIP_SKIP_MASK  3          // field high index
+`define SSP_LO_BP_SKIP_SKIP_MASK  0          // field low index
 
 `define SSP_TRAP_CTL         32'h20000068  // RW reset 32'h00000000 | I/O trap control
+`define SSP_RIDX_TRAP_CTL     10'h01A      // word index (offset/4)
+`define SSP_TRAP_CTL_RESET 32'h00000000          // reset value
+`define SSP_TRAP_CTL_RESET_3 3'h0     // reset, 3-bit sized
 `define SSP_TRAP_CTL_EN             32'h00000004  // 2:2
+`define SSP_BIT_TRAP_CTL_EN         2         // bit index
 `define SSP_TRAP_CTL_WAIT_STALL     32'h00000002  // 1:1
+`define SSP_BIT_TRAP_CTL_WAIT_STALL 1         // bit index
 `define SSP_TRAP_CTL_RNW            32'h00000001  // 0:0
+`define SSP_BIT_TRAP_CTL_RNW        0         // bit index
 
 `define SSP_TRAP_ADDR        32'h2000006C  // RW reset 32'h00000000 | trap port address
+`define SSP_RIDX_TRAP_ADDR    10'h01B      // word index (offset/4)
+`define SSP_TRAP_ADDR_RESET 32'h00000000          // reset value
+`define SSP_TRAP_ADDR_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_TRAP_ADDR_PORT           32'h000000FF  // 7:0
+`define SSP_HI_TRAP_ADDR_PORT       7          // field high index
+`define SSP_LO_TRAP_ADDR_PORT       0          // field low index
 
 `define SSP_TRAP_DATA        32'h20000070  // RW reset 32'h00000000 | trap match mask/value
+`define SSP_RIDX_TRAP_DATA    10'h01C      // word index (offset/4)
+`define SSP_TRAP_DATA_RESET 32'h00000000          // reset value
+`define SSP_TRAP_DATA_RESET_16 16'h0     // reset, 16-bit sized
 `define SSP_TRAP_DATA_MASK           32'h0000FF00  // 15:8
+`define SSP_HI_TRAP_DATA_MASK       15          // field high index
+`define SSP_LO_TRAP_DATA_MASK       8          // field low index
 `define SSP_TRAP_DATA_VAL            32'h000000FF  // 7:0
+`define SSP_HI_TRAP_DATA_VAL        7          // field high index
+`define SSP_LO_TRAP_DATA_VAL        0          // field low index
 
 `define SSP_MEM_CTL          32'h20000074  // RCW reset 32'h00000000 | shared engine kick (D-30 macro enqueue); busy/done/timeout via STATUS; panel wins simultaneity
+`define SSP_RIDX_MEM_CTL      10'h01D      // word index (offset/4)
+`define SSP_MEM_CTL_RESET 32'h00000000          // reset value
+`define SSP_MEM_CTL_RESET_4 4'h0     // reset, 4-bit sized
 `define SSP_MEM_CTL_START          32'h00000001  // 0:0
+`define SSP_BIT_MEM_CTL_START      0         // bit index
 `define SSP_MEM_CTL_RNW            32'h00000002  // 1:1
+`define SSP_BIT_MEM_CTL_RNW        1         // bit index
 `define SSP_MEM_CTL_IS_IO          32'h00000004  // 2:2
+`define SSP_BIT_MEM_CTL_IS_IO      2         // bit index
 `define SSP_MEM_CTL_USE_SHARED     32'h00000008  // 3:3
+`define SSP_BIT_MEM_CTL_USE_SHARED 3         // bit index
 
 `define SSP_MEM_ADDR         32'h20000078  // RCW reset 32'h00000000 | op address; AR/PR source when USE_SHARED
+`define SSP_RIDX_MEM_ADDR     10'h01E      // word index (offset/4)
+`define SSP_MEM_ADDR_RESET 32'h00000000          // reset value
+`define SSP_MEM_ADDR_RESET_28 28'h0     // reset, 28-bit sized
 `define SSP_MEM_ADDR_ADDR           32'h0FFFFFFF  // 27:0
+`define SSP_HI_MEM_ADDR_ADDR       27          // field high index
+`define SSP_LO_MEM_ADDR_ADDR       0          // field low index
 
 `define SSP_MEM_DATA         32'h2000007C  // RCW reset 32'h00000000 | read = captured byte (latched at strobe release); write = data-out
+`define SSP_RIDX_MEM_DATA     10'h01F      // word index (offset/4)
+`define SSP_MEM_DATA_RESET 32'h00000000          // reset value
+`define SSP_MEM_DATA_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_MEM_DATA_DATA           32'h000000FF  // 7:0
+`define SSP_HI_MEM_DATA_DATA       7          // field high index
+`define SSP_LO_MEM_DATA_DATA       0          // field low index
 
 `define SSP_MD               32'h20000080  // RCW reset 32'h00000000 | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write
+`define SSP_RIDX_MD           10'h020      // word index (offset/4)
+`define SSP_MD_RESET 32'h00000000          // reset value
+`define SSP_MD_RESET_1 1'h0     // reset, 1-bit sized
 `define SSP_MD_PHYS           32'h00000001  // 0:0
+`define SSP_BIT_MD_PHYS       0         // bit index
 
 `define SSP_AR               32'h20000084  // RCW reset 32'h00000000 | shared address register (logical ops use low 16)
+`define SSP_RIDX_AR           10'h021      // word index (offset/4)
+`define SSP_AR_RESET 32'h00000000          // reset value
+`define SSP_AR_RESET_28 28'h0     // reset, 28-bit sized
 `define SSP_AR_ADDR           32'h0FFFFFFF  // 27:0
+`define SSP_HI_AR_ADDR       27          // field high index
+`define SSP_LO_AR_ADDR       0          // field low index
 
 `define SSP_DR               32'h20000088  // RCW reset 32'h00000000 | shared data register
+`define SSP_RIDX_DR           10'h022      // word index (offset/4)
+`define SSP_DR_RESET 32'h00000000          // reset value
+`define SSP_DR_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_DR_DATA           32'h000000FF  // 7:0
+`define SSP_HI_DR_DATA       7          // field high index
+`define SSP_LO_DR_DATA       0          // field low index
 
 `define SSP_PR               32'h2000008C  // RCW reset 32'h00000000 | shared I/O port register
+`define SSP_RIDX_PR           10'h023      // word index (offset/4)
+`define SSP_PR_RESET 32'h00000000          // reset value
+`define SSP_PR_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_PR_PORT           32'h000000FF  // 7:0
+`define SSP_HI_PR_PORT       7          // field high index
+`define SSP_LO_PR_PORT       0          // field low index
 
 `define SSP_ENG_STAT         32'h20000090  // R reset 32'h00000000 | panel engine state; read clears completion
+`define SSP_RIDX_ENG_STAT     10'h024      // word index (offset/4)
+`define SSP_ENG_STAT_RESET 32'h00000000          // reset value
+`define SSP_ENG_STAT_RESET_6 6'h0     // reset, 6-bit sized
 `define SSP_ENG_STAT_LAST_OP        32'h0000000F  // 3:0
+`define SSP_HI_ENG_STAT_LAST_OP    3          // field high index
+`define SSP_LO_ENG_STAT_LAST_OP    0          // field low index
 `define SSP_ENG_STAT_AUTO_INC       32'h00000010  // 4:4
+`define SSP_BIT_ENG_STAT_AUTO_INC   4         // bit index
 `define SSP_ENG_STAT_ENGINE_ERR     32'h00000020  // 5:5
+`define SSP_BIT_ENG_STAT_ENGINE_ERR 5         // bit index
 
 `define SSP_ENG_LOG_ADDR     32'h20000094  // R reset 32'h00000000 | last panel operation address; read clears
+`define SSP_RIDX_ENG_LOG_ADDR 10'h025      // word index (offset/4)
+`define SSP_ENG_LOG_ADDR_RESET 32'h00000000          // reset value
+`define SSP_ENG_LOG_ADDR_RESET_28 28'h0     // reset, 28-bit sized
 `define SSP_ENG_LOG_ADDR_ADDR           32'h0FFFFFFF  // 27:0
+`define SSP_HI_ENG_LOG_ADDR_ADDR       27          // field high index
+`define SSP_LO_ENG_LOG_ADDR_ADDR       0          // field low index
 
 `define SSP_ENG_LOG_DATA     32'h20000098  // R reset 32'h00000000 | last panel operation data
+`define SSP_RIDX_ENG_LOG_DATA 10'h026      // word index (offset/4)
+`define SSP_ENG_LOG_DATA_RESET 32'h00000000          // reset value
+`define SSP_ENG_LOG_DATA_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_ENG_LOG_DATA_DATA           32'h000000FF  // 7:0
+`define SSP_HI_ENG_LOG_DATA_DATA       7          // field high index
+`define SSP_LO_ENG_LOG_DATA_DATA       0          // field low index
 
 `define SSP_SD_ADDR          32'h200000A0  // RW reset 32'h00000000 | vid-port background window address (P2)
+`define SSP_RIDX_SD_ADDR      10'h028      // word index (offset/4)
+`define SSP_SD_ADDR_RESET 32'h00000000          // reset value
+`define SSP_SD_ADDR_RESET_28 28'h0     // reset, 28-bit sized
 `define SSP_SD_ADDR_ADDR           32'h0FFFFFFF  // 27:0
+`define SSP_HI_SD_ADDR_ADDR       27          // field high index
+`define SSP_LO_SD_ADDR_ADDR       0          // field low index
 
 `define SSP_SD_WDATA         32'h200000A4  // RW reset 32'h00000000 | background window write staging (err until D-15-B revisit)
+`define SSP_RIDX_SD_WDATA     10'h029      // word index (offset/4)
+`define SSP_SD_WDATA_RESET 32'h00000000          // reset value
+`define SSP_SD_WDATA_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_SD_WDATA_DATA           32'h000000FF  // 7:0
+`define SSP_HI_SD_WDATA_DATA       7          // field high index
+`define SSP_LO_SD_WDATA_DATA       0          // field low index
 
 `define SSP_SD_RDATA         32'h200000A8  // R reset 32'h00000000 | background window read capture
+`define SSP_RIDX_SD_RDATA     10'h02A      // word index (offset/4)
+`define SSP_SD_RDATA_RESET 32'h00000000          // reset value
+`define SSP_SD_RDATA_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_SD_RDATA_DATA           32'h000000FF  // 7:0
+`define SSP_HI_SD_RDATA_DATA       7          // field high index
+`define SSP_LO_SD_RDATA_DATA       0          // field low index
 
 `define SSP_SD_CTL           32'h200000AC  // RW reset 32'h00000000 | background window control/status (P2)
+`define SSP_RIDX_SD_CTL       10'h02B      // word index (offset/4)
+`define SSP_SD_CTL_RESET 32'h00000000          // reset value
+`define SSP_SD_CTL_RESET_2 2'h0     // reset, 2-bit sized
 `define SSP_SD_CTL_START          32'h00000001  // 0:0
+`define SSP_BIT_SD_CTL_START      0         // bit index
 `define SSP_SD_CTL_ERR            32'h00000002  // 1:1
+`define SSP_BIT_SD_CTL_ERR        1         // bit index
 
 `define SSP_WDG_RUN_KICK     32'h200000B0  // WO reset 32'h00000000 | WDG_RUN ~4ms watchdog kick (any write re-arms)
+`define SSP_RIDX_WDG_RUN_KICK 10'h02C      // word index (offset/4)
+`define SSP_WDG_RUN_KICK_RESET 32'h00000000          // reset value
 `define SSP_WDG_PARK_KICK    32'h200000B4  // WO reset 32'h00000000 | WDG_PARK ~1.3s watchdog kick
+`define SSP_RIDX_WDG_PARK_KICK 10'h02D      // word index (offset/4)
+`define SSP_WDG_PARK_KICK_RESET 32'h00000000          // reset value
 `define SSP_WDG_STAT         32'h200000B8  // R reset 32'h00000000 | watchdog status (sec 6.9)
+`define SSP_RIDX_WDG_STAT     10'h02E      // word index (offset/4)
+`define SSP_WDG_STAT_RESET 32'h00000000          // reset value
+`define SSP_WDG_STAT_RESET_3 3'h0     // reset, 3-bit sized
 `define SSP_WDG_STAT_RUN_EXPIRED_L  32'h00000001  // 0:0
+`define SSP_BIT_WDG_STAT_RUN_EXPIRED_L 0         // bit index
 `define SSP_WDG_STAT_PARK_DEAD_L    32'h00000002  // 1:1
+`define SSP_BIT_WDG_STAT_PARK_DEAD_L 1         // bit index
 `define SSP_WDG_STAT_PARK_TIMER     32'h00000004  // 2:2
+`define SSP_BIT_WDG_STAT_PARK_TIMER 2         // bit index
 
 `define SSP_IRQ_EN           32'h200000C0  // RW reset 32'h00000000 | gates optional IRQ line only (D-27)
+`define SSP_RIDX_IRQ_EN       10'h030      // word index (offset/4)
+`define SSP_IRQ_EN_RESET 32'h00000000          // reset value
+`define SSP_IRQ_EN_RESET_12 12'h0     // reset, 12-bit sized
 `define SSP_IRQ_EN_BP0            32'h00000001  // 0:0
+`define SSP_BIT_IRQ_EN_BP0        0         // bit index
 `define SSP_IRQ_EN_BP1            32'h00000002  // 1:1
+`define SSP_BIT_IRQ_EN_BP1        1         // bit index
 `define SSP_IRQ_EN_BP2            32'h00000004  // 2:2
+`define SSP_BIT_IRQ_EN_BP2        2         // bit index
 `define SSP_IRQ_EN_BP3            32'h00000008  // 3:3
+`define SSP_BIT_IRQ_EN_BP3        3         // bit index
 `define SSP_IRQ_EN_TRAP           32'h00000010  // 4:4
+`define SSP_BIT_IRQ_EN_TRAP       4         // bit index
 `define SSP_IRQ_EN_RX             32'h00000020  // 5:5
+`define SSP_BIT_IRQ_EN_RX         5         // bit index
 `define SSP_IRQ_EN_ESC            32'h00000040  // 6:6
+`define SSP_BIT_IRQ_EN_ESC        6         // bit index
 `define SSP_IRQ_EN_MBX            32'h00000080  // 7:7
+`define SSP_BIT_IRQ_EN_MBX        7         // bit index
 `define SSP_IRQ_EN_FP_DONE        32'h00000100  // 8:8
+`define SSP_BIT_IRQ_EN_FP_DONE    8         // bit index
 `define SSP_IRQ_EN_MAP_CHANGED    32'h00000200  // 9:9
+`define SSP_BIT_IRQ_EN_MAP_CHANGED 9         // bit index
 `define SSP_IRQ_EN_SD_DONE        32'h00000400  // 10:10
+`define SSP_BIT_IRQ_EN_SD_DONE    10         // bit index
 `define SSP_IRQ_EN_WDG_PARK       32'h00000800  // 11:11
+`define SSP_BIT_IRQ_EN_WDG_PARK   11         // bit index
 
 `define SSP_IRQ_PENDING      32'h200000C4  // W1C reset 32'h00000000 | sticky event bits; v1 FW polls (D-27); write-1 clears
+`define SSP_RIDX_IRQ_PENDING  10'h031      // word index (offset/4)
+`define SSP_IRQ_PENDING_RESET 32'h00000000          // reset value
+`define SSP_IRQ_PENDING_RESET_12 12'h0     // reset, 12-bit sized
 `define SSP_IRQ_PENDING_BP0            32'h00000001  // 0:0
+`define SSP_BIT_IRQ_PENDING_BP0        0         // bit index
 `define SSP_IRQ_PENDING_BP1            32'h00000002  // 1:1
+`define SSP_BIT_IRQ_PENDING_BP1        1         // bit index
 `define SSP_IRQ_PENDING_BP2            32'h00000004  // 2:2
+`define SSP_BIT_IRQ_PENDING_BP2        2         // bit index
 `define SSP_IRQ_PENDING_BP3            32'h00000008  // 3:3
+`define SSP_BIT_IRQ_PENDING_BP3        3         // bit index
 `define SSP_IRQ_PENDING_TRAP           32'h00000010  // 4:4
+`define SSP_BIT_IRQ_PENDING_TRAP       4         // bit index
 `define SSP_IRQ_PENDING_RX             32'h00000020  // 5:5
+`define SSP_BIT_IRQ_PENDING_RX         5         // bit index
 `define SSP_IRQ_PENDING_ESC            32'h00000040  // 6:6
+`define SSP_BIT_IRQ_PENDING_ESC        6         // bit index
 `define SSP_IRQ_PENDING_MBX            32'h00000080  // 7:7
+`define SSP_BIT_IRQ_PENDING_MBX        7         // bit index
 `define SSP_IRQ_PENDING_FP_DONE        32'h00000100  // 8:8
+`define SSP_BIT_IRQ_PENDING_FP_DONE    8         // bit index
 `define SSP_IRQ_PENDING_MAP_CHANGED    32'h00000200  // 9:9
+`define SSP_BIT_IRQ_PENDING_MAP_CHANGED 9         // bit index
 `define SSP_IRQ_PENDING_SD_DONE        32'h00000400  // 10:10
+`define SSP_BIT_IRQ_PENDING_SD_DONE    10         // bit index
 `define SSP_IRQ_PENDING_WDG_PARK       32'h00000800  // 11:11
+`define SSP_BIT_IRQ_PENDING_WDG_PARK   11         // bit index
 
 `define SSP_CONN_ROUTE       32'h200000C8  // RW reset 32'h00000001 | console routing policy (D-19); HW fail-safe defaults on reset/wdg_park
+`define SSP_RIDX_CONN_ROUTE   10'h032      // word index (offset/4)
+`define SSP_CONN_ROUTE_RESET 32'h00000001          // reset value
+`define SSP_CONN_ROUTE_RESET_4 4'h1     // reset, 4-bit sized
 `define SSP_CONN_ROUTE_OUT_SNAC       32'h00000001  // 0:0
+`define SSP_BIT_CONN_ROUTE_OUT_SNAC   0         // bit index
 `define SSP_CONN_ROUTE_OUT_HDMI       32'h00000002  // 1:1
+`define SSP_BIT_CONN_ROUTE_OUT_HDMI   1         // bit index
 `define SSP_CONN_ROUTE_IN_SNAC        32'h00000004  // 2:2
+`define SSP_BIT_CONN_ROUTE_IN_SNAC    2         // bit index
 `define SSP_CONN_ROUTE_IN_KBD         32'h00000008  // 3:3
+`define SSP_BIT_CONN_ROUTE_IN_KBD     3         // bit index
 
 `define SSP_MBX0             32'h200000D0  // RW reset 32'h00000000 | guest mailbox mirror $D0
+`define SSP_RIDX_MBX0         10'h034      // word index (offset/4)
+`define SSP_MBX0_RESET 32'h00000000          // reset value
+`define SSP_MBX0_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_MBX0_DATA           32'h000000FF  // 7:0
+`define SSP_HI_MBX0_DATA       7          // field high index
+`define SSP_LO_MBX0_DATA       0          // field low index
 
 `define SSP_MBX1             32'h200000D4  // RW reset 32'h00000000 | guest mailbox mirror $D1
+`define SSP_RIDX_MBX1         10'h035      // word index (offset/4)
+`define SSP_MBX1_RESET 32'h00000000          // reset value
+`define SSP_MBX1_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_MBX1_DATA           32'h000000FF  // 7:0
+`define SSP_HI_MBX1_DATA       7          // field high index
+`define SSP_LO_MBX1_DATA       0          // field low index
 
 `define SSP_MBX2             32'h200000D8  // RW reset 32'h00000000 | guest mailbox mirror $D2
+`define SSP_RIDX_MBX2         10'h036      // word index (offset/4)
+`define SSP_MBX2_RESET 32'h00000000          // reset value
+`define SSP_MBX2_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_MBX2_DATA           32'h000000FF  // 7:0
+`define SSP_HI_MBX2_DATA       7          // field high index
+`define SSP_LO_MBX2_DATA       0          // field low index
 
 `define SSP_MBX3             32'h200000DC  // RW reset 32'h00000000 | guest mailbox mirror $D3
+`define SSP_RIDX_MBX3         10'h037      // word index (offset/4)
+`define SSP_MBX3_RESET 32'h00000000          // reset value
+`define SSP_MBX3_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_MBX3_DATA           32'h000000FF  // 7:0
+`define SSP_HI_MBX3_DATA       7          // field high index
+`define SSP_LO_MBX3_DATA       0          // field low index
 
 `define SSP_MAP0             32'h200000E0  // R reset 32'h00000000 | MMU frame tap entry 0 (state-neutral P-D)
+`define SSP_RIDX_MAP0         10'h038      // word index (offset/4)
+`define SSP_MAP0_RESET 32'h00000000          // reset value
+`define SSP_MAP0_RESET_15 15'h0     // reset, 15-bit sized
 `define SSP_MAP0_PAGE           32'h00003FFF  // 13:0
+`define SSP_HI_MAP0_PAGE       13          // field high index
+`define SSP_LO_MAP0_PAGE       0          // field low index
 `define SSP_MAP0_VALID          32'h00004000  // 14:14
+`define SSP_BIT_MAP0_VALID      14         // bit index
 
 `define SSP_MAP1             32'h200000E4  // R reset 32'h00000000 | MMU frame tap entry 1
+`define SSP_RIDX_MAP1         10'h039      // word index (offset/4)
+`define SSP_MAP1_RESET 32'h00000000          // reset value
+`define SSP_MAP1_RESET_15 15'h0     // reset, 15-bit sized
 `define SSP_MAP1_PAGE           32'h00003FFF  // 13:0
+`define SSP_HI_MAP1_PAGE       13          // field high index
+`define SSP_LO_MAP1_PAGE       0          // field low index
 `define SSP_MAP1_VALID          32'h00004000  // 14:14
+`define SSP_BIT_MAP1_VALID      14         // bit index
 
 `define SSP_MAP2             32'h200000E8  // R reset 32'h00000000 | MMU frame tap entry 2
+`define SSP_RIDX_MAP2         10'h03A      // word index (offset/4)
+`define SSP_MAP2_RESET 32'h00000000          // reset value
+`define SSP_MAP2_RESET_15 15'h0     // reset, 15-bit sized
 `define SSP_MAP2_PAGE           32'h00003FFF  // 13:0
+`define SSP_HI_MAP2_PAGE       13          // field high index
+`define SSP_LO_MAP2_PAGE       0          // field low index
 `define SSP_MAP2_VALID          32'h00004000  // 14:14
+`define SSP_BIT_MAP2_VALID      14         // bit index
 
 `define SSP_MAP3             32'h200000EC  // R reset 32'h00000000 | MMU frame tap entry 3
+`define SSP_RIDX_MAP3         10'h03B      // word index (offset/4)
+`define SSP_MAP3_RESET 32'h00000000          // reset value
+`define SSP_MAP3_RESET_15 15'h0     // reset, 15-bit sized
 `define SSP_MAP3_PAGE           32'h00003FFF  // 13:0
+`define SSP_HI_MAP3_PAGE       13          // field high index
+`define SSP_LO_MAP3_PAGE       0          // field low index
 `define SSP_MAP3_VALID          32'h00004000  // 14:14
+`define SSP_BIT_MAP3_VALID      14         // bit index
 
 `define SSP_SSP_CTRL         32'h200000F0  // RCW reset 32'h00000000 | SSP_CHAIN export control (sec 11.4); engine writes PAGE on encoder commit; WDG_PARK expiry forces PAGE=0
+`define SSP_RIDX_SSP_CTRL     10'h03C      // word index (offset/4)
+`define SSP_SSP_CTRL_RESET 32'h00000000          // reset value
+`define SSP_SSP_CTRL_RESET_4 4'h0     // reset, 4-bit sized
 `define SSP_SSP_CTRL_ENABLE         32'h00000001  // 0:0
+`define SSP_BIT_SSP_CTRL_ENABLE     0         // bit index
 `define SSP_SSP_CTRL_PAGE           32'h00000006  // 2:1
+`define SSP_HI_SSP_CTRL_PAGE       2          // field high index
+`define SSP_LO_SSP_CTRL_PAGE       1          // field low index
 
 `define SSP_LED_ADDR         32'h200000F4  // RW reset 32'h00000000 | profile-7 map/colour/fb write address (forwarded via Port-A ownership mux sec 11.5)
+`define SSP_RIDX_LED_ADDR     10'h03D      // word index (offset/4)
+`define SSP_LED_ADDR_RESET 32'h00000000          // reset value
+`define SSP_LED_ADDR_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_LED_ADDR_ADDR           32'h000000FF  // 7:0
+`define SSP_HI_LED_ADDR_ADDR       7          // field high index
+`define SSP_LO_LED_ADDR_ADDR       0          // field low index
 
 `define SSP_LED_DATA0        32'h200000F8  // RCW reset 32'h00000000 | profile-7 lamp map entry (<=10b; CHAIN_BITS>256)
+`define SSP_RIDX_LED_DATA0    10'h03E      // word index (offset/4)
+`define SSP_LED_DATA0_RESET 32'h00000000          // reset value
+`define SSP_LED_DATA0_RESET_10 10'h0     // reset, 10-bit sized
 `define SSP_LED_DATA0_MAP            32'h000003FF  // 9:0
+`define SSP_HI_LED_DATA0_MAP        9          // field high index
+`define SSP_LO_LED_DATA0_MAP        0          // field low index
 
 `define SSP_LED_DATA1        32'h200000FC  // RCW reset 32'h00000000 | profile-7 lamp colour
+`define SSP_RIDX_LED_DATA1    10'h03F      // word index (offset/4)
+`define SSP_LED_DATA1_RESET 32'h00000000          // reset value
+`define SSP_LED_DATA1_RESET_24 24'h0     // reset, 24-bit sized
 `define SSP_LED_DATA1_B              32'h00FF0000  // 23:16
+`define SSP_HI_LED_DATA1_B          23          // field high index
+`define SSP_LO_LED_DATA1_B          16          // field low index
 `define SSP_LED_DATA1_G              32'h0000FF00  // 15:8
+`define SSP_HI_LED_DATA1_G          15          // field high index
+`define SSP_LO_LED_DATA1_G          8          // field low index
 `define SSP_LED_DATA1_R              32'h000000FF  // 7:0
+`define SSP_HI_LED_DATA1_R          7          // field high index
+`define SSP_LO_LED_DATA1_R          0          // field low index
 
 `define SSP_FP_SW            32'h20000100  // R reset 32'h00000000 | debounced toggle bank; same source as guest ports $FC-$FF
+`define SSP_RIDX_FP_SW        10'h040      // word index (offset/4)
+`define SSP_FP_SW_RESET 32'h00000000          // reset value
 `define SSP_FP_SW_S31            32'h80000000  // 31:31
+`define SSP_BIT_FP_SW_S31        31         // bit index
 `define SSP_FP_SW_S30            32'h40000000  // 30:30
+`define SSP_BIT_FP_SW_S30        30         // bit index
 `define SSP_FP_SW_S29            32'h20000000  // 29:29
+`define SSP_BIT_FP_SW_S29        29         // bit index
 `define SSP_FP_SW_S28            32'h10000000  // 28:28
+`define SSP_BIT_FP_SW_S28        28         // bit index
 `define SSP_FP_SW_ADDR           32'h0FFFFFFF  // 27:0
+`define SSP_HI_FP_SW_ADDR       27          // field high index
+`define SSP_LO_FP_SW_ADDR       0          // field low index
 
 `define SSP_FP_FN            32'h20000104  // R reset 32'h00000000 | live debounced SPDT function lines (MMU-EXAM/DEPOSIT at 17:16)
+`define SSP_RIDX_FP_FN        10'h041      // word index (offset/4)
+`define SSP_FP_FN_RESET 32'h00000000          // reset value
+`define SSP_FP_FN_RESET_18 18'h0     // reset, 18-bit sized
 `define SSP_FP_FN_LINES          32'h0003FFFF  // 17:0
+`define SSP_HI_FP_FN_LINES      17          // field high index
+`define SSP_LO_FP_FN_LINES      0          // field low index
 
 `define SSP_FP_ENC_CNT       32'h20000108  // R reset 32'h00000000 | menu-selection counter; same source as guest port $FB
+`define SSP_RIDX_FP_ENC_CNT   10'h042      // word index (offset/4)
+`define SSP_FP_ENC_CNT_RESET 32'h00000000          // reset value
+`define SSP_FP_ENC_CNT_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_FP_ENC_CNT_CNT            32'h000000FF  // 7:0
+`define SSP_HI_FP_ENC_CNT_CNT        7          // field high index
+`define SSP_LO_FP_ENC_CNT_CNT        0          // field low index
 
 `define SSP_FP_ENC_STAT      32'h2000010C  // R reset 32'h00000000 | encoder status (D-23); read clears event strobes
+`define SSP_RIDX_FP_ENC_STAT  10'h043      // word index (offset/4)
+`define SSP_FP_ENC_STAT_RESET 32'h00000000          // reset value
+`define SSP_FP_ENC_STAT_RESET_13 13'h0     // reset, 13-bit sized
 `define SSP_FP_ENC_STAT_COMMITTED      32'h000000FF  // 7:0
+`define SSP_HI_FP_ENC_STAT_COMMITTED  7          // field high index
+`define SSP_LO_FP_ENC_STAT_COMMITTED  0          // field low index
 `define SSP_FP_ENC_STAT_PAGE_ID        32'h00000700  // 10:8
+`define SSP_HI_FP_ENC_STAT_PAGE_ID    10          // field high index
+`define SSP_LO_FP_ENC_STAT_PAGE_ID    8          // field low index
 `define SSP_FP_ENC_STAT_DBL_ZERO_EVT   32'h00000800  // 11:11
+`define SSP_BIT_FP_ENC_STAT_DBL_ZERO_EVT 11         // bit index
 `define SSP_FP_ENC_STAT_COMMIT_EVT     32'h00001000  // 12:12
+`define SSP_BIT_FP_ENC_STAT_COMMIT_EVT 12         // bit index
 
 `define SSP_ESC_CHAR         32'h20000110  // RW reset 32'h0000001D | serial escape character; recognizer active with OSD OM on (D-14)
+`define SSP_RIDX_ESC_CHAR     10'h044      // word index (offset/4)
+`define SSP_ESC_CHAR_RESET 32'h0000001D          // reset value
+`define SSP_ESC_CHAR_RESET_8 8'h1D     // reset, 8-bit sized
 `define SSP_ESC_CHAR_CHAR           32'h000000FF  // 7:0
+`define SSP_HI_ESC_CHAR_CHAR       7          // field high index
+`define SSP_LO_ESC_CHAR_CHAR       0          // field low index
 
 `define SSP_TICK_US          32'h20000114  // R reset 32'h00000000 | free-running 1 MHz counter (D-20 time base)
+`define SSP_RIDX_TICK_US      10'h045      // word index (offset/4)
+`define SSP_TICK_US_RESET 32'h00000000          // reset value
 `define SSP_TICK_US_CNT            32'hFFFFFFFF  // 31:0
+`define SSP_HI_TICK_US_CNT        31          // field high index
+`define SSP_LO_TICK_US_CNT        0          // field low index
 
 `define SSP_UART_TXDATA      32'h20000120  // WO reset 32'h00000000 | write TX holding (SNAC); honored only while STAT.tx_ready (FW polls; no RTS/CTS, R4)
+`define SSP_RIDX_UART_TXDATA  10'h048      // word index (offset/4)
+`define SSP_UART_TXDATA_RESET 32'h00000000          // reset value
+`define SSP_UART_TXDATA_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_UART_TXDATA_DATA           32'h000000FF  // 7:0
+`define SSP_HI_UART_TXDATA_DATA       7          // field high index
+`define SSP_LO_UART_TXDATA_DATA       0          // field low index
 
 `define SSP_UART_RXDATA      32'h20000124  // RC reset 32'h00000000 | pop RX FIFO head; clears rx_avail when FIFO empties
+`define SSP_RIDX_UART_RXDATA  10'h049      // word index (offset/4)
+`define SSP_UART_RXDATA_RESET 32'h00000000          // reset value
+`define SSP_UART_RXDATA_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_UART_RXDATA_DATA           32'h000000FF  // 7:0
+`define SSP_HI_UART_RXDATA_DATA       7          // field high index
+`define SSP_LO_UART_RXDATA_DATA       0          // field low index
 
 `define SSP_UART_STAT        32'h20000128  // R reset 32'h00000000 | UART status; rx_overrun sticky, cleared by CTRL.rx_clr
+`define SSP_RIDX_UART_STAT    10'h04A      // word index (offset/4)
+`define SSP_UART_STAT_RESET 32'h00000000          // reset value
+`define SSP_UART_STAT_RESET_3 3'h0     // reset, 3-bit sized
 `define SSP_UART_STAT_TX_READY       32'h00000001  // 0:0
+`define SSP_BIT_UART_STAT_TX_READY   0         // bit index
 `define SSP_UART_STAT_RX_AVAIL       32'h00000002  // 1:1
+`define SSP_BIT_UART_STAT_RX_AVAIL   1         // bit index
 `define SSP_UART_STAT_RX_OVERRUN     32'h00000004  // 2:2
+`define SSP_BIT_UART_STAT_RX_OVERRUN 2         // bit index
 
 `define SSP_UART_CTRL        32'h2000012C  // RW reset 32'h00000001 | UART enable (default on); rx_clr/tx_clr self-clearing FIFO flushes (P0)
+`define SSP_RIDX_UART_CTRL    10'h04B      // word index (offset/4)
+`define SSP_UART_CTRL_RESET 32'h00000001          // reset value
+`define SSP_UART_CTRL_RESET_3 3'h1     // reset, 3-bit sized
 `define SSP_UART_CTRL_EN             32'h00000001  // 0:0
+`define SSP_BIT_UART_CTRL_EN         0         // bit index
 `define SSP_UART_CTRL_RX_CLR         32'h00000002  // 1:1
+`define SSP_BIT_UART_CTRL_RX_CLR     1         // bit index
 `define SSP_UART_CTRL_TX_CLR         32'h00000004  // 2:2
+`define SSP_BIT_UART_CTRL_TX_CLR     2         // bit index
 
 `define SSP_DEC_ERR_COUNT    32'h20000FF0  // R reset 32'h00000000 | unimplemented-offset counter (saturating)
+`define SSP_RIDX_DEC_ERR_COUNT 10'h3FC      // word index (offset/4)
+`define SSP_DEC_ERR_COUNT_RESET 32'h00000000          // reset value
+`define SSP_DEC_ERR_COUNT_RESET_8 8'h0     // reset, 8-bit sized
 `define SSP_DEC_ERR_COUNT_COUNT          32'h000000FF  // 7:0
+`define SSP_HI_DEC_ERR_COUNT_COUNT      7          // field high index
+`define SSP_LO_DEC_ERR_COUNT_COUNT      0          // field low index
 
 `endif  // SSP_REGS_VH
