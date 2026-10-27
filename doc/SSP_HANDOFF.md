@@ -1,7 +1,7 @@
 # SSP Hand-off — current state and how to proceed
 
 Date: 2026-10-27 · Branch `r24-p1a` (unpushed; `main` = `origin/main` =
-`b12e7aa` R23) · Last design round: **R26** · Phase: **P1a ("first light")**,
+`b12e7aa` R23) · Last design round: **R27** · Phase: **P1a ("first light")**,
 simulation lane green, hardware integration not started.
 
 This document is for the next agent picking up the System Support Processor
@@ -84,8 +84,9 @@ round (R27, …) in `SSP_DESIGN.md` §17.
   relay, option (a), implemented in `ssp_uart.v`), and amend **D-25** in
   §2: the grant is gated inside the T80 (`would_boundary`, BusAck only when
   the next state is M1); the bridge only asserts a level request.
-- Ask the owner whether to push `r24-p1a` (never pushed so far; pushing is
-  safe — no force-push needed).
+- `r24-p1a` is pushed to `origin` (`lmamakos/MrZ80`, owner-approved R27).
+  Note: the remote named `upstream` is MiSTer-devel/MultiComp_MiSTer, the
+  project this was forked from — never push there.
 
 ### Step 1 — Monitor FW for P1a (Verilator lane)
 
@@ -94,34 +95,63 @@ smoke and dictionary-build scripts.
 
 **Work:**
 
-1. **Resolve the command table first (owner question).** P1a scope
-   (`SSP_DESIGN.md` §15) is `E D G H R X` + `ESC`. §10 says the command
-   table is "carried verbatim from v0.1 §10", but **that table is not in the
-   repository**. Also, §10.2 assigns `H` to HBIOS page decode (P2) and
-   `SSP_PANEL_UX.md` uses `K` for park. Proposed P1a meanings to confirm:
-   `E aaaa` examine, `D aaaa dd` deposit, `G` resume, `H` halt (park),
-   `R` registers (from `SNAP_REG0..6` per `t80_reg_debug_vector.md`; prefix
-   `*MID-INSN*` if `STATUS.AT_BOUNDARY`=0), `X` exit (return the console to
-   the guest), `ESC [hh]` show/set `ESC_CHAR` and report OM. Use the
-   question tool, recommended option first.
-2. **Print on escape, not at boot.** A banner printed while the guest owns
+1. **Command set — decided R27 (D-39).** The owner redefined the P1a
+   commands around what an operator needs; the old `E D G H R X` list and the
+   v0.1 table (not in the repo) no longer apply. A primitive framework,
+   expected to grow considerably:
+
+   | Command | Behaviour |
+   |---|---|
+   | `E aaaa [n]` | Examine memory: hex + ASCII dump from `aaaa` (default length, e.g. 16 or 128 bytes — pick and document) |
+   | `D aaaa` | Modify memory interactively: print `aaaa: xx ` with the current contents; a hex value replaces it, a **bare carriage return leaves it unchanged**; then advance to the next address; `.` ends the session |
+   | `G aaaa` | Go: start the guest at `aaaa` (trampoline after reset vent, D-02 — see item 2) |
+   | `G` | Continue: resume the parked CPU and hand the console back to the guest |
+
+   Letters and the `.` terminator are proposals the owner left open; confirm
+   if you change them. Escape already parks the guest, so no separate halt
+   command is needed. `R` (registers from `SNAP_REG0..6`, per
+   `t80_reg_debug_vector.md`; prefix `*MID-INSN*` if
+   `STATUS.AT_BOUNDARY`=0) is a natural early addition, not required.
+   Mecrisp is a Forth: either define these as words that parse their
+   arguments (`E 1000` with `hex` base; e.g. via `token`/`parse-name`), or
+   write a small dedicated command loop entered on escape. The design's ODT
+   protocol (§10.1: `.` prompt, uppercase responses) suggests the latter;
+   choose and record it.
+2. **Trampoline RTL for `G aaaa` (moved from P1b to P1a by D-39).** Only
+   the `TRAMP_ADDR` register and `CTRL.TRAMP_EN` bit exist in
+   `ssp_bridge.v`; the mechanism does not. Per D-02 / `SSP_DESIGN.md` §7.4:
+   reset-vent the guest, then substitute `C3 lo hi` (`JP aaaa`) on
+   `cpu_din` for the opcode fetches at the reset vector, then release.
+   This needs a data-mux over the guest's `cpuDataIn` (a new `ssp_top`
+   output plus a mux at the CPM boundary, next to `z80_bus_mux`), and the
+   BFM must model it (reset, fetch from `0000`, honour the substituted
+   bytes). Read §7.4 and OQ-05 (breakpoints at `$0000–$0002` during the
+   injection window) first.
+3. **Print on escape, not at boot.** A banner printed while the guest owns
    the console is lost. Have the monitor wait for `STATUS.FW_CONSOLE_OK`
    (bit 13) and print its banner/prompt when it gains the console. The
    kernel banner comes from `welcome` in `ssp/fw/mecrisp-quintus-ssp.s`;
    the app layer decides when to talk.
-3. Write `ssp/fw/apps/monitor.fs` using the generated `ssp/fw/ssp-regs.fs`
+4. Write `ssp/fw/apps/monitor.fs` using the generated `ssp/fw/ssp-regs.fs`
    constants. Memory/IO access goes through the D-30 sequencer:
    `MEM_ADDR`/`MEM_DATA`, kick via `MEM_CTL` (bit0 kick, bit1 read, bit2 IO,
    bit3 use shared regs), poll `STATUS.SEQ_BUSY`, read `ENG_STAT` (read
    clears; `ENGINE_ERR` set if kicked while not parked, in physical mode, or
    while busy). Park/resume via `SSP_CTRL` (see the CSV for field names).
-4. Write `sim/ssp/p1a_dictbuild.sh` and `sim/ssp/p1a_smoke.sh`, cloned from
+5. **Make the BFM memory writable.** Today `sim/ssp/z80_bfm.v` answers
+   engine memory reads with a fixed pattern (`addr ^ 0x5A`, ~line 195) and
+   does **not** store memory writes (only I/O writes are captured). Back
+   engine reads/writes with a real 64K array (it can start from the same
+   pattern) so a modify/examine round trip is testable.
+6. Write `sim/ssp/p1a_dictbuild.sh` and `sim/ssp/p1a_smoke.sh`, cloned from
    `sim/ssp/dictbuild_stub.sh` and `sim/ssp/smoke_stub.sh` (D-35
    `compiletoflash` capture via `+DUMP=`; artifacts in their own name space —
-   do not overwrite the P0 goldens). The smoke should script: escape, `H`,
-   `E`/`D` round trip against the BFM memory pattern (`mem = addr ^ 0x5A`;
-   writes are captured), `R`, `G`, then a second escape.
-5. Add an **OM-off transparency** case (`+OM=0`): every byte, including
+   do not overwrite the P0 goldens). The smoke should script: escape, `E`
+   dump (check pattern), `D` session (replace one byte, leave the next
+   unchanged with a bare CR, end with `.`), `E` again (verify both), `G`
+   (guest resumes, console returns), second escape, `G aaaa` (guest restarts
+   at `aaaa`).
+7. Add an **OM-off transparency** case (`+OM=0`): every byte, including
    `ESC_CHAR`, must reach the guest (BFM `guest_rx_count`), no park (R-43).
 
 **Exit:** `make -C sim smoke-p1a dict-p1a` PASS; R-43, R-46 (polled FW, IRQ
@@ -166,13 +196,15 @@ assembled with `tools/z80asm.sh`).
    D-36; Quartus 17 inference failed). Add an `init_file` generic for the
    MROM instance; the bake-off wrapper has none. `sim/ssp/ssp_sdp_ram.v`
    stays the Verilator twin.
-2. **Factory ROM image (D-10):** `tools/bin2hex.py` emits `$readmemh` words
-   for Verilator; Quartus needs `.mif` or Intel HEX. Add a converter (or a
-   mode of `bin2hex.py`). **Owner decision needed:** commit a factory image
-   (e.g. `ssp/fw/forth_rom.mif`, a deliberate deliverable per `AGENTS.md`)
-   versus generating it in the build. A committed Mecrisp binary is a GPLv3
-   distribution (H-3); the corresponding source is `~/mecrisp-quintus`
-   plus `ssp/fw/` — confirm how that source is offered.
+2. **Factory ROM image — decided R27 (D-38): commit it.**
+   `tools/bin2hex.py` emits `$readmemh` words for Verilator; Quartus needs
+   `.mif` or Intel HEX. Add a converter (or a mode of `bin2hex.py`) and a
+   Makefile target in `ssp/fw` that produces the committed image (e.g.
+   `ssp/fw/forth_rom.mif`, outside the ignored `build/` dir). It must include
+   the monitor dictionary (the D-35 merged kernel + app image, as produced by
+   the dictionary-build script), not just the bare kernel. Recommit it
+   whenever the FW changes, and say so in the commit message. GPLv3 is not
+   an issue (owner): the source is always available.
 3. **`MrZ80.qsf`:** add `VERILOG_FILE` entries for `ssp_top.v`,
    `ssp_bridge.v`, `ssp_uart.v`, `Components/RISCV/femtorv32_gracilis.v`;
    `VHDL_FILE` for `ssp_sdp_ram.vhd`, `z80_bus_mux.vhd`,
@@ -204,15 +236,16 @@ monitor-absent).
    - Instantiate `ssp_top`. OSD status bits: design uses **bit 20 = monitor
      enable (`osd_ok`)** and **bit 22 = Serial Escape (`OM`)**; also a
      "Reset SSP" item for `rv_rst_n`. Bits 0, 9–19 are taken (§7.3).
-   - Console wiring: today `serial_rx = serial_port_select ? user_rx :
-     UART_RXD` (~line 704) and the SNAC TX is `serial_tx` when status[12]=1
-     (~lines 736–749). Put `ssp_top` between the SNAC pins and the guest
-     ACIA: `snac_rxd` ← `user_rx`, guest ACIA RX ← `guest_rxd`,
-     `guest_txd` ← guest `serial_tx`, SNAC TX ← `snac_txd`.
-   - **Owner question:** the SSP console is specified on the SNAC. What
-     should happen when the OSD selects the HPS "Console Port"
-     (`status[12]=0`)? Options: SSP follows the selected port, or SSP only on
-     SNAC (escape unavailable on the console port).
+   - **Console port — decided R27 (D-40): the SSP console follows the OSD
+     port selection.** Recommended wiring: put `ssp_top` *after* the
+     existing select mux — `snac_rxd` ← `serial_rx` (already the selected
+     port, ~line 704), and feed `snac_txd` back into the existing TX select
+     logic in place of the guest's `serial_tx` (~lines 736–749), with
+     `guest_rxd`/`guest_txd` going to the guest ACIA. Then either port
+     works with no extra muxing. RTS/CTS flow control stays guest-only
+     (the SSP UART has none, R4). If this proves difficult, the owner
+     allows deferring it, together with an OSD video + keyboard console
+     (D-19, P3); SNAC-only is then the fallback.
    - `baud_increment` must be the same O9B divider the guest UART uses
      (shared truth, §5.3).
    - Tie `dl_*` (MROM download, P1b) inactive.
@@ -242,10 +275,8 @@ rest of the command set. Bridge board design (OQ-09) runs in parallel.
 
 | # | Question | Where it blocks |
 |---|---|---|
-| new | P1a command meanings (`H`/`K`/`X`; v0.1 table not in repo) | Step 1 |
-| new | Commit a factory ROM image vs build-time generation; GPLv3 source offer | Step 3 |
-| new | SSP behaviour when OSD selects the HPS console port | Step 4 |
-| new | Push `r24-p1a`? | Step 0 |
+| — | Answered R27: command set (D-39), commit factory ROM (D-38), console follows OSD port (D-40), push to `origin` (done) | — |
+| new | Final command letters and the modify-session terminator (proposed: `E`, `D`, `G`, `.`) — confirm only if changing | Step 1 |
 | OQ-10 | Exact "Reset System" scope | P1b |
 | OQ-18 | Board-freeze UX values | P2 |
 
@@ -466,8 +497,8 @@ overrun), CTRL `+0x12C`.
 
 ## 9. History pointer
 
-Commit trail on `r24-p1a` (newest first): R26 TX-mux erratum + handoff
-rewrite (this commit) · `8727a10` AGENTS.md what-not-to-commit ·
+Commit trail on `r24-p1a` (newest first): R27 owner rulings D-38…D-40
+(this commit) · `e7e23be` R26 TX-mux erratum + handoff rewrite · `8727a10` AGENTS.md what-not-to-commit ·
 `4de3ae1` handoff purge record · `9391356`/`aed8f48` untrack VCD / obj dirs
 · `12ad50b` R26 REPL green · `d3a8b33` rx_rnext wiring · `9ef7346` P1a lane
 WIP · `e94018b` R25 · then `main`: `b12e7aa` R23 · `864903c` R22 ·
