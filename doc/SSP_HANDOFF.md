@@ -477,8 +477,10 @@ overrun), CTRL `+0x12C`.
 
 ### 8.2 Network from the agent shell
 
-- `git clone https://github.com/...` fails (credential prompt, no TTY);
-  `git@github.com:` SSH is not authorized from the agent shell.
+- `git push`/`fetch` to `origin` (`git@github.com:lmamakos/MrZ80`, SSH)
+  **works** (verified 2026-10-27, R27 push; earlier notes said SSH was not
+  authorized — no longer true for this repo). `git clone https://...` of
+  other repos still fails (credential prompt, no TTY).
 - Works: `curl` to `raw.githubusercontent.com` (single files) and
   `api.github.com` (unauthenticated, ~60 req/h; use `-L`).
 - `webfetch`/`websearch` tools work.
