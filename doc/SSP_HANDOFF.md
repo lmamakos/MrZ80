@@ -49,10 +49,7 @@ theories) are in git history; the design-relevant parts were logged in
 - Synthesis: no SSP file is in `MrZ80.qsf`; the synthesis RAM wrapper lives
   only in `bakeoff/`; no factory-ROM init path for Quartus.
 - Top-level integration (`MicrocomputerZ80CPM.vhd`, `MrZ80.sv`).
-- Docs debt: `SSP_DESIGN.md` §17 has **no R24/R25 entries**; OQ-22 still
-  shows as open (it was closed by the R24 relay design); D-25 needs the R25
-  amendment (grant is gated *inside* the T80; the bridge asserts a level
-  request only).
+- Docs debt (R24/R25 log entries, OQ-22, D-25 amendment): **paid in R30**.
 
 ### 1.3 R26 fixes (this session, for context)
 
@@ -98,12 +95,7 @@ round (R27, …) in `SSP_DESIGN.md` §17.
 
 ### Step 0 — Housekeeping (small, do first)
 
-- Write the missing `SSP_DESIGN.md` §17 entries **R24** and **R25** from
-  the commit messages of `e94018b` (R25) and the R24 material referenced in
-  it (`git show e94018b`), mark **OQ-22 CLOSED** in §14 (resolution: byte
-  relay, option (a), implemented in `ssp_uart.v`), and amend **D-25** in
-  §2: the grant is gated inside the T80 (`would_boundary`, BusAck only when
-  the next state is M1); the bridge only asserts a level request.
+- **DONE (R30):** R24/R25 log entries written, OQ-22 closed, D-25 amended.
 - `r24-p1a` is pushed to `origin` (`lmamakos/MrZ80`, owner-approved R27).
   Note: the remote named `upstream` is MiSTer-devel/MultiComp_MiSTer, the
   project this was forked from — never push there.

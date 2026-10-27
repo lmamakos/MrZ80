@@ -184,7 +184,7 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-18 | `[decided, new v0.3]` **Hardware panel engine** (`fp_engine`): classic panel operations execute in FPGA logic through the shared bridge primitives (sequencer, step assist, reset stretcher, bus muxes), maintaining live **AR/DR/MD/PR** functional registers that FW reads/writes too. Panel works with FW absent/hung (P-B strengthened). FW and panel are **peers on one engine**; the sequencer busy-handshake is the arbiter; panel wins simultaneous kicks; panel ops event FW (IRQ + last-op log). | FW panel server as sole executor (v0.2) |
 | D-19 | `[proposed, new v0.3]` Console routing is FW policy over HW muxes: `CONN_ROUTE` selects monitor output sink(s) {SNAC UART, HDMI terminal mirror} and input source {SNAC RX, PS2 kbd (P3)}; hardware default = serial on reset/WDG-death (P-B). | fixed serial-only routing (kept as fail-safe default semantics) |
 | D-20 | `[decided, session R1; revised R15]` Core facilities: **RV32IMC** (no A — single hart, state read via bridge regs); time base = **bridge MMIO 1 MHz counter `TICK_US`** (neither candidate has `mtime`; `rdcycle` usable for fine timing); events read from bridge `IRQ_PENDING` **by polling in v1** (D-27) — the IRQ line exists in RTL but v1 FW does not depend on it; no PLIC, no core-specific trap code. | IMAC; mcause/vectored; "1 MHz machine timer" CSR (does not exist on either core) |
-| D-25 | `[decided, new R15]` **Instruction-boundary parking.** The T80 grants BUSRQ at *any* M-cycle `T_Res` (`T80.vhd:~1033-1042`), so a raw BUSRQ can freeze mid-instruction (PC/temporaries half-advanced). The D-08 `T80s` mod additionally exports **`insn_end`** (last M-cycle of the instruction ∧ `T_Res`); the bridge passes park requests (FW hold, panel STOP, STEP INSN, escape, BP) to `BUSRQ_n` only aligned to `insn_end`. Rules: **prefixes are not boundaries** (no park between DD/FD/CB/ED and the opcode they modify); HALT state parks anywhere (PC = HALT+1); INT/NMI acknowledge completes before park; EI's one-instruction shadow honoured; block instructions park per iteration (PC re-points at the instruction). M-cycle/T-state step modes deliberately park off-boundary. `STATUS.at_boundary` tags every park; register snapshots are architectural only when set (`R` warns otherwise). **Breakpoints**: stop-*before*-execute via **self-loop injection** — on BP M1 match, the trampoline data mux feeds `18 FE` (`JR $`) in place of the opcode/displacement fetches, then park at its `insn_end` ⇒ PC = BP address, flags/regs untouched, only R +1 (already-accepted drift). Evaluation in sim (OQ-23). | raw BUSRQ park (v0.1–v1.0: unsafe); stop-after-BP-instruction (reports wrong PC) |
+| D-25 | `[decided, new R15]` **Instruction-boundary parking.** The T80 grants BUSRQ at *any* M-cycle `T_Res` (`T80.vhd:~1033-1042`), so a raw BUSRQ can freeze mid-instruction (PC/temporaries half-advanced). The D-08 `T80s` mod additionally exports **`insn_end`** (last M-cycle of the instruction ∧ `T_Res`); the bridge passes park requests (FW hold, panel STOP, STEP INSN, escape, BP) to `BUSRQ_n` only aligned to `insn_end`. Rules: **prefixes are not boundaries** (no park between DD/FD/CB/ED and the opcode they modify); HALT state parks anywhere (PC = HALT+1); INT/NMI acknowledge completes before park; EI's one-instruction shadow honoured; block instructions park per iteration (PC re-points at the instruction). M-cycle/T-state step modes deliberately park off-boundary. `STATUS.at_boundary` tags every park; register snapshots are architectural only when set (`R` warns otherwise). **Breakpoints**: stop-*before*-execute via **self-loop injection** — on BP M1 match, the trampoline data mux feeds `18 FE` (`JR $`) in place of the opcode/displacement fetches, then park at its `insn_end` ⇒ PC = BP address, flags/regs untouched, only R +1 (already-accepted drift). Evaluation in sim (OQ-23). **[R25 amendment, documented R30]: the grant gate lives INSIDE the T80, not in the bridge.** The bridge no longer aligns requests to `insn_end`; it only asserts a level request on `BUSRQ_n`. The T80 (local ports `FREEZE_req_n`/`FREEZE_any`/`would_boundary` -- of these, `FREEZE_req_n` proved a dead port, R28 erratum: the request is `BUSRQ_n`) grants `BusAck` only at the branch whose next state is an M1, prefix-gated, with the XY-pair and mode-1 return cycles excluded by the FSM's own priority; `STATUS.AT_BOUNDARY` latches `would_boundary` at the grant. | raw BUSRQ park (v0.1–v1.0: unsafe); stop-after-BP-instruction (reports wrong PC) |
 | D-26 | `[decided, new R15]` **Single `z80_bus_mux`** at the T80 output boundary, one select, flips only with `BusAck` confirmed (P-A): address, data-out, `MREQ/IORQ/RD/WR`, **`MRD_T1`** (the SDRAM speculative-read trigger, `MicrocomputerZ80CPM.vhd:~1090`), **`M1_n`** (capture chain `:~764`), plus engine-side **sensing of `cpu_wait_n`** (MMU + SDRAM waits — the parked T80 no longer consumes them). The engine emits **cycle-faithful Z80 bus cycles** on `cpu_cen` (T1–T3 + Tw, `MRD_T1` timing as T80s), so every peripheral and the SDRAM client FSM see "a Z80"; guest-path tests are reused for engine cycles. | per-signal ad-hoc muxes; engine-native (non-Z80) strobe timing |
 | D-27 | `[decided, new R15]` **Polled v1 firmware.** Every bridge event is a **sticky status bit** (W1C), so FW is correct by polling its main loop; the IRQ line is an optional later optimization. Makes the two P0 cores FW-interchangeable despite their different IRQ models, and keeps interrupt races out of the debugger. | IRQ-driven dispatch as baseline (v0.3 §5.5) |
 | D-28 | `[decided, new R15; R16 amendment]` **Two-level simulation**: (1) **SSP-only, Verilator** — core + ROM/DTCM + UART + bridge + engine against a behavioural Z80-bus model (BFM); fast enough for the Mecrisp REPL (10⁷–10⁸ cycles); (2) **integration, GHDL** *(R16: GHDL is installed and the established flow with a green baseline — Questa dropped)* — real T80/MMU/SDRAM client FSM (VHDL) for D-25/D-26, wait handling, R-21 pass-through. Integration benches follow the existing `sim/run_*.sh` + `sim/tb_*.vhd` pattern (`run_ssp_*.sh`); Verilator work in `sim/ssp/`; shared Makefile; the §13 TB names become runnable targets. Set up in P0. | single-simulator flow (Verilator can't read VHDL; mixed-language Icarus too slow for Mecrisp); Questa (unneeded — GHDL covers VHDL) |
@@ -1367,7 +1367,7 @@ OQ-18)**.
 | OQ-20 | **CLOSED — resolved R23 (owner ruling, D-37): FemtoRV32-gracilis selected.** Full record: ~~license check~~ closed — ISC/BSD-3; ~~`fit.rpt` ×2~~ done R21 §5.8; ~~time-to-REPL~~ done R19/R20; ~~cycle-level performance~~ done R22 §5.8.2 (gracilis wins every op); residual trust/pedigree weighted by owner toward Mecrisp-co-design lineage. picorv32 retained as documented fallback (D-37) | was: P0 critical path — now resolved; feeds P1 (`ssp_top` instantiates gracilis per D-34/D-37) |
 | OQ-21 | **VexRiscv reopen conditions** (shelved R12): reopen the §5.7 container path only on (a) measured FW cycle-budget shortfall in P1/P2 (dump/disassemble/REPL responsiveness vs §4.3-class arithmetic), or (b) a new capability need not met by the family (`individua` covers atomics; nothing else on the horizon). Record measured numbers with any reopen request | dormant until drivers |
 | OQ-13 | Dictionary persistence across monitor resets beyond re-mount (NVRAM region in SDRAM?) | deferred; packs re-mount deemed sufficient v1. R15: flash emulation explicitly **not** pursued (D-32) |
-| OQ-22 | `[new R15]` **Escape-byte consumption mechanism** (D-14): when the guest owns the SNAC link and `OM` is On, the escape byte must not reach the guest ACIA, but recognition completes only at the stop bit. Options: (a) byte-level relay (deserialize → filter → re-serialize at the `O9B` rate; adds one character time of latency, only while `OM` On; RTS/CTS passed through), (b) let the byte through and accept the guest sees it, (c) inject into the ACIA receive path instead of the wire | lean **(a)**: exact semantics, and `OM` Off keeps the raw wire (true transparency); decide at P1a RTL |
+| OQ-22 | `[new R15]` **Escape-byte consumption mechanism** (D-14): when the guest owns the SNAC link and `OM` is On, the escape byte must not reach the guest ACIA, but recognition completes only at the stop bit. Options: (a) byte-level relay (deserialize → filter → re-serialize at the `O9B` rate; adds one character time of latency, only while `OM` On; RTS/CTS passed through), (b) let the byte through and accept the guest sees it, (c) inject into the ACIA receive path instead of the wire | **CLOSED `[R24/R25, documented R30]`: option (a), byte-level relay**, implemented in `ssp/rtl/ssp_uart.v` (deserialize -> ESC filter -> re-serialize, 2-deep queue + inter-byte stretch); raw-vs-relay guest-RX mux switches at `ssp_top` (raw when `OM` Off = bit-transparent R-43, relay when On; mutually exclusive, no byte duplication). Cost: one character time of latency, only while `OM` is On |
 | OQ-23 | `[new R15]` **BP self-loop injection** (D-25): confirm in integration sim — BP on a prefix byte (inject at the prefix M1; does T80 prefix state reset cleanly?), interaction with trampoline window (OQ-05), interrupt taken at the injected `JR`'s boundary, `BP_SKIP` resume path | P1a/P2 sim (R-41); fallback = stop-after with corrected PC report |
 | OQ-15 | Graphical frame buffer for monitor *video* output (vs 80×25 ANSI on SBC terminal), including exclusive HDMI+kbd console details (D-19 P3): font, pages, keymap | later-phase design note |
 | OQ-16b | *(closed by R8 →* `SSP_PANEL_UX.md` v0.1*)* deep-dive held 2026-10-23: sovereignty/lock, pages, lamps, encoder, commentary, walkthroughs; second pass after first FP hardware experience | closed |
@@ -1872,8 +1872,45 @@ tasks unchanged in order: ssp_bridge RTL vs CSV, TICK_US/milliseconds,
 panel-engine micro-op table (D-30), FW RECURSE-fold quirk fix (5.8.3) as
 an FW hygiene item.
 
-R26 **P1a console lane: REPL green (2026-10-27)** [R24/R25 log entries
-still pending, see SSP_HANDOFF 1.2]: three defects found in the p1a
+R24 **First-cut P1a RTL + external review (2026-10-26/27) [entry written
+retrospectively in R30; the review text itself was not committed]**: first
+version of the P1a vertical slice -- `ssp_bridge.v` (register file bound to
+the CSV, D-30 memory sequencer, park controller), `ssp_uart.v` (SSP console
+UART + escape recognizer; OQ-22 option (a) byte relay chosen, see OQ-22),
+`ssp_top.v` (core + MROM/DTCM + decoder + bridge + UART + console mux),
+`z80_bus_mux.vhd` (D-26), Verilator p1a lane. It went to an independent
+review whose findings (H-series: T80 grant gating, boot sovereignty, engine
+cycle fidelity, RXDATA/UART sampling, bus-mux latch) were all resolved in R25.
+
+R25 **Review resolutions: T80 freeze gate, boot sovereignty, engine
+fidelity (2026-10-27, commit e94018b) [entry written retrospectively in
+R30 from the commit message]**:
+(1) **D-25 reworked** -- grant gate inside the T80 (see the D-25 amendment).
+(2) **Boot sovereignty (owner ruling)**: `CONSOLE_OWN` resets 0 -- the guest
+owns the SNAC at power, so SSP FW death never blocks a guest boot; OSD
+`rv_rst_n` host-reset hatch; `rv_ctrl_ok` releases CTRL/park/console when
+the RV is in reset or hung; `WDG_RUN` (~1.3 ms) and `WDG_PARK` (~0.4 s)
+implemented (D-13), `halt_reason`=9 `wdg_park`; `STATUS` gains `RV_ALIVE`
+and a 3-bit `MC`.
+(3) **Engine cycles T80s-literal** (production mode=1/t2write=1/iowait=0):
+MREQ/RD T2..T3, I/O RD single-T at T3, WR from T2, data captured end of T2
+(DI_Reg discipline); `BUSRQ` is held until the engine cycle completes so a
+released park never truncates an engine access.
+(4) **Console**: RXDATA launch+1 fix (superseded by the R26 correction);
+UART RX sampled at bit centres (start 7, D0..D7 23..135, stop 151); relay
+2-deep queue + inter-byte stretch; raw-vs-relay mux mutually exclusive;
+escape hand-over wins a same-cycle CTRL write.
+(5) `z80_bus_mux`: registered select (latch removed), all strobes idle-gated
+while parked-and-idle (G-2).
+(6) Regmap: RTL binds the CSV via RIDX/BIT/HI macros and sized reset
+constants; CSV `CTRL` reset 0x20 (`esc_break_en`, D-14); `WDG_STAT` fields.
+(7) Bench/infra: T80s benches and the CPM pair tie FREEZE inactive; sim
+Makefile gains lint-ssp/p1a/dict-p1a/smoke-p1a.
+Gates: Verilator lint -Wall clean; z80_bus_mux GHDL-synth latch-free;
+run.sh 115 iterations / 0 mismatches (baseline); cpuregs 8/8, ixmin 10/10,
+ixstack all-pass.
+
+R26 **P1a console lane: REPL green (2026-10-27)**: three defects found in the p1a
 Verilator lane (real ssp_top + Z80 BFM), owner-approved fixes:
 (1) **RXDATA one-pop lag (RTL, ssp_bridge)** -- R25/H5 registered the FIFO
 head into a hold reg on the pop edge and fed the hold to q_reg, while q_hold
