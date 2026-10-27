@@ -1336,7 +1336,7 @@ New:
 | R-39 | MMU ops full-function with FW held in reset (engine-only: tap exam + deposit) | `tb_fw_panel` |
 | R-40 | `[R15]` **Boundary parking** (D-25): every STOP/escape/STEP-INSN park lands on `insn_end` (`at_boundary`=1) across a directed instruction mix incl. DD/FD/CB/ED prefixes, DDCB-indexed bit ops, LDIR/OTIR, HALT, EI+INT shadow, IM2 acknowledge; snapshot PC == next instruction | `tb_integ_park` (integration level) |
 | R-41 | `[R15]` **BP self-loop injection** (D-25/OQ-23): stop-before-execute ⇒ PC = BP addr, AF/regs unchanged, R +1 only; resume executes the real instruction once | `tb_integ_bp` |
-| R-42 | `[R15]` **Bus mux fidelity** (D-26): engine reads/writes to SDRAM, BRAM and I/O produce the same `MRD_T1`/strobe/wait waveforms as T80 cycles (golden compare); engine honours MMU + SDRAM waits; mux select never flips without `BusAck` | `tb_integ_mux` + `tb_cycle_golden` + `p1a_engine_golden.sh` **[done R31]** |
+| R-42 | `[R15]` **Bus mux fidelity** (D-26): engine reads/writes to SDRAM, BRAM and I/O produce the same `MRD_T1`/strobe/wait waveforms as T80 cycles (golden compare); engine honours MMU + SDRAM waits; mux select never flips without `BusAck` | `tb_integ_mux` + `tb_cycle_golden` + `p1a_engine_golden.sh` **[done R31]** + `tb_integ_core` **[done R33]** |
 | R-43 | `[R15]` **Serial escape** (D-14 rev): `OM` Off ⇒ every byte incl. `ESC_CHAR` reaches the guest bit-transparently, no park; `OM` On ⇒ `ESC_CHAR` parks at boundary, console handed over, byte not delivered to guest; other bytes pass; `ESC_CHAR` reprogrammable; FW disable honoured | `tb_ssp_esc` |
 | R-44 | `[R15]` Profile-7 interlock (D-31): guest writes to profile 7 dropped, profiles 0–6 unaffected; SSP writes land | `tb_fp_led` |
 | R-45 | `[R15]` Register-map consistency (D-29): generated `.vh`/`.fs`/Markdown match the CSV; build fails on drift | `make regmap-check` |
@@ -2128,3 +2128,46 @@ It is now derived from the bus protocol, identically in sim and synthesis:
 the last 65535 clocks. `p1a_smoke.sh` now checks `STATUS.RV_ALIVE` (mutation-tested:
 `rv_alive = 1'b0` makes the smoke FAIL). (4) The `MrZ80.qsf` file entries are added with
 the instantiation in step 4 (before then the files would be pruned as unused).
+
+R33 **Top-level integration (2026-10-27; handoff Step 4).** (1) `MicrocomputerZ80CPM.vhd`:
+the T80's pins now go through `z80_bus_mux` (the old net names `n_MREQ/n_IORQ/n_RD/n_WR/
+n_M1`, `cpuAddress`, `cpuDataOut`, `cpu_mrd_t1` are the mux OUTPUTS, so the whole fabric is
+unchanged); `n_BUSRQ` is driven by the new `ssp_busrq_n` port; `ssp_tramp` sits between the
+`cpuDataIn` mux and the T80's DI and owns the T80 reset (`t80_rst_n`).  `FREEZE_req_n`
+stays `'1'` (dead port); `FREEZE_any` takes `ssp_freeze_any`.  The capture chain's
+bus-data view (`fpStaticDataBus`) uses the injected byte (`t80_din`), the more truthful
+choice.  New entity ports (all inputs default idle so the core and every GHDL bench work
+unchanged): `ssp_busrq_n, ssp_z_reset_n, ssp_tramp_arm/target, ssp_freeze_any, ssp_eng_*`;
+outputs `ssp_tramp_done, ssp_cpu_cen` (ungated), `ssp_cpu_din, ssp_cpu_wait_n,
+ssp_busack_n, ssp_halt_n, ssp_m1_n` (raw T80), `ssp_mc/ts/alt, ssp_would_boundary,
+ssp_t80_reg`.  `ssp_top` stays in `MrZ80.sv` (Verilog; GHDL cannot read it, D-33).
+`sim/MicrocomputerZ80CPM_sim.vhd` resynced (`check_sync.sh` OK); `run.sh`,
+`run_blockdev_prog.sh`, `run_perf.sh` analyse the two new VHDL files (the latter two also
+gained the `Universal_Capture_Chain.vhd` entry they had been missing, a pre-existing break).
+(2) `MrZ80.sv`: `ssp_top` is instantiated AFTER the OSD serial-port mux (D-40): `snac_rxd` =
+`serial_rx` (the selected port), `snac_txd` = `serial_tx` (selected port's TX: monitor, or
+the guest's TX passed through), `guest_rxd/guest_txd` = the guest ACIA (`guest_rx`,
+`guest_tx`); either port works with no further muxing.  OSD: `OK` SSP Monitor Off/On
+(status[20] = `osd_ok`), `OM` SSP Serial Escape Off/On (status[22]), `TN` Reset SSP
+(status[23], trigger, stretched to ~1.3 ms for `rv_rst_n`); bit 21 spare.  `baud_increment`
+is the O9B value the guest UART gets.  `rst_n` = `~reset` (the guest reset: the SSP is held
+in reset with the guest until a boot image is loaded and restarts on OSD Reset -- a P1a
+simplification, a monitor-only reset domain is P1b).  `esc_disable`, `panel_stop` and
+`dl_*` are tied inactive.  `z_wait_n` / `z_cen_gate` (CTRL.Z_WAIT_N / CEN_GATE) are
+NOT wired in P1a: nothing in the P1a monitor uses them, and an engine cycle would stall on
+a forced wait.  (3) `MrZ80.qsf` carries the SSP file set + `SEARCH_PATH ssp/rtl`.  Full
+compile (`tools/build.sh`, 7m40s on tycho): 0 errors, all clocks meet timing (worst setup
+slack +0.852 ns on the HDMI PLL clock, clk_sys domain +2.0 ns, hold >= +0.248 ns), 13,145
+ALMs (31 %), 2.20 Mbit block memory (39 %), 37 DSP.  (4) R-42 second half,
+`sim/tb_integ_core.vhd` (`make -C sim integ-core`): the engine model through the REAL
+CPM fabric (mux, T80s, MMU, block RAM, SDRAM client FSM, clk_sys<->clk_ram CDC model) while
+a guest program runs (`tb_integ_core.asm`).  The engine writes/reads block RAM and SDRAM
+(incl. the MRD_T1 speculative read and the stall), reads MMU mapping registers by I/O,
+and writes block RAM through the MMU direct-access pointer/data port (a promoted I/O
+cycle), reading it back as memory; the guest's SDRAM + block-RAM read-back mismatch count
+is 0 and its sum/memory image intact after 369 parks / 899 engine ops (99,292 checks),
+with the per-clock mux checks as in `tb_integ_mux` run against the real DUT.
+Mutation-tested (see the bench header).  Bench lesson: the MMU reset map puts frame 0 on
+the block RAM page and frames 1..3 on SDRAM pages 1..3 (not block RAM everywhere).
+Remaining: Step 5, hardware first light (`make install`, then escape, `E`/`D`, `G`, OM-off
+transparency on the board).

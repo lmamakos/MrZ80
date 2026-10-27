@@ -394,6 +394,10 @@ parameter CONF_STR = {
 	"OC,Serial Port,Console Port,User IO (SNAC) Port;",
 	"O9B,Baud Rate tty,115200,38400,19200,9600,4800,2400;",
 	"OE,Flow Control,None,RTS/CTS;",  // New flow control option
+	"-;",
+	"OK,SSP Monitor,Off,On;",                        // status[20]: SSP (System Support Processor) enable (osd_ok); Off = indistinguishable from absent
+	"OM,SSP Serial Escape,Off,On;",                  // status[22]: escape byte on the selected serial port enters the SSP monitor (OM)
+	"TN,Reset SSP;",                                 // status[23]: pulse -> ~1 ms RV core reset (host hatch)
 	"-,CPU Held in Reset until ROM image loaded;",
 	"R0,Reset;",                                     // status[0]: OSD Reset (CPU reset only; keeps loaded image)
 	"V,v",`BUILD_DATE
@@ -406,6 +410,7 @@ parameter CONF_STR = {
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
 // X     XXXXXXX XX     (bit 0 = Reset via "R0"; bit 13 = Boot Load Target ("OD"); bit 14 = Flow Control; bit 15 = Reset after Mount)
 // bits 16-19 = Front Panel Profile ("OGJ"): 0 = Software, 1..8 = profile 0..7
+// bit 20 = SSP Monitor enable ("OK"), bit 22 = SSP Serial Escape ("OM"), bit 23 = Reset SSP (trigger "TN"); bit 21 spare
    
 //////////////////   HPS I/O   ///////////////////
 wire  [1:0] buttons;
@@ -702,7 +707,9 @@ wire flow_control_enable = status[14];    // 0 = No flow control, 1 = RTS/CTS en
 
 // Serial interface routing 
 wire serial_rx = serial_port_select ? user_rx : UART_RXD;
-wire serial_tx;
+wire serial_tx;      // selected-port TX pin: from ssp_top (monitor or guest passthrough)
+wire guest_rx;       // guest ACIA RX wire (from ssp_top)
+wire guest_tx;       // guest ACIA TX wire
 wire fpLED_serial;   // Front-panel WS2812 line, routed to USER_OUT[6]
 
 localparam INIT_TIMEOUT = 24'd50000; // 1ms at 50MHz clock
@@ -984,6 +991,21 @@ wire        fp_profile_clear = hard_reset_req & ~hard_reset_d;
 wire  [3:0] fp_osd_profile = (status[19:16] >= 4'd1 && status[19:16] <= 4'd8)
                              ? (status[19:16] - 4'd1) : 4'hF;
 
+// SSP seam nets (ssp_top instance below, after the core)
+wire        ssp_busrq_n, ssp_z_reset_n, ssp_z_wait_n, ssp_z_cen_gate, ssp_freeze_any;
+wire        ssp_tramp_arm, ssp_tramp_done;
+wire [15:0] ssp_tramp_target;
+wire        ssp_eng_own, ssp_eng_mreq_n, ssp_eng_iorq_n, ssp_eng_rd_n, ssp_eng_wr_n;
+wire        ssp_eng_m1_n, ssp_eng_mrd_t1;
+wire [15:0] ssp_eng_addr;
+wire [7:0]  ssp_eng_dout;
+wire        ssp_cpu_cen, ssp_cpu_wait_n, ssp_busack_n, ssp_halt_n, ssp_m1_n;
+wire        ssp_alt, ssp_would_boundary;
+wire [7:0]  ssp_cpu_din;
+wire [2:0]  ssp_mc, ssp_ts;
+wire [211:0] ssp_t80_reg;
+wire        ssp_irq, ssp_rv_alive;
+
 MicrocomputerZ80CPM MicrocomputerZ80CPM
 (
     .N_RESET(~reset),
@@ -1005,8 +1027,8 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
 	.sdSCLK		(sdclk),
 	.sdCD		(SD_CD),
     .driveLED(driveLED),
-    .rxd1(serial_rx),
-    .txd1(serial_tx),
+    .rxd1(guest_rx),
+    .txd1(guest_tx),
     .rts1(serial_rts),
     .cts1(serial_cts),
     .fpLED_serial(fpLED_serial),
@@ -1040,7 +1062,107 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
     .bd_img_mounted  (img_mounted),
     .bd_img_readonly (img_readonly),
     .bd_img_size     (img_size),
-    .bd_activity     (bd_activity)
+    .bd_activity     (bd_activity),
+
+    // SSP seam (z80_bus_mux + ssp_tramp live in the core)
+    .ssp_busrq_n        (ssp_busrq_n),
+    .ssp_z_reset_n      (ssp_z_reset_n),
+    .ssp_tramp_arm      (ssp_tramp_arm),
+    .ssp_tramp_target   (ssp_tramp_target),
+    .ssp_freeze_any     (ssp_freeze_any),
+    .ssp_eng_own        (ssp_eng_own),
+    .ssp_eng_addr       (ssp_eng_addr),
+    .ssp_eng_dout       (ssp_eng_dout),
+    .ssp_eng_mreq_n     (ssp_eng_mreq_n),
+    .ssp_eng_iorq_n     (ssp_eng_iorq_n),
+    .ssp_eng_rd_n       (ssp_eng_rd_n),
+    .ssp_eng_wr_n       (ssp_eng_wr_n),
+    .ssp_eng_m1_n       (ssp_eng_m1_n),
+    .ssp_eng_mrd_t1     (ssp_eng_mrd_t1),
+    .ssp_tramp_done     (ssp_tramp_done),
+    .ssp_cpu_cen        (ssp_cpu_cen),
+    .ssp_cpu_din        (ssp_cpu_din),
+    .ssp_cpu_wait_n     (ssp_cpu_wait_n),
+    .ssp_busack_n       (ssp_busack_n),
+    .ssp_halt_n         (ssp_halt_n),
+    .ssp_m1_n           (ssp_m1_n),
+    .ssp_mc             (ssp_mc),
+    .ssp_ts             (ssp_ts),
+    .ssp_alt            (ssp_alt),
+    .ssp_would_boundary (ssp_would_boundary),
+    .ssp_t80_reg        (ssp_t80_reg)
+);
+
+//////////////  SSP (System Support Processor)  ////////////////
+//
+// D-40: the SSP console follows the OSD serial-port selection, so ssp_top sits
+// AFTER the port-select mux: snac_rxd is the selected port's RX pin, snac_txd
+// is the selected port's TX (monitor output, or the guest's TX passed through),
+// and the guest ACIA hangs off guest_rxd/guest_txd. With "SSP Monitor" Off
+// (status[20]=0) ssp_top is a bit-transparent wire in both directions (P-B,
+// R-43). RTS/CTS flow control stays guest-only (the SSP UART has none, R4).
+// "Reset SSP" (status[23], a trigger item): stretch the pulse to ~1.3 ms so the
+// RV core sees a clean reset whatever the OSD pulse width.
+reg [15:0] ssp_rv_rst_cnt = 16'd0;
+always @(posedge clk_sys) begin
+    if (status[23])                  ssp_rv_rst_cnt <= 16'hFFFF;
+    else if (ssp_rv_rst_cnt != 16'd0) ssp_rv_rst_cnt <= ssp_rv_rst_cnt - 16'd1;
+end
+wire ssp_rv_rst_n = (ssp_rv_rst_cnt == 16'd0);
+
+ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif")) ssp_top
+(
+    .clk            (clk_sys),
+    .rst_n          (~reset),
+    .osd_ok         (status[20]),
+    .osd_esc_en     (status[22]),
+    .esc_disable    (1'b0),                 // panel frame bit 32 (P1b)
+    .panel_stop     (1'b0),                 // panel STOP latch (P1b)
+    .baud_increment (baud_increment),       // the O9B value the guest UART uses
+
+    .cpu_clk_en_raw (ssp_cpu_cen),
+    .cpu_din        (ssp_cpu_din),
+    .cpu_wait_n     (ssp_cpu_wait_n),
+    .z_busack_n     (ssp_busack_n),
+    .z_halt_n       (ssp_halt_n),
+    .z_m1_n         (ssp_m1_n),
+    .z_mc           (ssp_mc),
+    .z_ts           (ssp_ts),
+    .z_alt          (ssp_alt),
+    .z_would_boundary (ssp_would_boundary),
+    .t80_reg        (ssp_t80_reg),
+    .z_busrq_n      (ssp_busrq_n),
+    .z_reset_n      (ssp_z_reset_n),
+    .z_wait_n       (ssp_z_wait_n),         // CTRL.Z_WAIT_N / CEN_GATE: not wired in P1a
+    .z_cen_gate     (ssp_z_cen_gate),
+    .tramp_arm      (ssp_tramp_arm),
+    .tramp_target   (ssp_tramp_target),
+    .tramp_done     (ssp_tramp_done),
+    .freeze_any     (ssp_freeze_any),
+    .eng_own        (ssp_eng_own),
+    .eng_addr       (ssp_eng_addr),
+    .eng_dout       (ssp_eng_dout),
+    .eng_mreq_n     (ssp_eng_mreq_n),
+    .eng_iorq_n     (ssp_eng_iorq_n),
+    .eng_rd_n       (ssp_eng_rd_n),
+    .eng_wr_n       (ssp_eng_wr_n),
+    .eng_m1_n       (ssp_eng_m1_n),
+    .eng_mrd_t1     (ssp_eng_mrd_t1),
+
+    .rv_rst_n       (ssp_rv_rst_n),
+
+    .snac_rxd       (serial_rx),
+    .snac_txd       (serial_tx),
+    .guest_rxd      (guest_rx),
+    .guest_txd      (guest_tx),
+
+    .ssp_irq        (ssp_irq),
+    .rv_alive       (ssp_rv_alive),
+    .dl_wr          (1'b0),                 // MROM download (P1b)
+    .dl_addr        (16'd0),
+    .dl_wdata       (32'd0),
+    .dbg_rom_illegal_writes (),
+    .dbg_bus_errs   ()
 );
 
 video_cleaner video_cleaner

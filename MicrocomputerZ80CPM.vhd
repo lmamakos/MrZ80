@@ -133,7 +133,38 @@ entity MicrocomputerZ80CPM is
 		bd_img_mounted	: in  std_logic := '0';
 		bd_img_readonly	: in  std_logic := '0';
 		bd_img_size		: in  std_logic_vector(63 downto 0) := (others => '0');
-		bd_activity		: out std_logic
+		bd_activity		: out std_logic;
+
+		-- SSP (System Support Processor) seam, D-26/D-33. ssp_top lives in
+		-- MrZ80.sv (Verilog); everything Z80-side is in this core. Every
+		-- input defaults to its idle value so a core without the SSP (and
+		-- the GHDL benches) behaves exactly as before.
+		ssp_busrq_n		: in  std_logic := '1';	-- park request to the T80
+		ssp_z_reset_n	: in  std_logic := '1';	-- low = vent the guest CPU
+		ssp_tramp_arm	: in  std_logic := '0';	-- G aaaa: arm reset-vector JP
+		ssp_tramp_target	: in  std_logic_vector(15 downto 0) := (others => '0');
+		ssp_freeze_any	: in  std_logic := '0';
+		ssp_eng_own		: in  std_logic := '0';	-- engine master (mux B)
+		ssp_eng_addr	: in  std_logic_vector(15 downto 0) := (others => '0');
+		ssp_eng_dout	: in  std_logic_vector(7 downto 0) := (others => '0');
+		ssp_eng_mreq_n	: in  std_logic := '1';
+		ssp_eng_iorq_n	: in  std_logic := '1';
+		ssp_eng_rd_n	: in  std_logic := '1';
+		ssp_eng_wr_n	: in  std_logic := '1';
+		ssp_eng_m1_n	: in  std_logic := '1';
+		ssp_eng_mrd_t1	: in  std_logic := '0';
+		ssp_tramp_done	: out std_logic;
+		ssp_cpu_cen		: out std_logic;		-- ungated cpu_cen (engine clock)
+		ssp_cpu_din		: out std_logic_vector(7 downto 0);	-- cpuDataIn (engine reads)
+		ssp_cpu_wait_n	: out std_logic;
+		ssp_busack_n	: out std_logic;
+		ssp_halt_n		: out std_logic;
+		ssp_m1_n		: out std_logic;		-- raw T80 M1
+		ssp_mc			: out std_logic_vector(2 downto 0);
+		ssp_ts			: out std_logic_vector(2 downto 0);
+		ssp_alt			: out std_logic;
+		ssp_would_boundary	: out std_logic;
+		ssp_t80_reg		: out std_logic_vector(211 downto 0)
 		);
 end MicrocomputerZ80CPM;
 
@@ -148,6 +179,24 @@ architecture struct of MicrocomputerZ80CPM is
 	signal cpuDataOut				: std_logic_vector(7 downto 0);
 	signal cpuDataIn				: std_logic_vector(7 downto 0);
 	signal cpuDbgRegisters			: std_logic_vector(211 downto 0);
+
+	-- T80 pins before z80_bus_mux (the names above are the guest nets
+	-- AFTER the mux: n_MREQ/n_IORQ/n_RD/n_WR/n_M1, cpuAddress, cpuDataOut,
+	-- cpu_mrd_t1).
+	signal t80_addr					: std_logic_vector(15 downto 0);
+	signal t80_dout					: std_logic_vector(7 downto 0);
+	signal t80_mreq_n				: std_logic;
+	signal t80_iorq_n				: std_logic;
+	signal t80_rd_n					: std_logic;
+	signal t80_wr_n					: std_logic;
+	signal t80_m1_n					: std_logic;
+	signal t80_mrd_t1				: std_logic;
+	signal t80_rst_n				: std_logic;
+	signal t80_din					: std_logic_vector(7 downto 0);	-- cpuDataIn + trampoline
+	signal t80_mc					: std_logic_vector(2 downto 0);
+	signal t80_ts					: std_logic_vector(2 downto 0);
+	signal t80_alt					: std_logic;
+	signal t80_would_boundary		: std_logic;
 
 	-- Define some T80 control signals that are hardwired for the moment, but
 	-- future cleverness awaits.   This allows us to wire these up to the
@@ -384,36 +433,108 @@ end process;
 cpu1 : entity work.t80s
 generic map(mode => 1, t2write => 1, iowait => 0)
 port map(
-	reset_n => reset_n_internal,
+	reset_n => t80_rst_n,
 	clk_n => clk,
 	cen => cpu_cen,
 	wait_n => cpu_wait_n,
 	int_n => n_INT,
 	nmi_n => n_NMI,
 	busrq_n => n_BUSRQ,
-	mreq_n => n_MREQ,
-	iorq_n => n_IORQ,
-	rd_n => n_RD,
-	wr_n => n_WR,
-	m1_n => n_M1,
+	mreq_n => t80_mreq_n,
+	iorq_n => t80_iorq_n,
+	rd_n => t80_rd_n,
+	wr_n => t80_wr_n,
+	m1_n => t80_m1_n,
 	halt_n => n_HALT,
 	busak_n => n_BUSAK,
-	a => cpuAddress,
-	di => cpuDataIn,
-	do => cpuDataOut,
-	mrd_t1 => cpu_mrd_t1,
-	-- LOCAL (D-25, R25): SSP park request (tie inactive until ssp_top
-	-- integration; vanilla behavior, zero golden drift).
-	FREEZE_req_n => '1', FREEZE_any => '0',
+	a => t80_addr,
+	di => t80_din,
+	do => t80_dout,
+	mrd_t1 => t80_mrd_t1,
+	mc => t80_mc,
+	ts => t80_ts,
+	alt => t80_alt,
+	would_boundary => t80_would_boundary,
+	-- LOCAL (D-25): FREEZE_req_n is a dead port in the T80 (R28 erratum);
+	-- the park request is BUSRQ_n. FREEZE_any is the P1b step-mode hook.
+	FREEZE_req_n => '1', FREEZE_any => ssp_freeze_any,
         REG => cpuDbgRegisters
 );
+
+-- SSP boundary (D-26, R25): the single Z80 bus master mux sits at the T80
+-- output boundary. With the SSP idle (busrq_n high, eng_own low) it is a
+-- pass-through of the T80 pins.
+bus_mux : entity work.z80_bus_mux
+port map (
+	clk          => clk,
+	rst_n        => reset_n_internal,
+	t80_addr     => t80_addr,
+	t80_dout     => t80_dout,
+	t80_mreq_n   => t80_mreq_n,
+	t80_iorq_n   => t80_iorq_n,
+	t80_rd_n     => t80_rd_n,
+	t80_wr_n     => t80_wr_n,
+	t80_m1_n     => t80_m1_n,
+	t80_mrd_t1   => t80_mrd_t1,
+	t80_busack_n => n_BUSAK,
+	busrq_n      => n_BUSRQ,
+	eng_own      => ssp_eng_own,
+	eng_addr     => ssp_eng_addr,
+	eng_dout     => ssp_eng_dout,
+	eng_mreq_n   => ssp_eng_mreq_n,
+	eng_iorq_n   => ssp_eng_iorq_n,
+	eng_rd_n     => ssp_eng_rd_n,
+	eng_wr_n     => ssp_eng_wr_n,
+	eng_m1_n     => ssp_eng_m1_n,
+	eng_mrd_t1   => ssp_eng_mrd_t1,
+	cpu_addr     => cpuAddress,
+	cpu_dout     => cpuDataOut,
+	cpu_mreq_n   => n_MREQ,
+	cpu_iorq_n   => n_IORQ,
+	cpu_rd_n     => n_RD,
+	cpu_wr_n     => n_WR,
+	cpu_m1_n     => n_M1,
+	cpu_mrd_t1   => cpu_mrd_t1
+);
+
+-- Guest-CPU reset vent + reset-vector JP injector for "G aaaa" (D-02, R28).
+-- Idle: t80_rst_n = reset_n_internal and t80_din = cpuDataIn.
+tramp : entity work.ssp_tramp
+port map (
+	clk       => clk,
+	cen       => cpu_cen,
+	sys_rst_n => reset_n_internal,
+	z_reset_n => ssp_z_reset_n,
+	t80_rst_n => t80_rst_n,
+	arm       => ssp_tramp_arm,
+	target    => ssp_tramp_target,
+	done      => ssp_tramp_done,
+	active    => open,
+	addr      => cpuAddress,
+	mreq_n    => n_MREQ,
+	rd_n      => n_RD,
+	din_in    => cpuDataIn,
+	din_out   => t80_din
+);
+
+ssp_cpu_cen        <= cpu_cen;
+ssp_cpu_din        <= cpuDataIn;
+ssp_cpu_wait_n     <= cpu_wait_n;
+ssp_busack_n       <= n_BUSAK;
+ssp_halt_n         <= n_HALT;
+ssp_m1_n           <= t80_m1_n;
+ssp_mc             <= t80_mc;
+ssp_ts             <= t80_ts;
+ssp_alt            <= t80_alt;
+ssp_would_boundary <= t80_would_boundary;
+ssp_t80_reg        <= cpuDbgRegisters;
 
 -- The interrupt and bus-request inputs are tied inactive for the moment;
 -- future cleverness awaits. n_int1/n_int2 (the io1/io2 interrupt outputs)
 -- are currently unconnected and would be the natural source for n_INT.
 n_INT   <= '1';
 n_NMI   <= '1';
-n_BUSRQ <= '1';
+n_BUSRQ <= ssp_busrq_n;
 
 -- ____________________________________________________________________________________
 -- MMU GOES HERE
@@ -686,7 +807,7 @@ fpChain : entity work.Transparent_Capture_Chain
 -- (reads/idle), or what it is driving during write cycles. Split into two
 -- simple assignments: VHDL-93 has no parenthesised-expression production, so
 -- a when/else clause cannot sit inline inside the concatenation below.
-fpStaticDataBus <= cpuDataIn when n_WR = '1' else cpuDataOut;
+fpStaticDataBus <= t80_din when n_WR = '1' else cpuDataOut;
 fpStaticBusData <= cpuAddress & fpStaticDataBus;
 
 fpChainStaticTest : entity work.Transparent_Capture_Chain

@@ -44,9 +44,12 @@ FILES=(
     Components/SDCARD/hps_blockdev.vhd
     Components/RTC/ds12887.vhd
     Components/FRONTPANEL/Transparent_Capture_Chain.vhd
+    Components/FRONTPANEL/Universal_Capture_Chain.vhd
     Components/FRONTPANEL/FP_RAM_Store.vhd
     Components/FRONTPANEL/FrontPanel_Subsystem.vhd
     Components/TIMER/BenchTimer.vhd
+    ssp/rtl/z80_bus_mux.vhd
+    ssp/rtl/ssp_tramp.vhd
     sim/MicrocomputerZ80CPM_sim.vhd
     sim/sdram_cdc_fake.vhd
     sim/tb_sdram_perf.vhd

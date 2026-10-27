@@ -43,6 +43,8 @@ FILES=(
     Components/FRONTPANEL/FP_RAM_Store.vhd
     Components/FRONTPANEL/FrontPanel_Subsystem.vhd
     Components/TIMER/BenchTimer.vhd
+    ssp/rtl/z80_bus_mux.vhd
+    ssp/rtl/ssp_tramp.vhd
     sim/MicrocomputerZ80CPM_sim.vhd
     sim/sdram_cdc_fake.vhd
     sim/tb_inir_race.vhd

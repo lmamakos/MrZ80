@@ -341,6 +341,18 @@ set_global_assignment -name QIP_FILE Components/TERMINAL/DisplayRam1K.qip
 set_global_assignment -name QIP_FILE Components/INTERNALRAM/InternalRam64K.qip
 set_global_assignment -name QIP_FILE Components/TERMINAL/DisplayRam2K.qip
 set_global_assignment -name QIP_FILE Components/TERMINAL/CGABoldRomReduced.qip
+# SSP (System Support Processor): RISC-V core + bridge in Verilog (ssp_top),
+# Z-80 side seam in VHDL (bus mux, reset-vector trampoline). ssp_top.v includes
+# ssp_regs.vh from ssp/rtl. Factory ROM: ssp/fw/forth_rom.mif (D-38).
+set_global_assignment -name SEARCH_PATH ssp/rtl
+set_global_assignment -name VERILOG_FILE ssp/rtl/ssp_top.v
+set_global_assignment -name VERILOG_FILE ssp/rtl/ssp_bridge.v
+set_global_assignment -name VERILOG_FILE ssp/rtl/ssp_uart.v
+set_global_assignment -name VERILOG_FILE Components/RISCV/femtorv32_gracilis.v
+set_global_assignment -name VHDL_FILE ssp/rtl/ssp_sdp_ram.vhd
+set_global_assignment -name VHDL_FILE ssp/rtl/ssp_regs_pkg.vhd
+set_global_assignment -name VHDL_FILE ssp/rtl/z80_bus_mux.vhd
+set_global_assignment -name VHDL_FILE ssp/rtl/ssp_tramp.vhd
 set_global_assignment -name VHDL_FILE MicrocomputerZ80CPM.vhd
 # set_global_assignment -name VHDL_FILE MicrocomputerZ80Basic.vhd
 set_global_assignment -name SIGNALTAP_FILE "output_files/status13-stp1.stp"
