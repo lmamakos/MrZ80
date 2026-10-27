@@ -315,7 +315,8 @@ proven bit-transparent. Record results as a design round.
 Owner requirements raised at first light — all already in P1b scope, now the
 leading items: **(a)** physical 28-bit memory examine/deposit -> `MD`/`AR`/`DR`
 shared regs + `ssp_mem_client` (parked physical client borrowing the SDRAM
-client wiring + BRAM mux; `z80_bus_mux` unchanged — it stays the logical,
+client wiring — SDRAM pages only; the BRAM page is deferred by owner ruling
+R35, physical ops there rejected `?`; `z80_bus_mux` unchanged — it stays the logical,
 cycle-faithful Z80 path, R35 assessment); **(b)** Z80 I/O port commands ->
 FW-only (`I`/`O`; the D-30 sequencer's IO_RD/IO_WR are already golden-verified);
 **(c)** MMU inspection + logical->physical display -> FW `MAP` via engine I/O

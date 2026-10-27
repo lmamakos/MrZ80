@@ -1061,6 +1061,9 @@ commands update `AR` explicitly (both surfaces leave `AR` coherent, R-15).
   gated on: parked ∧ primary-client-idle ∧ no contention. Full R/W reach
   incl. BRAM page 8192. MMU bypassed (physical, by definition) and untouched
   (P-D). `MD`=physical makes `AR` 28-bit for both surfaces.
+  **[R35 revision: the BRAM-mux leg is deferred (owner ruling); P1 lands the SDRAM
+  physical window only — physical ops to page 8192 rejected `?` by FW; BRAM remains
+  reachable logically. BRAM leg joins the later client work.]**
 - **P2 — background window (D-15-B):** `ssp_sd` client on the vid port,
   **reads only**; verified arbitration priority (refresh>cpu>vid) keeps the
   guest whole; acceptance = sim assertion suite showing vid traffic behaves
@@ -2223,3 +2226,11 @@ normally; console line ends CR+LF (R34 fix confirmed).  P1a is CLOSED.
 - **Command surface:** canonical design is modal (`PHY`/`LOG` switch + same `E`/`D`,
   D-22); whether to ALSO add explicit physical verbs (e.g. `PE`/`PD`) is an open FW
   letter choice (owner, P1b FW scope) — see OQ-24.
+
+**Revision same day (owner ruling):** **block-RAM access by physical address is
+deferred** — a late hardware-debug aid, not needed for the first physical-capability
+slice. `ssp_mem_client` P1 scope narrows to the SDRAM physical window (pages 0..8191);
+a physical op targeting the BRAM page (0x0800_0000..0x0800_FFFF) is rejected by FW with
+`?`. BRAM stays fully reachable through *logical* addresses today (engine cycles + MMU
+frames), so nothing that works today is lost; the BRAM-mux leg of the client (and its
+`tb_mem_client` checks) moves to a later phase with the vid/P2 client work.
