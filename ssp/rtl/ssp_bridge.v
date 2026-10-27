@@ -120,6 +120,7 @@ module ssp_bridge (
     output reg  [7:0]  esc_char,
     output wire        uart_esc_eff,   // OM & CTRL.esc_break_en & ssp_active
     output wire        uart_relay_en,  // OM & ssp_active: RX via relay
+    output wire        conn_out_snac, // CONN_ROUTE.out_snac (D-19, TX policy)
     input  wire        uart_esc_evt,
 
     // ---------------- console / park state (to top console mux) -----------
@@ -314,6 +315,8 @@ module ssp_bridge (
 
     assign uart_esc_eff  = osd_esc_en & esc_brk_en & ssp_active;
     assign uart_relay_en = osd_esc_en & ssp_active;
+    // D-19: monitor TX sink policy; HW fail-safe default = SNAC (reset 1).
+    assign conn_out_snac = conn_route[0];
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -442,7 +445,6 @@ module ssp_bridge (
     reg         uart_en_r;
     reg         uart_rx_clr_r, uart_tx_clr_r, uart_tx_wr_r;
     reg  [7:0]  uart_tx_wdata_r;
-    reg  [7:0]  uart_rx_rdata_hold;      // RXDATA launch+1 presentation
 
     assign uart_en       = uart_en_r;
     assign uart_rx_clr   = uart_rx_clr_r;
@@ -451,11 +453,12 @@ module ssp_bridge (
     assign uart_tx_wr    = uart_tx_wr_r;
     assign uart_rx_pop   = rd_fire && (widx == `SSP_RIDX_UART_RXDATA)
                            && uart_rx_avail;
-    // R25/H5: present the popped byte at launch+1 (the pop happens at the
-    // SAME launch edge, so muxing uart_rx_rdata through q_reg would return
-    // the PREVIOUS byte).  Stub-proven shape (rr_rxbyte).
-    always @(posedge clk)
-        if (uart_rx_pop) uart_rx_rdata_hold <= uart_rx_rnext;
+    // R26: RXDATA read data = the combinational FIFO head (uart_rx_rnext),
+    // muxed through q_reg and captured by q_hold on the SAME launch edge
+    // that pops it -> the CPU sees the popped byte at launch+1.  (R25/H5
+    // registered the head into a hold reg on that edge and fed the hold to
+    // q_reg, so q_hold latched the OLD hold: every KEY returned the byte
+    // from the previous pop.)  Empty-FIFO read returns 0.
 
     // escape hand-over: park request + console taken (D-14 hardware, R24).
     // Ordered AFTER the CTRL write decode below => a same-cycle CTRL write
@@ -682,7 +685,8 @@ module ssp_bridge (
         `SSP_RIDX_LED_DATA1:     q_reg = {8'd0, led_data1};
         `SSP_RIDX_ESC_CHAR:      q_reg = {24'd0, esc_char};
         `SSP_RIDX_TICK_US:       q_reg = tick_us;
-        `SSP_RIDX_UART_RXDATA:   q_reg = {24'd0, uart_rx_rdata_hold};
+        `SSP_RIDX_UART_RXDATA:   q_reg = {24'd0, uart_rx_avail ? uart_rx_rnext
+                                                             : 8'h00};
         `SSP_RIDX_UART_STAT:     q_reg = {29'd0, uart_rx_overrun,
                                          uart_rx_avail, uart_tx_ready};
         `SSP_RIDX_UART_CTRL:     q_reg = {31'd0, uart_en_r};

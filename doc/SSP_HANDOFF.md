@@ -504,6 +504,8 @@ Owner-pending: OQ-10, OQ-18.
 - Fresh run with fixed RTL: `tx=10 rx=12`, kernel boots ('M' banner byte at
   @195757 via **bridge TXDATA write path — TX base works**), polls MMIO
   offset 0x80 every 9 cyc, rx PUSH/POP never fire, ESC never evaluated.
+- **[R26 erratum: this candidate was WRONG -- the FW hex and RTL agree;
+  every kernel read in fresh runs hits 0x124/0x128. Real causes in §12.]**
 - **ROOT-CAUSE CANDIDATE (prime, unverified):** FW↔RTL console-base drift.
   `ssp/fw/ssp-regs.fs` (generated from current CSV) places STATUS at
   `$2000000C`, RX block at `$20000080+` — but the running
@@ -520,3 +522,44 @@ Owner-pending: OQ-10, OQ-18.
   TX earlier).
 - Work committed: `513a539` (branch r24-p1a) + one more commit for the
   rx_rnext lint fix. Nothing pushed yet.
+
+---
+
+## 12. Session state (2026-10-27, R26 — P1a REPL green)
+
+The §11 blocker is resolved. Full write-up in `SSP_DESIGN.md` §17 R26.
+Three defects, all fixed:
+
+1. **RXDATA one-pop lag** (`ssp_bridge.v`): `q_hold <= q_reg` and the
+   R25 hold register updated on the same edge, so the CPU got the
+   previous byte. RXDATA now reads the combinational FIFO head
+   (`uart_rx_rnext`), 0 when empty. `uart_rx_rdata` port is now unused
+   (kept; lint waives UNUSEDSIGNAL).
+2. **Monitor TX muted before ESC** (`ssp_top.v`): TX is now gated by
+   `CONN_ROUTE.out_snac` (new bridge output `conn_out_snac`, D-19), not
+   `console_own`. `guest_txd` input is now unused at `ssp_top`.
+3. **Harness** (`tb_p1a_main.cpp`): RX release waits for TX quiet
+   (+RXAT only when FW never transmits); `+ECHO=0` fixed.
+
+Working repro (from repo root, no +RXAT needed):
+`printf '\x1d1 2 + . cr\r' | ./sim/ssp/obj_p1a/ssp_p1a
++ROM=ssp/fw/build/mecrisp-ssp.hex +OM=1 +MAXCYCLES=12000000 +IDLE=2000000
++ECHO=0` → banner, echo, `3`, `ok.`
+
+**Lessons (do not repeat):**
+- Mecrisp has **no autocorrect** (owner correction; source grep
+  confirms zero hits). Odd console streams were harness local echo
+  interleaved with kernel echo.
+- Probe the **CPU-visible** node (`mem_rdata` at launch+1), not an
+  internal register that "should" match it.
+- `$display` goes to stdout, interleaved with console bytes; harness
+  messages go to stderr.
+
+**Housekeeping flagged for the owner:** `sim/ssp/obj_p1a/`,
+`sim/ssp/obj_p1adbg/` and the 229 MB `sim/ssp/p1a.vcd` are tracked in
+git (from `513a539`); suggest untracking + `.gitignore`. Not changed.
+
+**Still open from §11:** `ssp/fw/apps/monitor.fs`, `p1a_dictbuild.sh`,
+`p1a_smoke.sh` (the `dict-p1a`/`smoke-p1a` Makefile targets reference
+them); SSP_DESIGN §17 R24/R25 entries, OQ-22 CLOSED row, D-25 amendment.
+Owner-pending: OQ-10, OQ-18.

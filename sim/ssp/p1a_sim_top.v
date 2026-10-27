@@ -307,12 +307,13 @@ module ssp_p1a_top (
         if (sim_dbg && rst_n && u_dut.u_bridge.uart_rx_pop)
             $display("[p1a-q  @%0d] POPK wp=%0d rp=%0d", tb_cycle,
                      u_dut.u_uart.wp, u_dut.u_uart.rp);
+        // CPU-visible read data at launch+1 (what lbu actually receives)
         if (sim_dbg && rst_n && popd1)
             $display("[p1a-q  @%0d] POPD -> %02x", tb_cycle,
-                     u_dut.u_bridge.uart_rx_rdata_hold);
+                     u_dut.mem_rdata[7:0]);
         if (sim_dbg && rst_n && u_dut.u_bridge.wr_fire
-            && u_dut.u_bridge.widx == 10'h048)
-            $display("[p1a-ctl @%0d] UART_CTRL wr %02x", tb_cycle,
+            && u_dut.u_bridge.widx == 10'h048)   // SSP_RIDX_UART_TXDATA
+            $display("[p1a-txw @%0d] UART_TXDATA wr %02x", tb_cycle,
                      u_dut.u_bridge.mem_wdata[7:0]);
         if (sim_dbg && rst_n && u_dut.u_bridge.rd_fire && tb_cycle >= 818000
             && tb_cycle <= 818300)
@@ -320,9 +321,9 @@ module ssp_p1a_top (
                      u_dut.u_bridge.widx, u_dut.u_bridge.q_reg);
         if (sim_dbg && rst_n && u_dut.u_bridge.rd_fire &&
             (u_dut.u_bridge.widx == 10'h04A || u_dut.u_bridge.widx == 10'h049))
-            $display("[p1a-q  @%0d] kern rd off=%03x stat=%08x rxdata=%02x avail=%b",
+            $display("[p1a-q  @%0d] kern rd off=%03x q=%08x fifo_head=%02x avail=%b",
                      tb_cycle, u_dut.u_bridge.widx*4,
-                     u_dut.u_bridge.q_reg, u_dut.u_bridge.uart_rx_rdata_hold,
+                     u_dut.u_bridge.q_reg, u_dut.u_uart.rx_rnext,
                      u_dut.u_uart.rx_avail);
     end
     always @(posedge clk) begin

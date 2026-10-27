@@ -48,13 +48,18 @@ extern "C" void tb_putc(int c) {
 static long long g_rxat = 400000;   // +RXAT=-1 disables cycle fallback
 
 extern "C" int tb_rx_poll(void) {
-    // Console release: after FW proves life (first TX + grace) OR after a
-    // fixed cycle budget (R25: CONSOLE_OWN resets 0 -- a vanilla kernel
-    // never transmits to the SNAC pin until the operator escapes into the
-    // monitor, so a TX-only gate would deadlock the ESC-first flow).
+    // Console release: after the FW's TX line goes QUIET (last byte + grace:
+    // the kernel is done boot-printing and is polling KEY) OR after a fixed
+    // cycle budget (R25: CONSOLE_OWN resets 0 -- a vanilla kernel never
+    // transmits to the SNAC pin until the operator escapes into the monitor,
+    // so a TX-only gate would deadlock the ESC-first flow).
     // +RXAT=<cycles> tunes the fallback (default 400k = 8 ms at 50 MHz).
-    bool released = (g_first_tx >= 0 && g_cycle >= g_first_tx + 100000)
-                 || (g_rxat >= 0 && g_cycle >= g_rxat);
+    // (R26: was first_tx+grace, which fired mid-banner and overflowed the
+    // depth-8 RX FIFO -- bytes lost before the kernel ever listened.)
+    // The +RXAT fallback applies only while the FW has never transmitted;
+    // once it talks, wait for it to go quiet.
+    bool released = (g_first_tx >= 0) ? (g_cycle >= g_last_tx + 100000)
+                                      : (g_rxat >= 0 && g_cycle >= g_rxat);
     if (!released) return -1;
     static bool rel_logged = false;
     if (!rel_logged) { rel_logged = true;
@@ -93,7 +98,7 @@ int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);
 
     if (plusarg_ll("+NOECHO=", -1) >= 0) g_echo = false;
-    if (plusarg_ll("+ECHO=",   -1) >= 0) g_echo = true;
+    if (plusarg_ll("+ECHO=",   -1) >= 0) g_echo = (plusarg_ll("+ECHO=", 0) != 0);
     long long idle = plusarg_ll("+IDLE=", 8000000);
     long long maxc = plusarg_ll("+MAXCYCLES=", 600000000);
     g_rxat = plusarg_ll("+RXAT=", 400000);

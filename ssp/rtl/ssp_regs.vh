@@ -618,7 +618,7 @@
 `define SSP_HI_UART_TXDATA_DATA       7          // field high index
 `define SSP_LO_UART_TXDATA_DATA       0          // field low index
 
-`define SSP_UART_RXDATA      32'h20000124  // RC reset 32'h00000000 | pop RX FIFO head; clears rx_avail when FIFO empties
+`define SSP_UART_RXDATA      32'h20000124  // RC reset 32'h00000000 | pop RX FIFO head (popped byte returned on the same read, R26); clears rx_avail when FIFO empties; read while empty returns 0
 `define SSP_RIDX_UART_RXDATA  10'h049      // word index (offset/4)
 `define SSP_UART_RXDATA_RESET 32'h00000000          // reset value
 `define SSP_UART_RXDATA_RESET_8 8'h0     // reset, 8-bit sized

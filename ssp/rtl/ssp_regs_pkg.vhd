@@ -257,7 +257,7 @@ package ssp_regs_pkg is
     constant C_SSP_UART_TXDATA    : natural := 536871200;  -- 0x20000120 WO | write TX holding (SNAC); honored only while STAT.tx_ready (FW polls; no RTS/CTS, R4)
     constant C_SSP_UART_TXDATA_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_UART_RXDATA    : natural := 536871204;  -- 0x20000124 RC | pop RX FIFO head; clears rx_avail when FIFO empties
+    constant C_SSP_UART_RXDATA    : natural := 536871204;  -- 0x20000124 RC | pop RX FIFO head (popped byte returned on the same read, R26); clears rx_avail when FIFO empties; read while empty returns 0
     constant C_SSP_UART_RXDATA_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
     constant C_SSP_UART_STAT      : natural := 536871208;  -- 0x20000128 R | UART status; rx_overrun sticky, cleared by CTRL.rx_clr

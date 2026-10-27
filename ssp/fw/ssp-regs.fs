@@ -250,7 +250,7 @@ $FFFFFFFF constant SSP_TICK_US_CNT ( field 31:0 )
 $20000120 constant SSP_UART_TXDATA ( WO | write TX holding (SNAC); honored only while STAT.tx_ready (FW polls; no RTS/CTS, R4) )
 $000000FF constant SSP_UART_TXDATA_DATA ( field 7:0 )
 
-$20000124 constant SSP_UART_RXDATA ( RC | pop RX FIFO head; clears rx_avail when FIFO empties )
+$20000124 constant SSP_UART_RXDATA ( RC | pop RX FIFO head (popped byte returned on the same read, R26); clears rx_avail when FIFO empties; read while empty returns 0 )
 $000000FF constant SSP_UART_RXDATA_DATA ( field 7:0 )
 
 $20000128 constant SSP_UART_STAT ( R | UART status; rx_overrun sticky, cleared by CTRL.rx_clr )

@@ -15,7 +15,11 @@
 // native to gracilis' rstrb protocol (mem_rbusy tied 0).
 //
 // Console mux (D-01/D-14/D-19, R24 OQ-22 byte-relay, R25/H6 fix):
-//   snac_txd   = console_own ? monitor_uart_tx : guest_serial_tx
+//   snac_txd   = CONN_ROUTE.out_snac ? monitor_uart_tx : idle  [R26: the
+//                RTL originally own-gated TX, which muted the monitor before
+//                its first ESC; D-19's out_snac policy bit is the correct
+//                gate.  Guest TX never reaches the SNAC pin: on silicon the
+//                SNAC is wired to the SSP and the guest ACIA TX is internal.]
 //   guest_rxd  = !ssp_active ? raw pin           (P-B: monitor-disabled is
 //                                                indistinguishable from
 //                                                monitor-absent, R-43)
@@ -205,7 +209,7 @@ module ssp_top (
     wire        uart_en, uart_rx_clr, uart_tx_clr, uart_tx_wr;
     wire [7:0]  uart_tx_wdata, uart_esc_char, uart_rx_rdata, uart_rx_rnext;
     wire        uart_tx_ready, uart_rx_avail, uart_rx_overrun, uart_rx_push;
-    wire        uart_esc_evt, uart_esc_eff, uart_relay_en;
+    wire        uart_esc_evt, uart_esc_eff, uart_relay_en, conn_out_snac;
     wire        mon_txd, relay_txd;
     wire        console_own, parked;
 
@@ -237,7 +241,8 @@ module ssp_top (
         .uart_tx_ready (uart_tx_ready), .uart_rx_avail (uart_rx_avail),
         .uart_rx_overrun (uart_rx_overrun), .uart_rx_push (uart_rx_push),
         .esc_char (uart_esc_char), .uart_esc_eff (uart_esc_eff),
-        .uart_relay_en (uart_relay_en), .uart_esc_evt (uart_esc_evt),
+        .uart_relay_en (uart_relay_en), .conn_out_snac (conn_out_snac),
+        .uart_esc_evt (uart_esc_evt),
         .console_own (console_own), .parked (parked),
         .ssp_irq (ssp_irq)
     );
@@ -275,9 +280,15 @@ module ssp_top (
                       rr_bridge ? bridge_rdata : 32'h0;
 
     // ------------------------------------------------ console mux ---------
-    // TX: owner drives the pin.  RX selection per header block (R25/H6):
+    // TX: monitor drives the pin per CONN_ROUTE.out_snac (D-19: FW policy,
+    // HW fail-safe default SNAC).  Guest-side TX never reaches the SNAC pin
+    // in this design: on silicon the guest's ACIA TX is an internal wire and
+    // the SNAC is wired to the SSP; the guest_rxd mux below still gives the
+    // guest everything until it is parked (R25 sovereignty).  [R26: was
+    // own-gated, which muted the monitor at boot -- see handoff §12.]
+    // RX selection per header block (R25/H6):
     // relay and raw paths are mutually exclusive -- no byte duplication.
-    assign snac_txd  = console_own ? mon_txd   : guest_txd;
+    assign snac_txd  = conn_out_snac ? mon_txd : 1'b1;
     assign guest_rxd = (!ssp_active || !osd_esc_en) ? snac_rxd :
                        console_own                  ? 1'b1       :
                                                     relay_txd;

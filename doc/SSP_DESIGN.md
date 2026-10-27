@@ -1846,3 +1846,32 @@ style sweep of gracilis is now a P1 comfort item, not a gate. P1 first
 tasks unchanged in order: ssp_bridge RTL vs CSV, TICK_US/milliseconds,
 panel-engine micro-op table (D-30), FW RECURSE-fold quirk fix (5.8.3) as
 an FW hygiene item.
+
+R26 **P1a console lane: REPL green (2026-10-27)** [R24/R25 log entries
+still pending, see SSP_HANDOFF 11]: three defects found in the p1a
+Verilator lane (real ssp_top + Z80 BFM), owner-approved fixes:
+(1) **RXDATA one-pop lag (RTL, ssp_bridge)** -- R25/H5 registered the FIFO
+head into a hold reg on the pop edge and fed the hold to q_reg, while q_hold
+captures q_reg on that SAME edge => q_hold latched the OLD hold; every KEY
+returned the previous pop's byte (CR seen one key late => accept never
+ended). Fix: q_reg(RXDATA) = combinational FIFO head (rx_rnext), 0 when
+empty (CSV text updated, regen). [R25 erratum: the H5 "launch+1 hold"
+shape was itself the one-byte skew.]
+(2) **Monitor TX muted until first ESC (RTL, ssp_top)** -- snac_txd was
+gated by console_own (resets 0 per R25), so the FW banner never reached the
+pin. Per D-19 the monitor output sink is CONN_ROUTE.out_snac (reset 1, HW
+fail-safe); snac_txd = out_snac ? mon_txd : idle. Guest TX never drives the
+SNAC pin (silicon: SNAC wired to the SSP, guest ACIA TX internal);
+console_own continues to govern RX routing only. [R25 erratum: header
+"snac_txd = console_own ? monitor : guest" superseded.]
+(3) **Harness (tb_p1a_main.cpp)** -- RX release fired mid-banner
+(first_tx + grace, and the +RXAT fallback) and overflowed the depth-8 RX
+FIFO before the kernel listened; now released when TX goes quiet, +RXAT
+only when the FW never transmits. +ECHO=0 parsed as enable -- fixed.
+Probe lesson: POPD now prints CPU-visible mem_rdata at launch+1 (the
+old probe printed the hold reg, which looked correct and hid defect 1).
+Diagnosis note: the "kernel polls offset 0x80 / stale FW hex" theory from
+the handoff was wrong -- fresh runs show all kernel reads at 0x124/0x128.
+Verified: `\x1d1 2 + . cr\r` -> banner, echo, `3`, `ok.`; `\x1dq\r` ->
+`q not found.`; lint-ssp OK; smoke-gracilis, dict-gracilis, smoke-stub
+PASS.
