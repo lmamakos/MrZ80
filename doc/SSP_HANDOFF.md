@@ -1,7 +1,7 @@
 # SSP Hand-off — current state and how to proceed
 
 Date: 2026-10-27 · Branch `r24-p1a` (unpushed; `main` = `origin/main` =
-`b12e7aa` R23) · Last design round: **R29** · Phase: **P1a ("first light")**,
+`b12e7aa` R23) · Last design round: **R30** · Phase: **P1a ("first light")**,
 simulation lane green, hardware integration not started.
 
 This document is for the next agent picking up the System Support Processor
@@ -35,14 +35,15 @@ theories) are in git history; the design-relevant parts were logged in
 | Register map | `ssp/regs/ssp_regs.csv` is canonical (72 regs / 138 fields). `make -C sim regmap` regenerates `ssp/rtl/ssp_regs.vh`, `ssp/rtl/ssp_regs_pkg.vhd`, `ssp/fw/ssp-regs.fs`, `doc/SSP_REGS.md`; `regmap-check` fails on drift (R-45) |
 | P1a RTL (written, sim-verified at RV side) | `ssp/rtl/ssp_top.v` (core + MROM/DTCM + decoder + bridge + UART + console mux), `ssp_bridge.v` (P1a registers, park controller, D-30 micro-op sequencer for FW mem/IO kicks, WDG×2, `TICK_US`), `ssp_uart.v` (8N1, RX FIFO 8, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` (D-26 mux, not yet instantiated anywhere), **`ssp_tramp.vhd` (R28: guest reset vent + reset-vector `JP aaaa` injector for `G aaaa`; verified on the real T80, not yet instantiated in the CPM core)** |
 | T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + FREEZE gate (BusAck only when next state is M1; prefix-gated). In `MicrocomputerZ80CPM.vhd` the gate is **tied off** (`n_BUSRQ <= '1'`; `FREEZE_req_n => '1'` is a dead port) — zero behaviour change. Regression benches passed at R25 (run.sh 115/0, cpuregs 8/8, ixmin 10/10, ixstack, run_forth) |
+| Monitor FW (R30) | `ssp/fw/apps/monitor.fs`: `E` `D` `G aaaa` `G` `R` `F` `?` (D-39), dedicated command loop, `init` runs it. `make -C sim dict-p1a` builds the dictionary artifact (`ssp/fw/build/mecrisp-ssp-p1a-app.hex`), `make -C sim smoke-p1a` runs the operator session + OM-off/on + idle-watchdog checks. Kernel `serial_key` kicks `WDG_PARK` while waiting |
 | P1a Verilator lane | `make -C sim p1a` → real `ssp_top` + behavioural Z80 (`sim/ssp/z80_bfm.v`) + pin-level serial. **REPL green (R26)**: escape → park → console hand-over → Mecrisp evaluates input (`1 2 + . cr` → `3 ok.`; `q` → `q not found.`) |
 | Hygiene | Build dirs and waveform dumps untracked and ignored; history purged (old→new hashes: `513a539`→`9ef7346`, `ba6cc92`→`d3a8b33`, `07a4ee9`→`12ad50b`) |
 
 ### 1.2 Not started / missing
 
-- Monitor application FW (`ssp/fw/apps/monitor.fs`) — the P1a command set.
-- `sim/ssp/p1a_dictbuild.sh`, `sim/ssp/p1a_smoke.sh` — the Makefile targets
-  `dict-p1a` / `smoke-p1a` already call them and currently fail.
+- **RTL gap (owner decision):** WDG_PARK expiry only latches `park_dead_l`;
+  D-13 says it also demotes the console and releases the FW hold
+  (`SSP_DESIGN.md` R30 hazard 2). Not fixed.
 - GHDL integration benches `tb_integ_park` (R-40), `tb_integ_mux` (R-42) —
   the real T80 FREEZE gate is only exercised indirectly (by `tb_tramp`'s
   park cases) so far.
@@ -100,7 +101,12 @@ round (R27, …) in `SSP_DESIGN.md` §17.
   Note: the remote named `upstream` is MiSTer-devel/MultiComp_MiSTer, the
   project this was forked from — never push there.
 
-### Step 1 — Monitor FW for P1a (Verilator lane)
+### Step 1 — Monitor FW for P1a (Verilator lane) — **DONE (R30)**
+
+*(Kept below for reference. Deviations: `F` instead of `X` for "to Forth"
+because `X` is the hardware escape in ODT; `R` was implemented; the monitor
+is a dedicated loop, not Forth words; R-46/R-23 are exercised by every smoke
+run. Command letters are still the owner-open proposals.)*
 
 **Goal:** the P1a FW command set running on the p1a lane, plus automated
 smoke and dictionary-build scripts.
@@ -354,6 +360,16 @@ rest of the command set. Bridge board design (OQ-09) runs in parallel.
   (7); the array must keep its MLAB `ramstyle` hint (async head read) --
   re-measure with `bakeoff/uartfifo128` if the FIFO logic changes. Unit bench:
   `make -C sim uart-fifo`.
+- **Long scripts into Mecrisp need `+LINEWAIT=1`** (waits for each line's
+  `ok.`), the monitor `+LINEWAIT=2 +QUIET=<cycles>` (TX quiet). Without them
+  a slow line lets the sender run ahead and overflow the RX FIFO, which shows
+  up as characters silently missing mid-line. The harness takes the **first**
+  occurrence of a plusarg, so put overrides before defaults.
+- **A `variable` in `compiletoflash` needs an initial value** (`0 variable x`);
+  without it Mecrisp reports `Stack underflow` and the rest of the build
+  derails.
+- **Before `console_own` drops, drain the UART** (`m-drain` in `monitor.fs`):
+  the last characters are otherwise cut off.
 - **Monitor silent until escape** (R25): with `+OM=1`, nothing from the FW
   appears on the pin before the escape byte; that is correct.
 - **um80 ignores `.PHASE`/`.DEPHASE`** (see `AGENTS.md`).
@@ -386,6 +402,7 @@ make -C sim p1a-vcd               # traced twin, +VCD -> sim/ssp/p1a.vcd
 make -C sim tramp                 # G aaaa: ssp_tramp vs the REAL T80 (GHDL, 176 checks)
 make -C sim tramp-p1a             # G aaaa: FW-side handshake on the p1a lane
 make -C sim uart-fifo             # ssp_uart RX FIFO unit bench, depths 8 and 128 (iverilog)
+make -C sim dict-p1a smoke-p1a    # monitor dictionary build (~45 s) + operator-session smoke (~60 s)
 
 # P1a interactive run (escape = ^] = 0x1d)
 printf '\x1d1 2 + . cr\r' | ./sim/ssp/obj_p1a/ssp_p1a \

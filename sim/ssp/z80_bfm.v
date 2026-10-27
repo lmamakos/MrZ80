@@ -22,8 +22,11 @@
 //     that reset primes the injector, which substitutes C3,lo,hi for the
 //     first three fetches, then pulses tramp_done.
 //   * Bus master mux local (sel = ~busack_n mirror of z80_bus_mux); the
-//     engine sees its reads answered (mem = addr^0x5A, io = port^0x0F)
-//     with launch-on-request data; io writes captured for inspection.
+//     engine sees its reads answered with launch-on-request data.  R30:
+//     engine MEMORY reads/writes hit the same writable 64K image the guest
+//     fetches from (initial pattern addr[7:0]^addr[15:8]), so deposit /
+//     examine round trips -- and code the operator pokes in -- work; io reads
+//     return port^0x0F; io writes are captured for inspection.
 //   * WAIT injection (+WAIT): one extra wait-state cycle on engine memory
 //     reads (mem rd held one cycle) -- engine must ride it (R25/H3).
 //   * Guest ACIA RX model: deserializes the ssp_top guest_rxd wire at the
@@ -237,7 +240,7 @@ module z80_bfm (
                                   : 1'b0;
     wire        io_wr    = sel_eng ? (eng_iorq_n == 1'b0 && eng_wr_n == 1'b0)
                                   : 1'b0;
-    wire [7:0]  d_mem    = addr_eff[7:0] ^ 8'h5A;
+    wire [7:0]  d_mem    = pmem[addr_eff];
     wire [7:0]  d_io     = addr_eff[7:0] ^ 8'h0F;
 
     assign cpu_addr = addr_eff;
@@ -253,6 +256,13 @@ module z80_bfm (
     wire wait_mem = inject_wait & sel_eng & (mem_rd | rd_seen) & ~eng_wr_n
                     & ~eng_mreq_n;
     assign cpu_wait_n = ~wait_mem;
+
+    // engine memory write (T2..T3, WR_n low): store into the shared image
+    // (gated by rst_n: before the first reset edge the engine strobes are
+    //  uninitialised-zero, which would scribble pmem[0])
+    wire eng_mem_wr = rst_n & sel_eng & ~eng_mreq_n & ~eng_wr_n;
+    always @(posedge clk)
+        if (eng_mem_wr) pmem[eng_addr] <= eng_dout;
 
     // io write capture (engine IO_WR primitive proof)
     always @(posedge clk) begin

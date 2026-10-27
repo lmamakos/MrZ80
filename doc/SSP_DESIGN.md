@@ -2007,3 +2007,50 @@ Quartus synthesis (`bakeoff/uartfifo8`, `uartfifo128`): see D-41. Effect on
 the p1a lane: the register-level `G aaaa` script that overran the 8-byte FIFO
 without `+RXGAP` pacing now runs unpaced, ~100 characters at line rate. The
 P0 stub SoCs keep their own 8-byte FIFO model (different lane, unchanged).
+
+R30 **P1a monitor FW (2026-10-27; D-39 implemented)**. `ssp/fw/apps/monitor.fs`:
+**dedicated ODT-style command loop** (prompt `.`, uppercase hex, SSP_DESIGN
+10.1), not Forth words that parse their own arguments; chosen because the
+loop owns the console only while `STATUS.FW_CONSOLE_OK` is set and must wait
+for the escape, banner on gaining it (R26), and survive the guest taking it
+back. Commands (letters are the D-39 proposals, unchanged): `E [aaaa [n]]`
+(default 128 bytes, 16 per row, hex + ASCII; no address = continue after the
+last E/D), `D [aaaa]` (prompt `aaaa: xx `, hex replaces, bare CR leaves the
+byte and advances, `.` ends; a value > FF or garbage prints `?` and stays on
+the byte), `G aaaa` (register-level recipe of R28: `TRAMP_ADDR`, `CTRL=$133`,
+`$030`), `G` (`CTRL=$020`, never injects), `R` (registers from `SNAP_REG0..6`;
+`*MID-INSN*` if `AT_BOUNDARY`=0, `*EXX*` if `ALT`), `F` (leave to the Forth
+REPL; `mon` re-enters), `? / H`. Malformed or extra arguments are errors --
+`G zz` must never mean plain `G`. E/D/G/R require the guest parked
+(`NOT PARKED` otherwise). `init` runs `mon`, so a cold boot of the dictionary
+artifact is the monitor. Memory goes through the D-30 sequencer in the
+guest's logical space.
+Hazards found and fixed on the way:
+(1) **Console hand-over truncation**: `G` drops `console_own` at once and
+the UART has a 1-deep TX holding register plus the shifter, so the monitor
+prints "GO" then waits ~200 us (`TICK_US`) before the `CTRL` write, else the
+last characters are cut off on the guest's line.
+(2) **WDG_PARK vs a human**: a park held with no `WDG_PARK_KICK` for ~0.4 s
+sets `park_dead_l`/`STATUS.WDG_DEAD`; a person at the prompt is slower than
+that, so the kernel's `serial_key` wait loop (`ssp/fw/terminal.s`) now writes
+`WDG_PARK_KICK` while it polls. **RTL gap found, not fixed (owner decision
+needed):** D-13/section 6.9 say expiry demotes the console and releases the
+FW hold (`z_busreq_n`<-1, `console_own`<-0); `ssp_bridge.v` only latches
+`park_dead_l` and reports it (`halt_reason`=9 fires only on `!rv_ctrl_ok`).
+(3) **Mecrisp specifics**: in `compiletoflash` mode `variable` takes an
+initial value (`0 variable x`); a `constant` split over two lines is fine.
+Infrastructure: BFM memory is now a writable 64K image shared by guest fetches
+and engine reads/writes (initial pattern `addr[7:0]^addr[15:8]`; engine writes
+gated by `rst_n` -- uninitialised strobes scribbled `pmem[0]` before reset);
+p1a harness: `+LINEWAIT=1|2` line-at-a-time input pacing (1 = wait for the
+Mecrisp `ok.` prompt, 2 = TX quiet, for the monitor), `+QUIET`, `+LINETO`,
+exit no longer fires while input was just sent, final line reports
+`guest_rx=` and `freeze_acc=`; `sim/ssp/p1a_dictbuild.sh` (monitor into the
+dictionary, kernel-integrity + cold-boot proof; ~45 s) and
+`sim/ssp/p1a_smoke.sh`: A the full operator session (banner on every escape,
+E/D semantics incl. error paths, `JP $5000` poked then `G 5000` and the guest
+verified running it, plain G, `G 300`, F), B OM-off bit transparency (R-43),
+C escape consumed with OM on, D idle at the prompt 0.8 s without WDG_PARK
+expiry. Mutation-tested: deposit not advancing, `G aaaa` not arming, plain G
+leaving TRAMP_EN set, BFM writes dropped, kernel not kicking the watchdog --
+each caught.

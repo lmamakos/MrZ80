@@ -24,7 +24,9 @@ module ssp_p1a_top (
     input  wire        dump_req,         // 1-cycle: dump MROM -> +DUMP
     // diagnostics read by the C++ harness (left unconnected by the tb)
     output wire [31:0] dbg_rom_illegal_writes,
-    output wire [31:0] dbg_bus_errs
+    output wire [31:0] dbg_bus_errs,
+    output wire [31:0] dbg_guest_rx,         // bytes the guest ACIA model received
+    output wire [31:0] dbg_freeze_acc        // park grants the guest CPU accepted
 );
 
     import "DPI-C" function void tb_putc(int c);
@@ -291,6 +293,13 @@ module ssp_p1a_top (
             $display("[p1a-evt @%0d] console_own -> %b (parked=%b)",
                      tb_cycle, u_dut.console_own, u_dut.parked);
     end
+    // R30: WDG_PARK expiry (park held ~0.4 s with no WDG_PARK_KICK from the FW)
+    reg pdead_q;
+    always @(posedge clk) begin
+        pdead_q <= u_dut.u_bridge.park_dead_l;
+        if (sim_dbg && rst_n && pdead_q && !u_dut.u_bridge.park_dead_l)
+            $display("[p1a-evt @%0d] WDG_PARK expired (dead FW console)", tb_cycle);
+    end
     // R27 trampoline / reset-vent trace: FW writes and the guest-side
     // handshake (CTRL, TRAMP_ADDR) -- widx 0x01 / 0x02 (SSP_RIDX_CTRL/TRAMP_ADDR)
     reg zrst_q, tarm_q, tdone_q;
@@ -377,6 +386,8 @@ module ssp_p1a_top (
     wire [31:0] mem_rdata_mux_probe = 32'h0;
 
     // ------------------------------------------------ final info line -----
+    assign dbg_guest_rx   = guest_rx_count;
+    assign dbg_freeze_acc = freeze_accept_count;
     export "DPI-C" task tb_info;
     task tb_info;
         $display("[p1a-info] cycles=%0d fetches=%0d freeze_acc=%0d guest_rx=%0d last_rx=%02x io_wr=%0d(%02x,%02x) rom_illegal=%0d bus_errs=%0d parked=%0b alive=%0b",

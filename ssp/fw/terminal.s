@@ -75,6 +75,7 @@ serial_qkey: # ( -- ? )
 .equ UART_RXDATA,   BRIDGE_BASE + 0x124 # RC  byte lane: RX FIFO pop
 .equ UART_STAT,     BRIDGE_BASE + 0x128 # R   bit0 tx_ready, bit1 rx_avail, bit2 rx_overrun
 .equ UART_CTRL,     BRIDGE_BASE + 0x12C # RW  bit0 en, bit1 rx_clr, bit2 tx_clr (self-clearing)
+.equ WDG_PARK_KICK,  BRIDGE_BASE + 0x0B4 # WO  any write refreshes the park watchdog
 
 .equ STAT_TX_READY, 0x01
 .equ STAT_RX_AVAIL, 0x02
@@ -103,10 +104,16 @@ serial_qemit: # ( -- ? )
   ret
 
 serial_key: # ( -- c )  blocks until a byte arrives
+  # R30: a human at the prompt must not trip the ~0.4 s WDG_PARK (D-13): the
+  # park is held for as long as the FW sits here, so refresh it while waiting.
   laf x14, UART_STAT
 1:lw x15, 0(x14)
   andi x15, x15, STAT_RX_AVAIL
-  beq x15, zero, 1b
+  bne x15, zero, 2f
+  laf x15, WDG_PARK_KICK
+  sw zero, 0(x15)             # any write re-arms (ssp_regs.csv 0x0B4)
+  j 1b
+2:
   laf x14, UART_RXDATA
   pushdatos
   lbu x8, 0(x14)

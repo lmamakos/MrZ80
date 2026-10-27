@@ -5,7 +5,17 @@
 // flow only after FW proves life: first TX + grace).
 //
 // Plusargs: +ROM=<hex> +DUMP=<hex> +IDLE=<n> +MAXCYCLES=<n> +ECHO=1 +PAUSE=<n>
-//           plus the RTL-side switches (+OSD_OK/+OM/+WAIT/+RVRST/+NOGUEST).
+//           +LINEWAIT=1|2: line-at-a-time pacing for long scripts.  After each
+//           CR the input is held until the line has been processed:
+//             1 (Mecrisp REPL, dictionary build): the FW's prompt "ok." has
+//               been printed and TX has then been quiet for +QUIET=<n>
+//               cycles (default 100000); +LINETO=<n> (default 8M) cycles
+//               release it anyway (error lines print no "ok.").  A slow
+//               Mecrisp line (~50k cycles per token) otherwise lets the
+//               sender run several lines ahead and overflow the RX FIFO.
+//             2 (monitor): TX quiet for +QUIET=<n> cycles since the CR / the
+//               last TX byte (the monitor's commands are much faster than
+//               its serial output).
 // Exit codes: 0 normal, 3 nothing ever transmitted (boot dead),
 //             1 counted bus/rom-illegal errors (after dump).
 
@@ -29,10 +39,15 @@ static char **g_argv = nullptr;
 static long long g_cycle = 0;
 static long long g_first_tx = -1;
 static long long g_last_tx = 0;
+static long long g_last_rx = 0;      // cycle the last input byte went out
 static long g_tx_bytes = 0, g_rx_bytes = 0;
 static bool g_eof = false;
 static bool g_echo = false;
 
+static long long g_line_cr = -1;     // cycle the last CR went out (linewait)
+static bool      g_line_ok = false;  // "ok." seen since that CR
+static long long g_line_to = 8000000;
+static int       g_tx_hist = 0;      // last three TX bytes
 static unsigned char g_buf[4096];
 static int g_b0 = 0, g_bn = 0;
 
@@ -41,6 +56,8 @@ extern "C" void tb_putc(int c) {
     fputc(c & 0xff, stdout);
     fflush(stdout);
     g_tx_bytes++;
+    g_tx_hist = ((g_tx_hist << 8) | (c & 0xff)) & 0xffffff;
+    if (g_tx_hist == (('o' << 16) | ('k' << 8) | '.')) g_line_ok = true;
     if (g_first_tx < 0) g_first_tx = g_cycle;
     g_last_tx = g_cycle;
 }
@@ -50,6 +67,7 @@ static long long g_rxat = 400000;   // +RXAT=-1 disables cycle fallback
 static long long g_quiet = 100000;  // TX-quiet grace before typing on
 static long long g_pause = 400000;  // +PAUSE: length of an in-band 0x01 pause
 static long long g_pause_until = 0;
+static int       g_linewait = 0;
 
 extern "C" int tb_rx_poll(void) {
     // Operator model, two steps (R26):
@@ -71,6 +89,17 @@ extern "C" int tb_rx_poll(void) {
     // search, ~50k cycles) before the next escape, so a late-executing
     // line cannot overwrite the escape's hardware hand-over.
     if (g_cycle < g_pause_until) return -1;
+    if (g_line_cr >= 0) {
+        if (g_linewait == 2) {
+            long long since = g_last_tx > g_line_cr ? g_last_tx : g_line_cr;
+            if (g_cycle < since + g_quiet) return -1;
+        } else if (g_line_ok) {
+            if (g_cycle < g_last_tx + g_quiet) return -1;
+        } else if (g_cycle < g_line_cr + g_line_to) {
+            return -1;
+        }
+        g_line_cr = -1;
+    }
     if (!open) {
         bool quiet = g_first_tx >= 0 && g_cycle >= g_last_tx + g_quiet;
         if (sent1_at < 0) {
@@ -108,6 +137,8 @@ extern "C" int tb_rx_poll(void) {
         fprintf(stderr, "[p1a] rx byte 1 @cycle %lld\n", g_cycle);
     }
     g_rx_bytes++;
+    g_last_rx = g_cycle;
+    if (g_linewait && c == 0x0D) { g_line_cr = g_cycle; g_line_ok = false; }
     return c;
 }
 
@@ -129,6 +160,9 @@ int main(int argc, char **argv) {
     long long maxc = plusarg_ll("+MAXCYCLES=", 600000000);
     g_rxat = plusarg_ll("+RXAT=", 400000);
     g_pause = plusarg_ll("+PAUSE=", 400000);
+    g_quiet = plusarg_ll("+QUIET=", 100000);
+    g_linewait = (int)plusarg_ll("+LINEWAIT=", 0);
+    g_line_to = plusarg_ll("+LINETO=", 8000000);
 
     struct termios tio_save;
     bool tty = isatty(0);
@@ -163,7 +197,8 @@ int main(int argc, char **argv) {
         g_top->clk = 0; g_top->eval();
         g_top->clk = 1; g_top->eval();
         g_cycle += 1;                     // one clock edge per iteration
-        if (g_eof && g_b0 == g_bn && g_cycle - g_last_tx > idle) break;
+        if (g_eof && g_b0 == g_bn &&
+            g_cycle - (g_last_tx > g_last_rx ? g_last_tx : g_last_rx) > idle) break;
     }
 
     // MROM dump (dict pipeline)
@@ -173,10 +208,12 @@ int main(int argc, char **argv) {
     g_top->dump_req = 0; g_top->clk = 0; g_top->eval();
 
     fprintf(stderr,
-            "[p1a] done: cycles=%lld tx=%ld rx=%ld rom_illegal=%u bus_errs=%u\n",
+            "[p1a] done: cycles=%lld tx=%ld rx=%ld rom_illegal=%u bus_errs=%u"
+            " guest_rx=%u freeze_acc=%u\n",
             g_cycle, g_tx_bytes, g_rx_bytes,
             (unsigned)g_top->dbg_rom_illegal_writes,
-            (unsigned)g_top->dbg_bus_errs);
+            (unsigned)g_top->dbg_bus_errs,
+            (unsigned)g_top->dbg_guest_rx, (unsigned)g_top->dbg_freeze_acc);
 
     if (g_tx_bytes == 0) { fprintf(stderr, "[p1a] no console output -- boot dead\n"); rc = 3; }
     if (g_top->dbg_bus_errs) rc = rc ? rc : 1;
