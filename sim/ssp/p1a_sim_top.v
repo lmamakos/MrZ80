@@ -170,8 +170,8 @@ module ssp_p1a_top (
     int        rx_gap;                    // +RXGAP=<cycles>: idle gap between
     int        sb_wait;                   // bytes.  A TX-busy Mecrisp kernel
     initial begin                       // (poll period ~4.3k cycles while it
-        rx_gap = 0;                     // emits at 115200) overruns a depth-8
-        sb_wait = 0;                    // RX FIFO against a line-rate sender;
+        rx_gap = 0;                     // emits at 115200) can overrun the RX
+        sb_wait = 0;                    // FIFO (128 bytes since R29) against a line-rate sender;
         if ($value$plusargs("RXGAP=%d", rx_gap)) ;  // pace the terminal
     end
     wire [16:0] sb_sum  = {1'b0, sb_acc} + {1'b0, BAUD};

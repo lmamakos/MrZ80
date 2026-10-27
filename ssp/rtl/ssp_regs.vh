@@ -626,7 +626,7 @@
 `define SSP_HI_UART_RXDATA_DATA       7          // field high index
 `define SSP_LO_UART_RXDATA_DATA       0          // field low index
 
-`define SSP_UART_STAT        32'h20000128  // R reset 32'h00000000 | UART status; rx_overrun sticky, cleared by CTRL.rx_clr
+`define SSP_UART_STAT        32'h20000128  // R reset 32'h00000000 | UART status; rx_overrun sticky (RX FIFO full, 128 bytes, byte dropped; D-41), cleared by CTRL.rx_clr
 `define SSP_RIDX_UART_STAT    10'h04A      // word index (offset/4)
 `define SSP_UART_STAT_RESET 32'h00000000          // reset value
 `define SSP_UART_STAT_RESET_3 3'h0     // reset, 3-bit sized

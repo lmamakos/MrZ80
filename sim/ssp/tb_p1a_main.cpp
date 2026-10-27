@@ -59,7 +59,7 @@ extern "C" int tb_rx_poll(void) {
     //     a TX-only gate would deadlock.
     //  2. The REST waits until the monitor's TX has been quiet for g_quiet
     //     cycles (it has finished printing and is polling KEY).  Sending
-    //     while it prints overflows the depth-8 RX FIFO.  Precisely: the
+    //     while it prints can overflow the RX FIFO (128 bytes).  Precisely: the
     //     rest goes out once g_quiet cycles have passed since both byte 1
     //     and the last TX byte.
     // +RXAT=<cycles> sets step 1 (default 400k = 8 ms at 50 MHz).

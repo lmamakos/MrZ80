@@ -81,6 +81,6 @@ W1C, RCW (shared FW/engine, G-3).
 | 0x114 | `TICK_US` | R | `00000000` | CNT 31:0 | free-running 1 MHz counter (D-20 time base) |
 | 0x120 | `UART_TXDATA` | WO | `00000000` | DATA 7:0 | write TX holding (SNAC); honored only while STAT.tx_ready (FW polls; no RTS/CTS, R4) |
 | 0x124 | `UART_RXDATA` | RC | `00000000` | DATA 7:0 | pop RX FIFO head (popped byte returned on the same read, R26); clears rx_avail when FIFO empties; read while empty returns 0 |
-| 0x128 | `UART_STAT` | R | `00000000` | TX_READY 0:0; RX_AVAIL 1:1; RX_OVERRUN 2:2 | UART status; rx_overrun sticky, cleared by CTRL.rx_clr |
+| 0x128 | `UART_STAT` | R | `00000000` | TX_READY 0:0; RX_AVAIL 1:1; RX_OVERRUN 2:2 | UART status; rx_overrun sticky (RX FIFO full, 128 bytes, byte dropped; D-41), cleared by CTRL.rx_clr |
 | 0x12C | `UART_CTRL` | RW | `00000001` | EN 0:0; RX_CLR 1:1; TX_CLR 2:2 | UART enable (default on); rx_clr/tx_clr self-clearing FIFO flushes (P0) |
 | 0xFF0 | `DEC_ERR_COUNT` | R | `00000000` | COUNT 7:0 | unimplemented-offset counter (saturating) |

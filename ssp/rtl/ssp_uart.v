@@ -4,8 +4,11 @@
 // * 8N1, fractional 16x baud from the shared O9B table index value
 //   (baud_increment: 2416 => 115200 at 50 MHz, session R4 -- same table
 //   the MrZ80 SNAC mux uses; single baud truth for the connector).
-// * RX: 8-deep FIFO (depth proposal, SSP_DESIGN 5.3), sticky rx_overrun,
-//   self-clearing rx_clr/tx_clr (UART_CTRL).  Sampling at BIT CENTRES
+// * RX: FIFO of 2**FIFO_LOG2 bytes (default 128, D-41/R29; was 8), sticky
+//   rx_overrun (byte dropped when full), self-clearing rx_clr/tx_clr
+//   (UART_CTRL).  The depth is what lets an automated sender run at line
+//   rate while the polled FW is busy: 128 bytes = ~11 ms of 115200-baud
+//   input, i.e. several Mecrisp lines (~3.4 ms each).  No RTS/CTS (R4).  Sampling at BIT CENTRES
 //   (R25/H7): start-bit mid at tick 7 (divider pre-biased half-tick),
 //   data bits D0..D7 at ticks 23/39/../135, stop validated at 135 too.
 // * Escape recognizer (D-14, rev R15) with byte-level relay consumption
@@ -32,7 +35,9 @@
 
 `timescale 1 ns / 1 ps
 
-module ssp_uart (
+module ssp_uart #(
+    parameter FIFO_LOG2 = 7                 // RX FIFO depth = 2**FIFO_LOG2
+) (
     input  wire        clk,
     input  wire        rst_n,
 
@@ -128,16 +133,24 @@ module ssp_uart (
         end
     end
 
-    // ------------------------------------------------ FIFO (depth 8) -----
-    reg [7:0] fifo [0:7];
-    reg [3:0] wp, rp;                      // mod-16 free-running == depth 8
-    wire [3:0] fifo_count = wp - rp;
-    assign rx_avail = (fifo_count != 4'd0);
+    // ------------------------------------------------ RX FIFO ----------
+    // Free-running pointers one bit wider than the index: empty when equal,
+    // full when only the MSB differs.  The head is read ASYNCHRONOUSLY
+    // (rx_rnext): the bridge captures it on the pop-launch edge (R26).  Async
+    // read must map to MLAB (LUT RAM); the ramstyle hint below keeps Quartus
+    // from building ~1k flip-flops plus a 128:1 read mux per bit.
+    localparam DEPTH = 1 << FIFO_LOG2;
+    (* ramstyle = "MLAB, no_rw_check" *) reg [7:0] fifo [0:DEPTH-1];
+    reg [FIFO_LOG2:0] wp, rp;
+    wire fifo_empty = (wp == rp);
+    wire fifo_full  = (wp[FIFO_LOG2] != rp[FIFO_LOG2]) &&
+                      (wp[FIFO_LOG2-1:0] == rp[FIFO_LOG2-1:0]);
+    assign rx_avail = !fifo_empty;
     // R25: RXDATA must present the popped byte at launch+1.  A bridge flop
     // sampling rx_rdata (a register) in the SAME timestep as the pop sees
     // the PREVIOUS byte (both read the old value) -- one-byte skew.  The
     // bridge must instead capture this combinational head value.
-    assign rx_rnext = fifo[rp[2:0]];
+    assign rx_rnext = fifo[rp[FIFO_LOG2-1:0]];
 
     // escape consumption (OQ-22a): match only while the guest runs
     wire esc_hit = byte_done && rx_stop && esc_eff && !parked
@@ -147,24 +160,25 @@ module ssp_uart (
     always @(posedge clk) begin
         rx_push <= 1'b0;
         if (!rst_n) begin
-            wp <= 4'd0; rp <= 4'd0; rx_overrun <= 1'b0; rx_rdata <= 8'd0;
+            wp <= {(FIFO_LOG2+1){1'b0}}; rp <= {(FIFO_LOG2+1){1'b0}};
+            rx_overrun <= 1'b0; rx_rdata <= 8'd0;
         end else begin
             if (rx_clr) begin
                 rp         <= wp;                 // flush
                 rx_overrun <= 1'b0;
             end
             if (byte_done && rx_stop && console_own && !rx_clr) begin
-                if (fifo_count < 4'd8) begin
-                    fifo[wp[2:0]] <= rx_byte;
-                    wp            <= wp + 4'd1;
+                if (!fifo_full) begin
+                    fifo[wp[FIFO_LOG2-1:0]] <= rx_byte;
+                    wp            <= wp + 1'b1;
                     rx_push       <= 1'b1;
                 end else begin
                     rx_overrun    <= 1'b1;      // byte lost
                 end
             end
             if (rx_pop && rx_avail && !rx_clr) begin
-                rx_rdata <= fifo[rp[2:0]];
-                rp       <= rp + 4'd1;
+                rx_rdata <= rx_rnext;      // same read port: one RAM copy
+                rp       <= rp + 1'b1;
             end
         end
     end

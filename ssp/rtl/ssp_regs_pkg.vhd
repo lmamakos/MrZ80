@@ -260,7 +260,7 @@ package ssp_regs_pkg is
     constant C_SSP_UART_RXDATA    : natural := 536871204;  -- 0x20000124 RC | pop RX FIFO head (popped byte returned on the same read, R26); clears rx_avail when FIFO empties; read while empty returns 0
     constant C_SSP_UART_RXDATA_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_UART_STAT      : natural := 536871208;  -- 0x20000128 R | UART status; rx_overrun sticky, cleared by CTRL.rx_clr
+    constant C_SSP_UART_STAT      : natural := 536871208;  -- 0x20000128 R | UART status; rx_overrun sticky (RX FIFO full, 128 bytes, byte dropped; D-41), cleared by CTRL.rx_clr
     constant C_SSP_UART_STAT_TX_READY     : natural range 0 to 31 := 0;  -- field 0:0
     constant C_SSP_UART_STAT_RX_AVAIL     : natural range 0 to 31 := 1;  -- field 1:1
     constant C_SSP_UART_STAT_RX_OVERRUN   : natural range 0 to 31 := 2;  -- field 2:2

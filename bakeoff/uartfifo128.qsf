@@ -1,0 +1,11 @@
+# uartfifo128.qsf -- ssp_uart RX FIFO mapping probe (R29, throwaway)
+set_global_assignment -name FAMILY "Cyclone V"
+set_global_assignment -name DEVICE 5CSEBA6U23I7
+set_global_assignment -name TOP_LEVEL_ENTITY ssp_uart
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_uartfifo128
+set_global_assignment -name MIN_CORE_JUNCTION_TEMP 0
+set_global_assignment -name MAX_CORE_JUNCTION_TEMP 85
+set_global_assignment -name ERROR_CHECK_FREQUENCY_DIVISOR 256
+set_global_assignment -name VERILOG_FILE ../ssp/rtl/ssp_uart.v
+set_parameter -name FIFO_LOG2 7
+set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"

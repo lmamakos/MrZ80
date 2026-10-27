@@ -1,7 +1,7 @@
 # SSP Hand-off — current state and how to proceed
 
 Date: 2026-10-27 · Branch `r24-p1a` (unpushed; `main` = `origin/main` =
-`b12e7aa` R23) · Last design round: **R28** · Phase: **P1a ("first light")**,
+`b12e7aa` R23) · Last design round: **R29** · Phase: **P1a ("first light")**,
 simulation lane green, hardware integration not started.
 
 This document is for the next agent picking up the System Support Processor
@@ -345,8 +345,9 @@ rest of the command set. Bridge board design (OQ-09) runs in parallel.
   such a register with `sw` and reads it back is the only thing that catches
   this; `p1a_tramp.sh` covers TRAMP_ADDR and CTRL.
 - **Mecrisp line latency:** ~170k cycles per input line (each token is a full
-  dictionary search). Scripts must pace input (`+RXGAP=30000`, 8-deep RX FIFO)
-  and put an in-band pause (byte `0x01`, `+PAUSE=<cycles>`, default 400000)
+  dictionary search). Input is buffered by the 128-byte RX FIFO (R29/D-41: ~11 ms of line-rate
+  input, ~3 lines), so a script of a few lines needs no `+RXGAP` pacing; for
+  longer scripts pace with `+RXGAP=<cycles>`. Put an in-band pause (byte `0x01`, `+PAUSE=<cycles>`, default 400000)
   before an escape that follows a command, or the late-executing line
   overwrites the escape's hardware hand-over (hold/own).
 - **`+DBG` is noisy:** the `p1a-mt3` probe in `p1a_sim_top.v` prints on
@@ -354,9 +355,13 @@ rest of the command set. Bridge board design (OQ-09) runs in parallel.
   lines). Redirect to a file and grep; consider tightening that probe.
 - **Edits can silently not land** (seen in earlier sessions with batched
   parallel edits). Grep-verify each edit before rebuilding.
-- **RX FIFO is 8 deep.** Any test that types while the FW is busy printing
-  will overflow (`STAT.RX_OVERRUN`). The p1a harness waits for TX quiet;
-  `+RXGAP=<cycles>` paces bytes.
+- **RX FIFO is 128 bytes (R29, D-41; was 8).** A sender that outruns the
+  polled FW for more than ~11 ms still overflows (`STAT.RX_OVERRUN`, byte
+  dropped, no RTS/CTS). The p1a harness waits for TX quiet before the rest of
+  the input; `+RXGAP=<cycles>` paces bytes. The depth is `ssp_uart.FIFO_LOG2`
+  (7); the array must keep its MLAB `ramstyle` hint (async head read) --
+  re-measure with `bakeoff/uartfifo128` if the FIFO logic changes. Unit bench:
+  `make -C sim uart-fifo`.
 - **Monitor silent until escape** (R25): with `+OM=1`, nothing from the FW
   appears on the pin before the escape byte; that is correct.
 - **um80 ignores `.PHASE`/`.DEPHASE`** (see `AGENTS.md`).
@@ -388,6 +393,7 @@ make -C sim p1a                   # P1a lane -> sim/ssp/obj_p1a/ssp_p1a
 make -C sim p1a-vcd               # traced twin, +VCD -> sim/ssp/p1a.vcd
 make -C sim tramp                 # G aaaa: ssp_tramp vs the REAL T80 (GHDL, 176 checks)
 make -C sim tramp-p1a             # G aaaa: FW-side handshake on the p1a lane
+make -C sim uart-fifo             # ssp_uart RX FIFO unit bench, depths 8 and 128 (iverilog)
 
 # P1a interactive run (escape = ^] = 0x1d)
 printf '\x1d1 2 + . cr\r' | ./sim/ssp/obj_p1a/ssp_p1a \

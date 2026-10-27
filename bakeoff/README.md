@@ -85,3 +85,17 @@ assertion ever needed for RAM reads; the stall protocol stays reserved for
 future slow slaves) and costing picorv32 one wait state per access. FW/boot
 sees the same single-cycle-latency memories either way. Verdict + final
 numbers in `SSP_DESIGN.md` §5.8 / §17 R21.
+
+## ssp_uart RX FIFO mapping probe (R29, D-41)
+
+`uartfifo8` / `uartfifo128` synthesize `ssp/rtl/ssp_uart.v` alone at
+`FIFO_LOG2` = 3 and 7 (analysis & synthesis only):
+
+    tools/quartus_build.sh --flow analysis_and_synthesis bakeoff/uartfifo128 -c uartfifo128
+
+The FIFO head is read asynchronously (the bridge captures it on the pop-launch
+edge), so the memory must map to MLAB. Measured (Quartus 17.0, whole UART):
+depth 8 = 128 ALMs; depth 128 = 157 ALMs, 1024 MLAB bits, 0 M10K. Without the
+`ramstyle = "MLAB"` hint Quartus instead builds M10K blocks plus address-register
+logic (and, before the single-read-port fix, two copies of the RAM) -- keep the hint.
+(The Docker run leaves root-owned `output_*` dirs; they are gitignored.)

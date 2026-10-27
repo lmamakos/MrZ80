@@ -253,7 +253,7 @@ $000000FF constant SSP_UART_TXDATA_DATA ( field 7:0 )
 $20000124 constant SSP_UART_RXDATA ( RC | pop RX FIFO head (popped byte returned on the same read, R26); clears rx_avail when FIFO empties; read while empty returns 0 )
 $000000FF constant SSP_UART_RXDATA_DATA ( field 7:0 )
 
-$20000128 constant SSP_UART_STAT ( R | UART status; rx_overrun sticky, cleared by CTRL.rx_clr )
+$20000128 constant SSP_UART_STAT ( R | UART status; rx_overrun sticky (RX FIFO full, 128 bytes, byte dropped; D-41), cleared by CTRL.rx_clr )
 $00000001 constant SSP_UART_STAT_TX_READY ( field 0:0 )
 $00000002 constant SSP_UART_STAT_RX_AVAIL ( field 1:1 )
 $00000004 constant SSP_UART_STAT_RX_OVERRUN ( field 2:2 )
