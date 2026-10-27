@@ -520,8 +520,9 @@ Owner-pending: OQ-10, OQ-18.
   clean tb waveforms => suspect `snac_rxd` 2FF-sync + level-lock interaction
   or `uart_en`). Also note DBG $display goes to STDOUT (was confused with
   TX earlier).
-- Work committed: `513a539` (branch r24-p1a) + one more commit for the
-  rx_rnext lint fix. Nothing pushed yet.
+- Work committed: `9ef7346` (branch r24-p1a; was `513a539` before the
+  §12 history rewrite) + one more commit for the rx_rnext lint fix.
+  Nothing pushed yet.
 
 ---
 
@@ -555,9 +556,15 @@ Working repro (from repo root, no +RXAT needed):
 - `$display` goes to stdout, interleaved with console bytes; harness
   messages go to stderr.
 
-**Housekeeping flagged for the owner:** `sim/ssp/obj_p1a/`,
-`sim/ssp/obj_p1adbg/` and the 229 MB `sim/ssp/p1a.vcd` are tracked in
-git (from `513a539`); suggest untracking + `.gitignore`. Not changed.
+**Housekeeping (done, owner-approved):** `sim/ssp/obj_p1a/`,
+`sim/ssp/obj_p1adbg/` and the 229 MB `sim/ssp/p1a.vcd` had been committed
+in `513a539`. Untracked; root `.gitignore` now ignores `sim/ssp/obj*/`
+and waveform dumps (`*.vcd`, `*.fst`, `*.ghw`, ...). The unpushed
+`r24-p1a` range was then rewritten with `git filter-branch` to purge
+them from history: commit hashes from `513a539` onward changed
+(`513a539`→`9ef7346`, `ba6cc92`→`d3a8b33`, `07a4ee9`→`12ad50b`); trees
+verified identical apart from the purged paths. `.git` shrank from
+~79 MB to ~34 MB. `main`/`origin` untouched; no force-push needed.
 
 **Still open from §11:** `ssp/fw/apps/monitor.fs`, `p1a_dictbuild.sh`,
 `p1a_smoke.sh` (the `dict-p1a`/`smoke-p1a` Makefile targets reference
