@@ -161,8 +161,13 @@ SSP_CTRL_ESC_BREAK_EN
 
 \ ---- MAP : MMU frames, logical -> physical view ------------------------------------
 \ Read through engine I/O reads of the MMU mapping ports ($B0+n low, $B4+n
-\ high); reads are state-neutral (P-D).  Page = 14 bits (physical_page_bits 14);
-\ page 8192 = the relocated block-RAM page (phys 0x0800_0000), else SDRAM.
+\ high); reads are state-neutral (P-D) and verified against the real core
+\ (tb_integ_core).  This is the permanent monitor path: the direct MAP0..3 CSR
+\ taps exist as reserved ABI only -- the MMU tap / MAP_CHANGED producer is
+\ shelved by owner ruling R38 (MMU awareness is human-scale and parked-CPU
+\ only; no live-OSD bank display, so the running-CPU consumers do not exist).
+\ Page = 14 bits (physical_page_bits 14); page 8192 = the relocated block-RAM
+\ page (phys 0x0800_0000), else SDRAM.
 0 variable m-pg
 0 variable m-kn
 : m-map1 ( n -- )

@@ -166,7 +166,7 @@ package ssp_regs_pkg is
     constant C_SSP_IRQ_EN_SD_DONE      : natural range 0 to 31 := 10;  -- field 10:10
     constant C_SSP_IRQ_EN_WDG_PARK     : natural range 0 to 31 := 11;  -- field 11:11
 
-    constant C_SSP_IRQ_PENDING    : natural := 536871108;  -- 0x200000C4 W1C | sticky event bits; v1 FW polls (D-27); write-1 clears
+    constant C_SSP_IRQ_PENDING    : natural := 536871108;  -- 0x200000C4 W1C | sticky event bits; v1 FW polls (D-27); write-1 clears; MAP_CHANGED producer shelved (R38)
     constant C_SSP_IRQ_PENDING_BP0          : natural range 0 to 31 := 0;  -- field 0:0
     constant C_SSP_IRQ_PENDING_BP1          : natural range 0 to 31 := 1;  -- field 1:1
     constant C_SSP_IRQ_PENDING_BP2          : natural range 0 to 31 := 2;  -- field 2:2
@@ -198,19 +198,19 @@ package ssp_regs_pkg is
     constant C_SSP_MBX3           : natural := 536871132;  -- 0x200000DC RW | Z80 mailbox mirror $D3
     constant C_SSP_MBX3_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_MAP0           : natural := 536871136;  -- 0x200000E0 R | MMU frame tap entry 0 (state-neutral P-D)
+    constant C_SSP_MAP0           : natural := 536871136;  -- 0x200000E0 R | reserved MMU frame tap entry 0; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B0+$B4
     constant C_SSP_MAP0_PAGE         : natural range 0 to 31 := 13;  -- field 13:0
     constant C_SSP_MAP0_VALID        : natural range 0 to 31 := 14;  -- field 14:14
 
-    constant C_SSP_MAP1           : natural := 536871140;  -- 0x200000E4 R | MMU frame tap entry 1
+    constant C_SSP_MAP1           : natural := 536871140;  -- 0x200000E4 R | reserved MMU frame tap entry 1; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B1+$B5
     constant C_SSP_MAP1_PAGE         : natural range 0 to 31 := 13;  -- field 13:0
     constant C_SSP_MAP1_VALID        : natural range 0 to 31 := 14;  -- field 14:14
 
-    constant C_SSP_MAP2           : natural := 536871144;  -- 0x200000E8 R | MMU frame tap entry 2
+    constant C_SSP_MAP2           : natural := 536871144;  -- 0x200000E8 R | reserved MMU frame tap entry 2; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B2+$B6
     constant C_SSP_MAP2_PAGE         : natural range 0 to 31 := 13;  -- field 13:0
     constant C_SSP_MAP2_VALID        : natural range 0 to 31 := 14;  -- field 14:14
 
-    constant C_SSP_MAP3           : natural := 536871148;  -- 0x200000EC R | MMU frame tap entry 3
+    constant C_SSP_MAP3           : natural := 536871148;  -- 0x200000EC R | reserved MMU frame tap entry 3; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B3+$B7
     constant C_SSP_MAP3_PAGE         : natural range 0 to 31 := 13;  -- field 13:0
     constant C_SSP_MAP3_VALID        : natural range 0 to 31 := 14;  -- field 14:14
 

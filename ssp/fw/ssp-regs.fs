@@ -159,7 +159,7 @@ $00000200 constant SSP_IRQ_EN_MAP_CHANGED ( field 9:9 )
 $00000400 constant SSP_IRQ_EN_SD_DONE ( field 10:10 )
 $00000800 constant SSP_IRQ_EN_WDG_PARK ( field 11:11 )
 
-$200000C4 constant SSP_IRQ_PENDING ( W1C | sticky event bits; v1 FW polls (D-27); write-1 clears )
+$200000C4 constant SSP_IRQ_PENDING ( W1C | sticky event bits; v1 FW polls (D-27); write-1 clears; MAP_CHANGED producer shelved (R38) )
 $00000001 constant SSP_IRQ_PENDING_BP0 ( field 0:0 )
 $00000002 constant SSP_IRQ_PENDING_BP1 ( field 1:1 )
 $00000004 constant SSP_IRQ_PENDING_BP2 ( field 2:2 )
@@ -191,19 +191,19 @@ $000000FF constant SSP_MBX2_DATA ( field 7:0 )
 $200000DC constant SSP_MBX3 ( RW | Z80 mailbox mirror $D3 )
 $000000FF constant SSP_MBX3_DATA ( field 7:0 )
 
-$200000E0 constant SSP_MAP0 ( R | MMU frame tap entry 0 (state-neutral P-D) )
+$200000E0 constant SSP_MAP0 ( R | reserved MMU frame tap entry 0; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B0+$B4 )
 $00003FFF constant SSP_MAP0_PAGE ( field 13:0 )
 $00004000 constant SSP_MAP0_VALID ( field 14:14 )
 
-$200000E4 constant SSP_MAP1 ( R | MMU frame tap entry 1 )
+$200000E4 constant SSP_MAP1 ( R | reserved MMU frame tap entry 1; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B1+$B5 )
 $00003FFF constant SSP_MAP1_PAGE ( field 13:0 )
 $00004000 constant SSP_MAP1_VALID ( field 14:14 )
 
-$200000E8 constant SSP_MAP2 ( R | MMU frame tap entry 2 )
+$200000E8 constant SSP_MAP2 ( R | reserved MMU frame tap entry 2; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B2+$B6 )
 $00003FFF constant SSP_MAP2_PAGE ( field 13:0 )
 $00004000 constant SSP_MAP2_VALID ( field 14:14 )
 
-$200000EC constant SSP_MAP3 ( R | MMU frame tap entry 3 )
+$200000EC constant SSP_MAP3 ( R | reserved MMU frame tap entry 3; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B3+$B7 )
 $00003FFF constant SSP_MAP3_PAGE ( field 13:0 )
 $00004000 constant SSP_MAP3_VALID ( field 14:14 )
 

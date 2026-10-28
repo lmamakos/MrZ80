@@ -320,18 +320,26 @@ R35, physical ops there rejected `?`; `z80_bus_mux` unchanged — it stays the l
 cycle-faithful Z80 path, R35 assessment); **(b)** Z80 I/O port commands ->
 FW-only (`I`/`O`; the D-30 sequencer's IO_RD/IO_WR are already golden-verified);
 **(c)** MMU inspection + logical->physical display -> FW `MAP` via engine I/O
-reads of $B0..$BF immediately, `MAP0..3` frame taps later (needs MMU.vhd tap
-export, our file, allowed); `PHY`/`LOG` mode verbs; physical-vs-logical command
-letters = OQ-24. Also pending: `PR`/mailbox, step assist, MROM/MPKG mount path,
-ODT skin. Bridge board design (OQ-09) runs in parallel.
+reads of $B0..$BF (the permanent path — see R38); `PHY`/`LOG` mode verbs;
+physical-vs-logical command letters = OQ-24. Also pending: `PR`/mailbox, step
+assist, MROM/MPKG mount path, ODT skin. Bridge board design (OQ-09) runs in
+parallel. **R38: the direct MMU frame-tap interface (and with it the
+`MAP_CHANGED` IRQ producer) is shelved** — owner analysis: the MiSTer OSD is a
+configuration surface (escape char, SD mount, ROM download: static, not
+debug-hot), and the FPGA-video terminal is serial-like; MMU awareness is
+human-scale and parked-CPU-only, and the `$B0..$BF` engine path covers every
+such need. `MAP0..3` stay reserved in the regmap (reads 0) and the IRQ bit
+defined but producerless, preserving ABI. If a live-running-system consumer
+ever materialises (e.g. bank-state lamps on an OSD overlay), the tap is the
+reactivation path.
 
 **M1 DONE (R37):** `I`/`O`/`MAP`/`PHY`/`LOG` + colour stubs are in the monitor
 (`monitor.fs`), covered by new Part E of `p1a_smoke.sh`; item (b) is fully
 closed — with the owner ruling that port I/O is address-mode-independent, the
 bridge now rejects only MEMORY kicks while `MD=physical` (`IS_IO` exempt).
 Physical E/D (item (a)) still awaits `ssp_mem_client` (M3): FW refuses with
-`PHYSICAL E/D PENDING M3`. `MAP` currently reads the $B0..$BF engine path;
-`MAP0..3` direct frame taps remain M2 work. Factory `forth_rom.mif` regenerated
+`PHYSICAL E/D PENDING M3`. `MAP` reads the $B0..$BF engine path — permanent per
+R38 (direct frame taps shelved). Factory `forth_rom.mif` regenerated
 with M1; owner rebuild (`tools/build.sh`) + `make install` to see the new
 commands on hardware.
 

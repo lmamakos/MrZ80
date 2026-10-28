@@ -2276,3 +2276,22 @@ kills exactly the three physical-mode checks. Lanes after the change:
 regmap-check, lint-ssp, p1a, dict-p1a, smoke-p1a (Parts A-E), tramp-p1a,
 uart-fifo -- all PASS. Factory `ssp/fw/forth_rom.mif` regenerated to carry the
 M1 monitor (recommit-on-FW-change rule honored).
+
+R38 **Direct MMU tap + MAP_CHANGED shelved (2026-10-28; owner ruling).** The
+`MAP0..3` frame-tap path (MMU.vhd -> CPM entity -> bridge) and the
+`MAP_CHANGED` IRQ producer are descoped from P1b. Owner analysis: the MiSTer
+OSD is a *configuration* surface -- monitor escape char, SD mount, ROM
+download: comparatively static, not debug-hot; the FPGA-video "second
+terminal" is serial-monitor-like. MMU state awareness is therefore human-scale
+and overwhelmingly parked-CPU, and engine I/O reads of the MMU ports
+($B0+n/$B4+n) already cover it -- proven on the real core (tb_integ_core,
+138 MMU reg reads) and end-to-end in smoke Part E. The running-CPU consumers
+that justified the taps (live bank-state lamps on an OSD overlay,
+map-change-triggered capture) do not exist in current scope. Neither was ever
+built: `MAP0..3` decode with value 0 and `MAP_CHANGED` never sets -- both
+remain RESERVED in the regmap (ABI positions kept; descriptions now say
+"shelved (R38), reads 0"), so a future live-OSD consumer can reactivate the
+tap without an address-map change. Monitor `MAP` on the I/O path is permanent.
+Milestone numbering stays stable: M2 is the shelved tap, M3 remains the
+physical-memory path (`ssp_mem_client`). CSV + regenerated outputs updated;
+regmap-check PASS.

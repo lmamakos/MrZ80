@@ -59,16 +59,16 @@ W1C, RCW (shared FW/engine, G-3).
 | 0x0B4 | `WDG_PARK_KICK` | WO | `00000000` |  | WDG_PARK ~1.3s watchdog kick |
 | 0x0B8 | `WDG_STAT` | R | `00000000` | RUN_EXPIRED_L 0:0; PARK_DEAD_L 1:1; PARK_TIMER 2:2 | watchdog status (sec 6.9) |
 | 0x0C0 | `IRQ_EN` | RW | `00000000` | BP0 0:0; BP1 1:1; BP2 2:2; BP3 3:3; TRAP 4:4; RX 5:5; ESC 6:6; MBX 7:7; FP_DONE 8:8; MAP_CHANGED 9:9; SD_DONE 10:10; WDG_PARK 11:11 | gates optional IRQ line only (D-27) |
-| 0x0C4 | `IRQ_PENDING` | W1C | `00000000` | BP0 0:0; BP1 1:1; BP2 2:2; BP3 3:3; TRAP 4:4; RX 5:5; ESC 6:6; MBX 7:7; FP_DONE 8:8; MAP_CHANGED 9:9; SD_DONE 10:10; WDG_PARK 11:11 | sticky event bits; v1 FW polls (D-27); write-1 clears |
+| 0x0C4 | `IRQ_PENDING` | W1C | `00000000` | BP0 0:0; BP1 1:1; BP2 2:2; BP3 3:3; TRAP 4:4; RX 5:5; ESC 6:6; MBX 7:7; FP_DONE 8:8; MAP_CHANGED 9:9; SD_DONE 10:10; WDG_PARK 11:11 | sticky event bits; v1 FW polls (D-27); write-1 clears; MAP_CHANGED producer shelved (R38) |
 | 0x0C8 | `CONN_ROUTE` | RW | `00000001` | OUT_SNAC 0:0; OUT_HDMI 1:1; IN_SNAC 2:2; IN_KBD 3:3 | console routing policy (D-19); HW fail-safe defaults on reset/wdg_park |
 | 0x0D0 | `MBX0` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D0 |
 | 0x0D4 | `MBX1` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D1 |
 | 0x0D8 | `MBX2` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D2 |
 | 0x0DC | `MBX3` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D3 |
-| 0x0E0 | `MAP0` | R | `00000000` | PAGE 13:0; VALID 14:14 | MMU frame tap entry 0 (state-neutral P-D) |
-| 0x0E4 | `MAP1` | R | `00000000` | PAGE 13:0; VALID 14:14 | MMU frame tap entry 1 |
-| 0x0E8 | `MAP2` | R | `00000000` | PAGE 13:0; VALID 14:14 | MMU frame tap entry 2 |
-| 0x0EC | `MAP3` | R | `00000000` | PAGE 13:0; VALID 14:14 | MMU frame tap entry 3 |
+| 0x0E0 | `MAP0` | R | `00000000` | PAGE 13:0; VALID 14:14 | reserved MMU frame tap entry 0; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B0+$B4 |
+| 0x0E4 | `MAP1` | R | `00000000` | PAGE 13:0; VALID 14:14 | reserved MMU frame tap entry 1; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B1+$B5 |
+| 0x0E8 | `MAP2` | R | `00000000` | PAGE 13:0; VALID 14:14 | reserved MMU frame tap entry 2; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B2+$B6 |
+| 0x0EC | `MAP3` | R | `00000000` | PAGE 13:0; VALID 14:14 | reserved MMU frame tap entry 3; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B3+$B7 |
 | 0x0F0 | `SSP_CTRL` | RCW | `00000000` | ENABLE 0:0; PAGE 2:1 | SSP_CHAIN export control (sec 11.4); engine writes PAGE on encoder commit; WDG_PARK expiry forces PAGE=0 |
 | 0x0F4 | `LED_ADDR` | RW | `00000000` | ADDR 7:0 | profile-7 map/colour/fb write address (forwarded via Port-A ownership mux sec 11.5) |
 | 0x0F8 | `LED_DATA0` | RCW | `00000000` | MAP 9:0 | profile-7 lamp map entry (<=10b; CHAIN_BITS>256) |

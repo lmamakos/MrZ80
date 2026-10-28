@@ -395,7 +395,7 @@
 `define SSP_IRQ_EN_WDG_PARK       32'h00000800  // 11:11
 `define SSP_BIT_IRQ_EN_WDG_PARK   11         // bit index
 
-`define SSP_IRQ_PENDING      32'h200000C4  // W1C reset 32'h00000000 | sticky event bits; v1 FW polls (D-27); write-1 clears
+`define SSP_IRQ_PENDING      32'h200000C4  // W1C reset 32'h00000000 | sticky event bits; v1 FW polls (D-27); write-1 clears; MAP_CHANGED producer shelved (R38)
 `define SSP_RIDX_IRQ_PENDING  10'h031      // word index (offset/4)
 `define SSP_IRQ_PENDING_RESET 32'h00000000          // reset value
 `define SSP_IRQ_PENDING_RESET_12 12'h0     // reset, 12-bit sized
@@ -469,7 +469,7 @@
 `define SSP_HI_MBX3_DATA       7          // field high index
 `define SSP_LO_MBX3_DATA       0          // field low index
 
-`define SSP_MAP0             32'h200000E0  // R reset 32'h00000000 | MMU frame tap entry 0 (state-neutral P-D)
+`define SSP_MAP0             32'h200000E0  // R reset 32'h00000000 | reserved MMU frame tap entry 0; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B0+$B4
 `define SSP_RIDX_MAP0         10'h038      // word index (offset/4)
 `define SSP_MAP0_RESET 32'h00000000          // reset value
 `define SSP_MAP0_RESET_15 15'h0     // reset, 15-bit sized
@@ -479,7 +479,7 @@
 `define SSP_MAP0_VALID          32'h00004000  // 14:14
 `define SSP_BIT_MAP0_VALID      14         // bit index
 
-`define SSP_MAP1             32'h200000E4  // R reset 32'h00000000 | MMU frame tap entry 1
+`define SSP_MAP1             32'h200000E4  // R reset 32'h00000000 | reserved MMU frame tap entry 1; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B1+$B5
 `define SSP_RIDX_MAP1         10'h039      // word index (offset/4)
 `define SSP_MAP1_RESET 32'h00000000          // reset value
 `define SSP_MAP1_RESET_15 15'h0     // reset, 15-bit sized
@@ -489,7 +489,7 @@
 `define SSP_MAP1_VALID          32'h00004000  // 14:14
 `define SSP_BIT_MAP1_VALID      14         // bit index
 
-`define SSP_MAP2             32'h200000E8  // R reset 32'h00000000 | MMU frame tap entry 2
+`define SSP_MAP2             32'h200000E8  // R reset 32'h00000000 | reserved MMU frame tap entry 2; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B2+$B6
 `define SSP_RIDX_MAP2         10'h03A      // word index (offset/4)
 `define SSP_MAP2_RESET 32'h00000000          // reset value
 `define SSP_MAP2_RESET_15 15'h0     // reset, 15-bit sized
@@ -499,7 +499,7 @@
 `define SSP_MAP2_VALID          32'h00004000  // 14:14
 `define SSP_BIT_MAP2_VALID      14         // bit index
 
-`define SSP_MAP3             32'h200000EC  // R reset 32'h00000000 | MMU frame tap entry 3
+`define SSP_MAP3             32'h200000EC  // R reset 32'h00000000 | reserved MMU frame tap entry 3; MMU tap shelved (R38), reads 0 -- frame state via engine I/O of $B3+$B7
 `define SSP_RIDX_MAP3         10'h03B      // word index (offset/4)
 `define SSP_MAP3_RESET 32'h00000000          // reset value
 `define SSP_MAP3_RESET_15 15'h0     // reset, 15-bit sized
