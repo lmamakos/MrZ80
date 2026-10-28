@@ -124,7 +124,7 @@ module ssp_p1a_top (
         .eng_m1_n (eng_m1_n), .eng_mrd_t1 (eng_mrd_t1),
         .rv_rst_n (rv_rst_n),
         .snac_rxd (snac_rxd), .snac_txd (snac_txd),
-        .guest_rxd (guest_rxd), .guest_txd (guest_txd),
+        .z80_rxd (guest_rxd), .z80_txd (guest_txd),
         .ssp_irq (ssp_irq), .rv_alive (rv_alive),
         .dl_wr (1'b0), .dl_addr (16'd0), .dl_wdata (32'd0),
         .dbg_rom_illegal_writes (dbg_rom_illegal_writes),

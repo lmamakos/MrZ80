@@ -6,7 +6,7 @@
 //   0x0000_0000  MROM 64K  (core-visible; writable only in the dictionary
 //                            window 0x4400..0x10000 -- D-35 build/mount
 //                            surface; illegal core writes counted, never land)
-//   0x1000_0000  DTCM 64K  byte-enable
+//   0x1000_0000  RV RAM 64K  byte-enable
 //   0x2000_0000  ssp_bridge 4K
 //   else         decoder error (reads 0, counted)
 // Memories are explicit ssp_sdp_ram instances (D-36): synthesis resolves the
@@ -16,28 +16,28 @@
 //
 // Console mux (D-01/D-14/D-19, R24 OQ-22 byte-relay, R25/H6 fix):
 //   snac_txd   = (console_own & CONN_ROUTE.out_snac) ? monitor_uart_tx
-//                                                    : guest_serial_tx
+//                                                    : z80_serial_tx
 //                [R26: owner rule R25 + D-19 sink policy.  An interim R26
-//                edit dropped the guest path -- wrong: MrZ80.sv routes the
-//                guest's serial_tx to the SNAC, so it must pass through.]
-//   guest_rxd  = !ssp_active ? raw pin           (P-B: monitor-disabled is
+//                edit dropped the Z80 path -- wrong: MrZ80.sv routes the
+//                Z80's serial_tx to the SNAC, so it must pass through.]
+//   z80_rxd  = !ssp_active ? raw pin           (P-B: monitor-disabled is
 //                                                indistinguishable from
 //                                                monitor-absent, R-43)
 //              :  !osd_esc_en ? raw pin          (OM off: bit-transparent)
-//              :  console_own ? idle high        (parked REPL: guest gets
+//              :  console_own ? idle high        (parked REPL: Z80 gets
 //                                                no operator bytes)
 //              :  relay_txd                      (OM on: filtered+re-timed
 //                                                stream, ESC consumed)
 // The relay path deserializes from the raw pin and re-emits, so with OM on
-// the guest sees each byte exactly once.  Ownership = ssp_active &&
+// the Z80 sees each byte exactly once.  Ownership = ssp_active &&
 // rv_ctrl_ok && CTRL.CONSOLE_OWN; escape sets it in hardware (bridge).
 //
-// Boot sovereignty (owner ruling R25): the guest must boot and run with the
-// RV core halted, absent, or hung.  CONSOLE_OWN resets 0 (guest owns the
-// SNAC at power); all CTRL guest-controls and park holds release on
+// Boot sovereignty (owner ruling R25): the Z80 must boot and run with the
+// RV core halted, absent, or hung.  CONSOLE_OWN resets 0 (Z80 owns the
+// SNAC at power); all CTRL Z80-controls and park holds release on
 // !ssp_active (P-B), on OSD rv_rst_n (host reset hatch), and via the
 // bridge's WDG_RUN expiry (RV hung ~1.3 ms).  Monitor entry never depends
-// on FW liveness: the hardware escape parks the guest by itself; a dead FW
+// on FW liveness: the hardware escape parks the Z80 by itself; a dead FW
 // then auto-releases the park (WDG_PARK, D-13) after ~0.4 s.
 //
 // "G aaaa" (D-02, D-39): the bridge exports tramp_arm/tramp_target (CTRL.TRAMP_EN
@@ -58,7 +58,7 @@ module ssp_top #(
     parameter MROM_INIT = "ssp/fw/forth_rom.mif"
 ) (
     input  wire        clk,             // clk_sys 50 MHz (shared domain)
-    input  wire        rst_n,         // subsystem reset (= guest reset now;
+    input  wire        rst_n,         // subsystem reset (= Z80 reset now;
                                      //   monitor-only mount domain is P1b)
 
     // ---- OSD / panel policy ----------------------------------------------
@@ -109,8 +109,8 @@ module ssp_top #(
     // ---- serial ----------------------------------------------------------
     input  wire        snac_rxd,     // SNAC io0 (pin level, async)
     output wire        snac_txd,     // SNAC io1
-    output wire        guest_rxd,    // to guest ACIA RX wire
-    input  wire        guest_txd,    // from guest ACIA TX wire
+    output wire        z80_rxd,    // to Z80 ACIA RX wire
+    input  wire        z80_txd,    // from Z80 ACIA TX wire
 
     // ---- misc -------------------------------------------------------------
     output wire        ssp_irq,      // to core (unused by v1 FW, D-27)
@@ -178,7 +178,7 @@ module ssp_top #(
 
     // ------------------------------------------------ decode -------------
     wire is_rom    = (mem_addr[31:16] == 16'h0000);
-    wire is_dtcm   = (mem_addr[31:16] == 16'h1000);
+    wire is_rram   = (mem_addr[31:16] == 16'h1000);
     wire [13:0] ram_ix = mem_addr[15:2];
 
     wire wr_fire = rst_n && (mem_wmask != 4'b0);
@@ -190,9 +190,9 @@ module ssp_top #(
     wire [13:0] rom_waddr = rom_dl_we ? dl_addr[15:2] : ram_ix;
     wire [31:0] rom_wdata = rom_dl_we ? dl_wdata : mem_wdata;
     wire [3:0]  rom_be    = rom_dl_we ? 4'b1111 : mem_wmask;
-    wire dtcm_we   = wr_fire && is_dtcm;
+    wire rram_we   = wr_fire && is_rram;
 
-    wire [31:0] q_rom, q_dtcm;
+    wire [31:0] q_rom, q_rram;
     ssp_sdp_ram #(.INIT_FILE (MROM_INIT)) u_mrom (
         .address_w (rom_waddr),
         .address_r (ram_ix),
@@ -202,14 +202,14 @@ module ssp_top #(
         .wren      (rom_we),
         .q         (q_rom)
     );
-    ssp_sdp_ram u_dtcm (
+    ssp_sdp_ram u_rram (
         .address_w (ram_ix),
         .address_r (ram_ix),
         .clock     (clk),
         .data_w    (mem_wdata),
         .byteena   (mem_wmask),
-        .wren      (dtcm_we),
-        .q         (q_dtcm)
+        .wren      (rram_we),
+        .q         (q_rram)
     );
 
     // ------------------------------------------------ bridge + UART -------
@@ -279,31 +279,31 @@ module ssp_top #(
     // launch+1: q_* already registered by the RAM IP; the *select* is
     // captured at the rstrb launch edge (R21 proven shape).  Unknown
     // regions read 0 and are counted in dbg_bus_errs below.
-    reg rr_rom, rr_dtcm, rr_bridge;
+    reg rr_rom, rr_rram, rr_bridge;
     always @(posedge clk) begin
         if (mem_rstrb) begin
             rr_rom    <= is_rom;
-            rr_dtcm   <= is_dtcm;
+            rr_rram   <= is_rram;
             rr_bridge <= is_bridge;
         end
     end
     assign mem_rdata = rr_rom    ? q_rom        :
-                      rr_dtcm   ? q_dtcm       :
+                      rr_rram   ? q_rram       :
                       rr_bridge ? bridge_rdata : 32'h0;
 
     // ------------------------------------------------ console mux ---------
     // TX: the console owner drives the pin (R25), and the monitor only when
     // CONN_ROUTE.out_snac routes its output to the SNAC (D-19 policy, HW
-    // fail-safe default 1).  Otherwise the guest ACIA TX passes through:
-    // in MrZ80.sv the guest's serial_tx IS the SNAC TX (USER_OUT[1]), so
-    // CP/M console output must reach the pin whenever the guest owns it.
+    // fail-safe default 1).  Otherwise the Z80 ACIA TX passes through:
+    // in MrZ80.sv the Z80's serial_tx IS the SNAC TX (USER_OUT[1]), so
+    // CP/M console output must reach the pin whenever the Z80 owns it.
     // The monitor is therefore silent until the operator escapes (R25 boot
     // sovereignty).  [R26 erratum: an interim R26 edit gated TX by out_snac
-    // alone, which would have dropped all guest output once integrated.]
+    // alone, which would have dropped all Z80 output once integrated.]
     // RX selection per header block (R25/H6):
     // relay and raw paths are mutually exclusive -- no byte duplication.
-    assign snac_txd  = (console_own & conn_out_snac) ? mon_txd : guest_txd;
-    assign guest_rxd = (!ssp_active || !osd_esc_en) ? snac_rxd :
+    assign snac_txd  = (console_own & conn_out_snac) ? mon_txd : z80_txd;
+    assign z80_rxd = (!ssp_active || !osd_esc_en) ? snac_rxd :
                        console_own                  ? 1'b1       :
                                                     relay_txd;
 
@@ -315,7 +315,7 @@ module ssp_top #(
         end else begin
             if (wr_fire && is_rom && !dict_window)
                 dbg_rom_illegal_writes <= dbg_rom_illegal_writes + 32'd1;
-            if ((mem_rstrb || wr_fire) && !(is_rom || is_dtcm || is_bridge))
+            if ((mem_rstrb || wr_fire) && !(is_rom || is_rram || is_bridge))
                 dbg_bus_errs <= dbg_bus_errs + 32'd1;
         end
     end

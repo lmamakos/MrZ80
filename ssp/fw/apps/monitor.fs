@@ -7,20 +7,20 @@
 \ Design (recorded R30): a dedicated ODT-style command loop (prompt `.`,
 \ uppercase responses, SSP_DESIGN 10.1) rather than Forth words that parse
 \ their own arguments.  It owns the console only while STATUS.FW_CONSOLE_OK
-\ is set (the guest owns the SNAC link at power, R25), so it WAITS for the
+\ is set (the Z80 owns the SNAC link at power, R25), so it WAITS for the
 \ operator's escape and prints its banner then, not at boot (R26).
 \
 \   E [aaaa [n]]  examine n bytes (default $80) from aaaa; no aaaa = continue
 \                 after the last examine/deposit.  Hex + ASCII, 16 per line.
 \   D [aaaa]      deposit.  Shows  aaaa: xx   a hex value replaces the byte,
 \                 a bare CR leaves it unchanged, either way advance; `.` ends.
-\   G aaaa        guest restarts at aaaa (reset vent + reset-vector JP, D-02)
-\   G             continue: resume the parked guest, console back to it
+\   G aaaa        Z80 restarts at aaaa (reset vent + reset-vector JP, D-02)
+\   G             continue: resume the parked Z80, console back to it
 \   R             registers (parked snapshot)
 \   F             leave to the Forth REPL (`mon` re-enters)
 \   ? / H         help
-\ Numbers are hex, 1..8 digits, any case.  Memory is the guest's LOGICAL
-\ space through the D-30 sequencer, so E/D/R need the guest parked.
+\ Numbers are hex, 1..8 digits, any case.  Memory is the Z80's LOGICAL
+\ space through the D-30 sequencer, so E/D/R need the Z80 parked.
 
 \ ---- bits composed into CTRL values (ssp-regs.fs masks) ----------------------
 SSP_CTRL_ESC_BREAK_EN SSP_CTRL_CONSOLE_OWN or SSP_CTRL_Z_BUSRQ_N or
@@ -38,7 +38,7 @@ SSP_CTRL_ESC_BREAK_EN
 0 variable m-len
 0 variable m-pos
 0 variable m-next                           \ default address for E / D
-0 variable m-state                          \ 0 stay, 1 guest resumed, 2 to Forth
+0 variable m-state                          \ 0 stay, 1 Z80 resumed, 2 to Forth
 0 variable m-a
 0 variable m-n
 0 variable m-k
@@ -52,13 +52,13 @@ SSP_CTRL_ESC_BREAK_EN
 : m-q ( -- )  ." ?" cr ;
 
 \ Wait for the last character to leave the UART before the console is handed
-\ to the guest (1-deep TX holding register + the shifter: ~100 us at 115200).
+\ to the Z80 (1-deep TX holding register + the shifter: ~100 us at 115200).
 : m-drain ( -- )
   SSP_TICK_US @
   begin SSP_TICK_US @ over - 200 u>= until
   drop ;
 
-\ ---- guest memory through the D-30 sequencer (guest must be parked) ----------
+\ ---- Z80 memory through the D-30 sequencer (Z80 must be parked) ----------
 : m-wait ( -- )  begin SSP_STATUS @ SSP_STATUS_SEQ_BUSY and 0= until ;
 : gc@ ( addr -- b )
   SSP_MEM_ADDR !
@@ -221,7 +221,7 @@ SSP_CTRL_ESC_BREAK_EN
     0 m-state !
     begin ." ." m-line-in cr m-cmd m-state @ until
     m-state @ 2 = if ." FORTH" cr exit then
-    begin m-console? 0= until                 \ guest has the console again
+    begin m-console? 0= until                 \ Z80 has the console again
   again ;
 
 : init ( -- )  0 m-next !  mon ;

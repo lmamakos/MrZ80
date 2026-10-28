@@ -13,8 +13,8 @@ W1C, RCW (shared FW/engine, G-3).
 | Off | Reg | Acc | Reset | Fields (msb:lsb) | Description |
 |----:|-----|-----|------:|------------------|-------------|
 | 0x000 | `ID` | R | `4D525A03` | REV 27:0 | bridge ID 0x4D52_5Axx; rev-stamped |
-| 0x004 | `CTRL` | RW | `00000020` | Z_RST_N 0:0; Z_BUSRQ_N 1:1; Z_WAIT_N 2:2; CEN_GATE 3:3; TRAMP_EN 4:4; ESC_BREAK_EN 5:5; CONSOLE_OWN 8:8; PANEL_LOCK 9:9 | park/hold/trampoline/escape enables; Z_RST_N: set = assert guest CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the guest reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the guest parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE |
-| 0x008 | `TRAMP_ADDR` | RW | `00000000` | ADDR 15:0 | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a guest reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02) |
+| 0x004 | `CTRL` | RW | `00000020` | Z_RST_N 0:0; Z_BUSRQ_N 1:1; Z_WAIT_N 2:2; CEN_GATE 3:3; TRAMP_EN 4:4; ESC_BREAK_EN 5:5; CONSOLE_OWN 8:8; PANEL_LOCK 9:9 | park/hold/trampoline/escape enables; Z_RST_N: set = assert Z80 CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the Z80 reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the Z80 parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- Z80 owns the SNAC at power (boot sovereignty R25: FW death never blocks the Z80); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE |
+| 0x008 | `TRAMP_ADDR` | RW | `00000000` | ADDR 15:0 | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a Z80 reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02) |
 | 0x00C | `STATUS` | R | `00000000` | BUSACK 0:0; HALT_N 1:1; M1_N 2:2; MC 5:3; TS 8:6; ALT 9:9; CPU_RUNNING 10:10; SSP_ACTIVE 11:11; S32 12:12; FW_CONSOLE_OK 13:13; ENG_STOP_LATCH 14:14; SEQ_BUSY 15:15; WDG_DEAD 16:16; AT_BOUNDARY 17:17; OSD_ESC_EN 18:18; RV_TRAP 19:19; RV_ALIVE 20:20 | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25) |
 | 0x010 | `HALT_REASON` | R | `00000000` | REASON 3:0 | halt reason codes sec 10.3 (+wdg); read clears |
 | 0x014 | `PC_LATCH` | R | `00000000` | PC 15:0 | PC latched at match/park instant |
@@ -61,10 +61,10 @@ W1C, RCW (shared FW/engine, G-3).
 | 0x0C0 | `IRQ_EN` | RW | `00000000` | BP0 0:0; BP1 1:1; BP2 2:2; BP3 3:3; TRAP 4:4; RX 5:5; ESC 6:6; MBX 7:7; FP_DONE 8:8; MAP_CHANGED 9:9; SD_DONE 10:10; WDG_PARK 11:11 | gates optional IRQ line only (D-27) |
 | 0x0C4 | `IRQ_PENDING` | W1C | `00000000` | BP0 0:0; BP1 1:1; BP2 2:2; BP3 3:3; TRAP 4:4; RX 5:5; ESC 6:6; MBX 7:7; FP_DONE 8:8; MAP_CHANGED 9:9; SD_DONE 10:10; WDG_PARK 11:11 | sticky event bits; v1 FW polls (D-27); write-1 clears |
 | 0x0C8 | `CONN_ROUTE` | RW | `00000001` | OUT_SNAC 0:0; OUT_HDMI 1:1; IN_SNAC 2:2; IN_KBD 3:3 | console routing policy (D-19); HW fail-safe defaults on reset/wdg_park |
-| 0x0D0 | `MBX0` | RW | `00000000` | DATA 7:0 | guest mailbox mirror $D0 |
-| 0x0D4 | `MBX1` | RW | `00000000` | DATA 7:0 | guest mailbox mirror $D1 |
-| 0x0D8 | `MBX2` | RW | `00000000` | DATA 7:0 | guest mailbox mirror $D2 |
-| 0x0DC | `MBX3` | RW | `00000000` | DATA 7:0 | guest mailbox mirror $D3 |
+| 0x0D0 | `MBX0` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D0 |
+| 0x0D4 | `MBX1` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D1 |
+| 0x0D8 | `MBX2` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D2 |
+| 0x0DC | `MBX3` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D3 |
 | 0x0E0 | `MAP0` | R | `00000000` | PAGE 13:0; VALID 14:14 | MMU frame tap entry 0 (state-neutral P-D) |
 | 0x0E4 | `MAP1` | R | `00000000` | PAGE 13:0; VALID 14:14 | MMU frame tap entry 1 |
 | 0x0E8 | `MAP2` | R | `00000000` | PAGE 13:0; VALID 14:14 | MMU frame tap entry 2 |
@@ -73,9 +73,9 @@ W1C, RCW (shared FW/engine, G-3).
 | 0x0F4 | `LED_ADDR` | RW | `00000000` | ADDR 7:0 | profile-7 map/colour/fb write address (forwarded via Port-A ownership mux sec 11.5) |
 | 0x0F8 | `LED_DATA0` | RCW | `00000000` | MAP 9:0 | profile-7 lamp map entry (<=10b; CHAIN_BITS>256) |
 | 0x0FC | `LED_DATA1` | RCW | `00000000` | B 23:16; G 15:8; R 7:0 | profile-7 lamp colour |
-| 0x100 | `FP_SW` | R | `00000000` | S31 31:31; S30 30:30; S29 29:29; S28 28:28; ADDR 27:0 | debounced toggle bank; same source as guest ports $FC-$FF |
+| 0x100 | `FP_SW` | R | `00000000` | S31 31:31; S30 30:30; S29 29:29; S28 28:28; ADDR 27:0 | debounced toggle bank; same source as Z80 ports $FC-$FF |
 | 0x104 | `FP_FN` | R | `00000000` | LINES 17:0 | live debounced SPDT function lines (MMU-EXAM/DEPOSIT at 17:16) |
-| 0x108 | `FP_ENC_CNT` | R | `00000000` | CNT 7:0 | menu-selection counter; same source as guest port $FB |
+| 0x108 | `FP_ENC_CNT` | R | `00000000` | CNT 7:0 | menu-selection counter; same source as Z80 port $FB |
 | 0x10C | `FP_ENC_STAT` | R | `00000000` | COMMITTED 7:0; PAGE_ID 10:8; DBL_ZERO_EVT 11:11; COMMIT_EVT 12:12 | encoder status (D-23); read clears event strobes |
 | 0x110 | `ESC_CHAR` | RW | `0000001D` | CHAR 7:0 | serial escape character; recognizer active with OSD OM on (D-14) |
 | 0x114 | `TICK_US` | R | `00000000` | CNT 31:0 | free-running 1 MHz counter (D-20 time base) |

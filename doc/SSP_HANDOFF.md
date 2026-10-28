@@ -33,7 +33,7 @@ theories) are in git history; the design-relevant parts were logged in
 | P0 (core bake-off) | Closed R23: **FemtoRV32-gracilis** selected (D-37), `ADDR_WIDTH=30` (D-34). picorv32 kept vendored as fallback. Both in `Components/RISCV/` (provenance in `PROVENANCE.md`) |
 | Firmware base | Mecrisp-Quintus 1.1.2a port in `ssp/fw/` (RAM dictionary, no flash, D-32). Kernel source referenced in place from `~/mecrisp-quintus` (GPLv3; compliance vehicle per H-3/R16). Build: `cd ssp/fw && make` → `ssp/fw/build/mecrisp-ssp.hex` (build dir is git-ignored) |
 | Register map | `ssp/regs/ssp_regs.csv` is canonical (72 regs / 138 fields). `make -C sim regmap` regenerates `ssp/rtl/ssp_regs.vh`, `ssp/rtl/ssp_regs_pkg.vhd`, `ssp/fw/ssp-regs.fs`, `doc/SSP_REGS.md`; `regmap-check` fails on drift (R-45) |
-| P1a RTL (written, sim-verified at RV side) | `ssp/rtl/ssp_top.v` (core + MROM/DTCM + decoder + bridge + UART + console mux), `ssp_bridge.v` (P1a registers, park controller, D-30 micro-op sequencer for FW mem/IO kicks, WDG×2, `TICK_US`), `ssp_uart.v` (8N1, RX FIFO 8, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` (D-26 mux, not yet instantiated anywhere), **`ssp_tramp.vhd` (R28: guest reset vent + reset-vector `JP aaaa` injector for `G aaaa`; verified on the real T80, not yet instantiated in the CPM core)** |
+| P1a RTL (written, sim-verified at RV side) | `ssp/rtl/ssp_top.v` (core + MROM/RV RAM + decoder + bridge + UART + console mux), `ssp_bridge.v` (P1a registers, park controller, D-30 micro-op sequencer for FW mem/IO kicks, WDG×2, `TICK_US`), `ssp_uart.v` (8N1, RX FIFO 8, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` (D-26 mux, not yet instantiated anywhere), **`ssp_tramp.vhd` (R28: Z80 reset vent + reset-vector `JP aaaa` injector for `G aaaa`; verified on the real T80, not yet instantiated in the CPM core)** |
 | T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + FREEZE gate (BusAck only when next state is M1; prefix-gated). In `MicrocomputerZ80CPM.vhd` the gate is **tied off** (`n_BUSRQ <= '1'`; `FREEZE_req_n => '1'` is a dead port) — zero behaviour change. Regression benches passed at R25 (run.sh 115/0, cpuregs 8/8, ixmin 10/10, ixstack, run_forth) |
 | Monitor FW (R30) | `ssp/fw/apps/monitor.fs`: `E` `D` `G aaaa` `G` `R` `F` `?` (D-39), dedicated command loop, `init` runs it. `make -C sim dict-p1a` builds the dictionary artifact (`ssp/fw/build/mecrisp-ssp-p1a-app.hex`), `make -C sim smoke-p1a` runs the operator session + OM-off/on + idle-watchdog checks. Kernel `serial_key` kicks `WDG_PARK` while waiting |
 | GHDL integration benches (R31) | `make -C sim integ-park` (R-40: every park on an instruction boundary vs an unparked reference), `integ-mux` (R-42: mux + real T80 + engine model), `cycle-golden` + `engine-golden` (engine strobe waveform == real T80's, per T-state, committed `sim/ssp/golden_cycles.txt`). Fixed in `ssp_bridge.v`: strobes were held through T3, I/O read split IORQ/RD, **I/O write had no WR_n** |
@@ -56,9 +56,9 @@ theories) are in git history; the design-relevant parts were logged in
    the previous read, so Enter was seen one key late. RXDATA now reads the
    combinational FIFO head; empty read returns 0.
 2. **Console TX mux** (`ssp_top.v`): final form
-   `snac_txd = (console_own & CONN_ROUTE.out_snac) ? mon_txd : guest_txd`.
-   An interim R26 edit dropped the guest path; that was wrong, because
-   `MrZ80.sv` routes the guest's `serial_tx` to the SNAC TX. **The monitor is
+   `snac_txd = (console_own & CONN_ROUTE.out_snac) ? mon_txd : z80_txd`.
+   An interim R26 edit dropped the Z80 path; that was wrong, because
+   `MrZ80.sv` routes the Z80's `serial_tx` to the SNAC TX. **The monitor is
    silent on the pin until the operator escapes** — by design (R25).
 3. **Harness** (`tb_p1a_main.cpp`): models an operator in two steps (first
    byte — the escape — at `+RXAT`, remaining bytes once the monitor's output
@@ -66,7 +66,7 @@ theories) are in git history; the design-relevant parts were logged in
 
 ### 1.4 R28: `G aaaa` hardware (done; design in `SSP_DESIGN.md` §7.4 / §17 R28)
 
-- **`ssp/rtl/ssp_tramp.vhd`**: guest-CPU-only reset vent (release stretched
+- **`ssp/rtl/ssp_tramp.vhd`**: Z80-CPU-only reset vent (release stretched
   to >= 8 `cpu_cen`) + reset-vector injector (`C3 lo hi` on the first three
   reads at `$0000..$0002`, primed only if `TRAMP_EN` is set *during* reset),
   `done` pulse -> bridge hardware-clears `CTRL.TRAMP_EN`.
@@ -120,11 +120,11 @@ smoke and dictionary-build scripts.
    |---|---|
    | `E aaaa [n]` | Examine memory: hex + ASCII dump from `aaaa` (default length, e.g. 16 or 128 bytes — pick and document) |
    | `D aaaa` | Modify memory interactively: print `aaaa: xx ` with the current contents; a hex value replaces it, a **bare carriage return leaves it unchanged**; then advance to the next address; `.` ends the session |
-   | `G aaaa` | Go: start the guest at `aaaa` (trampoline after reset vent, D-02 — see item 2) |
-   | `G` | Continue: resume the parked CPU and hand the console back to the guest |
+   | `G aaaa` | Go: start the Z80 at `aaaa` (trampoline after reset vent, D-02 — see item 2) |
+   | `G` | Continue: resume the parked CPU and hand the console back to the Z80 |
 
    Letters and the `.` terminator are proposals the owner left open; confirm
-   if you change them. Escape already parks the guest, so no separate halt
+   if you change them. Escape already parks the Z80, so no separate halt
    command is needed. `R` (registers from `SNAP_REG0..6`, per
    `t80_reg_debug_vector.md`; prefix `*MID-INSN*` if
    `STATUS.AT_BOUNDARY`=0) is a natural early addition, not required.
@@ -140,21 +140,21 @@ smoke and dictionary-build scripts.
    hardware clears bit 4 and a stale RMW would re-arm):
 
    ```
-   \ G aaaa  (guest parked, console owned: CTRL = $122)
+   \ G aaaa  (Z80 parked, console owned: CTRL = $122)
    aaaa  SSP_TRAMP_ADDR !            \ target
    $133  SSP_CTRL !                  \ arm + vent: TRAMP_EN|hold|own|esc|Z_RST_N
    $030  SSP_CTRL !                  \ release reset, drop hold, return console
    \ plain G (no address):  $020 SSP_CTRL !   (never injects)
    \ "set PC, stay parked": $132 SSP_CTRL !   (reset released, hold+own kept;
-   \    guest executes the injected JP and parks AT aaaa; console stays)
+   \    Z80 executes the injected JP and parks AT aaaa; console stays)
    ```
-   After the `$030` write the monitor is muted (guest owns the console), so
+   After the `$030` write the monitor is muted (Z80 owns the console), so
    print any "going to aaaa" text *before* it. The T80 does not grant the
    park until an instruction boundary; the 8-`cpu_cen` vent is enforced in
    hardware, so no FW delay is needed between the two `CTRL` writes (the
    p1a lane has ~100k cycles between them anyway). OQ-05 (a breakpoint inside
    the `$0000..$0002` window) is a P2 concern: no BP logic exists yet.
-3. **Print on escape, not at boot.** A banner printed while the guest owns
+3. **Print on escape, not at boot.** A banner printed while the Z80 owns
    the console is lost. Have the monitor wait for `STATUS.FW_CONSOLE_OK`
    (bit 13) and print its banner/prompt when it gains the console. The
    kernel banner comes from `welcome` in `ssp/fw/mecrisp-quintus-ssp.s`;
@@ -176,10 +176,10 @@ smoke and dictionary-build scripts.
    do not overwrite the P0 goldens). The smoke should script: escape, `E`
    dump (check pattern), `D` session (replace one byte, leave the next
    unchanged with a bare CR, end with `.`), `E` again (verify both), `G`
-   (guest resumes, console returns), second escape, `G aaaa` (guest restarts
+   (Z80 resumes, console returns), second escape, `G aaaa` (Z80 restarts
    at `aaaa`).
 7. Add an **OM-off transparency** case (`+OM=0`): every byte, including
-   `ESC_CHAR`, must reach the guest (BFM `guest_rx_count`), no park (R-43).
+   `ESC_CHAR`, must reach the Z80 (BFM `guest_rx_count`), no park (R-43).
 
 **Exit:** `make -C sim smoke-p1a dict-p1a` PASS; R-43, R-46 (polled FW, IRQ
 tied off) and R-23 demonstrated on the p1a lane; `lint-ssp`,
@@ -269,7 +269,7 @@ monitor-absent).
    - Instantiate `ssp_tramp` (R28): `sys_rst_n` = `reset_n_internal`,
      `z_reset_n` = bridge, `t80_rst_n` -> the T80's `reset_n` (replacing
      `reset_n => reset_n_internal`, ~line 387), `cen` = **ungated** `cpu_cen`,
-     `arm`/`target`/`done` to the bridge, `addr`/`mreq_n`/`rd_n` = the guest
+     `arm`/`target`/`done` to the bridge, `addr`/`mreq_n`/`rd_n` = the Z80
      nets *after* `z80_bus_mux`, `din_in` = today's `cpuDataIn` mux output
      (~line 965) and `din_out` -> the T80 `di`. Decide whether the capture
      chain's bus-data view (`fpStaticDataBus`) should see the raw or the
@@ -286,13 +286,13 @@ monitor-absent).
      port selection.** Recommended wiring: put `ssp_top` *after* the
      existing select mux — `snac_rxd` ← `serial_rx` (already the selected
      port, ~line 704), and feed `snac_txd` back into the existing TX select
-     logic in place of the guest's `serial_tx` (~lines 736–749), with
-     `guest_rxd`/`guest_txd` going to the guest ACIA. Then either port
-     works with no extra muxing. RTS/CTS flow control stays guest-only
+     logic in place of the Z80's `serial_tx` (~lines 736–749), with
+     `z80_rxd`/`z80_txd` going to the Z80 ACIA. Then either port
+     works with no extra muxing. RTS/CTS flow control stays Z80-only
      (the SSP UART has none, R4). If this proves difficult, the owner
      allows deferring it, together with an OSD video + keyboard console
      (D-19, P3); SNAC-only is then the fallback.
-   - `baud_increment` must be the same O9B divider the guest UART uses
+   - `baud_increment` must be the same O9B divider the Z80 UART uses
      (shared truth, §5.3).
    - Tie `dl_*` (MROM download, P1b) inactive.
 3. Capture chain: the 64-bit `SSP_CHAIN` export is allocated bits 292–355
@@ -307,7 +307,7 @@ timing.
 
 `tools/build.sh` (full compile on `tycho`), then `make install` (scp to
 host `mister`). P1a exit criteria (`SSP_DESIGN.md` §15): on hardware,
-escape into the SSP, examine/deposit guest memory, resume — with OM off
+escape into the SSP, examine/deposit Z80 memory, resume — with OM off
 proven bit-transparent. Record results as a design round.
 
 ### After P1a — P1b preview (owner priorities at first light, R35)
@@ -515,7 +515,7 @@ FIFO push/pop, TXDATA writes). Exit codes: 0 ok, 3 nothing transmitted,
 ### 7.2 SSP memory map and FW console
 
 ROM `0x0000_0000` (64K; writable only in dictionary window
-`0x4400..0x10000`, D-35), DTCM `0x1000_0000` (64K), bridge
+`0x4400..0x10000`, D-35), RV RAM `0x1000_0000` (64K), bridge
 `0x2000_0000` (4K, decode `mem_addr[31:12] == 20'h20000`, word index
 `mem_addr[11:2]`). FW console (`ssp/fw/terminal.s`): TXDATA `+0x120`,
 RXDATA `+0x124`, STAT `+0x128` (bit0 tx_ready, bit1 rx_avail, bit2
@@ -577,7 +577,7 @@ overrun), CTRL `+0x12C`.
   `RomWBW_MrZ80_MiSTer` is stale. `ssh -t` may complain without a TTY; do
   not edit the script without the owner's agreement.
 - Bake-off fits (R21, `bakeoff/`): gracilis 1,128 ALM / 540 reg / 64.13 MHz;
-  memory 130 M10K blocks for 64K ROM + 64K DTCM.
+  memory 130 M10K blocks for 64K ROM + 64K RV RAM.
 
 ---
 

@@ -11,7 +11,7 @@
 `define SSP_HI_ID_REV        27          // field high index
 `define SSP_LO_ID_REV        0          // field low index
 
-`define SSP_CTRL             32'h20000004  // RW reset 32'h00000020 | park/hold/trampoline/escape enables; Z_RST_N: set = assert guest CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the guest reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the guest parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
+`define SSP_CTRL             32'h20000004  // RW reset 32'h00000020 | park/hold/trampoline/escape enables; Z_RST_N: set = assert Z80 CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the Z80 reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the Z80 parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- Z80 owns the SNAC at power (boot sovereignty R25: FW death never blocks the Z80); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
 `define SSP_RIDX_CTRL         10'h001      // word index (offset/4)
 `define SSP_CTRL_RESET 32'h00000020          // reset value
 `define SSP_CTRL_RESET_10 10'h20     // reset, 10-bit sized
@@ -32,7 +32,7 @@
 `define SSP_CTRL_PANEL_LOCK     32'h00000200  // 9:9
 `define SSP_BIT_CTRL_PANEL_LOCK 9         // bit index
 
-`define SSP_TRAMP_ADDR       32'h20000008  // RW reset 32'h00000000 | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a guest reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02)
+`define SSP_TRAMP_ADDR       32'h20000008  // RW reset 32'h00000000 | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a Z80 reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02)
 `define SSP_RIDX_TRAMP_ADDR   10'h002      // word index (offset/4)
 `define SSP_TRAMP_ADDR_RESET 32'h00000000          // reset value
 `define SSP_TRAMP_ADDR_RESET_16 16'h0     // reset, 16-bit sized
@@ -437,7 +437,7 @@
 `define SSP_CONN_ROUTE_IN_KBD         32'h00000008  // 3:3
 `define SSP_BIT_CONN_ROUTE_IN_KBD     3         // bit index
 
-`define SSP_MBX0             32'h200000D0  // RW reset 32'h00000000 | guest mailbox mirror $D0
+`define SSP_MBX0             32'h200000D0  // RW reset 32'h00000000 | Z80 mailbox mirror $D0
 `define SSP_RIDX_MBX0         10'h034      // word index (offset/4)
 `define SSP_MBX0_RESET 32'h00000000          // reset value
 `define SSP_MBX0_RESET_8 8'h0     // reset, 8-bit sized
@@ -445,7 +445,7 @@
 `define SSP_HI_MBX0_DATA       7          // field high index
 `define SSP_LO_MBX0_DATA       0          // field low index
 
-`define SSP_MBX1             32'h200000D4  // RW reset 32'h00000000 | guest mailbox mirror $D1
+`define SSP_MBX1             32'h200000D4  // RW reset 32'h00000000 | Z80 mailbox mirror $D1
 `define SSP_RIDX_MBX1         10'h035      // word index (offset/4)
 `define SSP_MBX1_RESET 32'h00000000          // reset value
 `define SSP_MBX1_RESET_8 8'h0     // reset, 8-bit sized
@@ -453,7 +453,7 @@
 `define SSP_HI_MBX1_DATA       7          // field high index
 `define SSP_LO_MBX1_DATA       0          // field low index
 
-`define SSP_MBX2             32'h200000D8  // RW reset 32'h00000000 | guest mailbox mirror $D2
+`define SSP_MBX2             32'h200000D8  // RW reset 32'h00000000 | Z80 mailbox mirror $D2
 `define SSP_RIDX_MBX2         10'h036      // word index (offset/4)
 `define SSP_MBX2_RESET 32'h00000000          // reset value
 `define SSP_MBX2_RESET_8 8'h0     // reset, 8-bit sized
@@ -461,7 +461,7 @@
 `define SSP_HI_MBX2_DATA       7          // field high index
 `define SSP_LO_MBX2_DATA       0          // field low index
 
-`define SSP_MBX3             32'h200000DC  // RW reset 32'h00000000 | guest mailbox mirror $D3
+`define SSP_MBX3             32'h200000DC  // RW reset 32'h00000000 | Z80 mailbox mirror $D3
 `define SSP_RIDX_MBX3         10'h037      // word index (offset/4)
 `define SSP_MBX3_RESET 32'h00000000          // reset value
 `define SSP_MBX3_RESET_8 8'h0     // reset, 8-bit sized
@@ -549,7 +549,7 @@
 `define SSP_HI_LED_DATA1_R          7          // field high index
 `define SSP_LO_LED_DATA1_R          0          // field low index
 
-`define SSP_FP_SW            32'h20000100  // R reset 32'h00000000 | debounced toggle bank; same source as guest ports $FC-$FF
+`define SSP_FP_SW            32'h20000100  // R reset 32'h00000000 | debounced toggle bank; same source as Z80 ports $FC-$FF
 `define SSP_RIDX_FP_SW        10'h040      // word index (offset/4)
 `define SSP_FP_SW_RESET 32'h00000000          // reset value
 `define SSP_FP_SW_S31            32'h80000000  // 31:31
@@ -572,7 +572,7 @@
 `define SSP_HI_FP_FN_LINES      17          // field high index
 `define SSP_LO_FP_FN_LINES      0          // field low index
 
-`define SSP_FP_ENC_CNT       32'h20000108  // R reset 32'h00000000 | menu-selection counter; same source as guest port $FB
+`define SSP_FP_ENC_CNT       32'h20000108  // R reset 32'h00000000 | menu-selection counter; same source as Z80 port $FB
 `define SSP_RIDX_FP_ENC_CNT   10'h042      // word index (offset/4)
 `define SSP_FP_ENC_CNT_RESET 32'h00000000          // reset value
 `define SSP_FP_ENC_CNT_RESET_8 8'h0     // reset, 8-bit sized

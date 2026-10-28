@@ -2,7 +2,7 @@
 -- B -- simple-dual-port usage) M10K RAM IP for the SSP fabric (D-36; proven
 -- shape from the OQ-20 bake-off, R21, bakeoff/ssp_sdp_ram.vhd).  R31: promoted
 -- to ssp/rtl with an INIT_FILE generic -- the MROM instance carries the factory
--- ROM image (D-38, ssp/fw/forth_rom.mif); the DTCM instance leaves it "UNUSED"
+-- ROM image (D-38, ssp/fw/forth_rom.mif); the RV RAM instance leaves it "UNUSED"
 -- (power-up zero).  House style follows the wizard wrappers
 -- already shipping here: Components/TERMINAL/DisplayRam1K.vhd (2-port 1Kx8)
 -- and Components/INTERNALRAM/InternalRam64K.vhd (1-port 64Kx8, the general

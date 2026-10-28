@@ -4,7 +4,7 @@
 -- One registered select, `sel_eng`.  It flips to the engine ONLY with BusAck
 -- confirmed (P-A: T80 has released the bus) and back to the T80 only when
 -- the engine has finished its cycle (eng_own low) and BUSRQ is released.
--- This is the single place that decides who drives the guest nets --
+-- This is the single place that decides who drives the Z80 nets --
 -- address, data-out, MREQ/IORQ/RD/WR, MRD_T1 (the SDRAM speculative-read
 -- trigger), M1_n (the capture chain) -- so every peripheral, the MMU and
 -- the SDRAM client FSM see "a Z80" in both cases.  cpu_wait_n is sensed by
@@ -17,8 +17,8 @@
 --   * While the T80 is parked (busack_n = 0) and the engine is not
 --     selected, the frozen T80 strobe state must NOT leak: a halt
 --     mid-MREF (e.g. refresh MREQ_n low in M1 T3) would otherwise sit on
---     the guest nets indefinitely.  All five strobes are idle-gated high
---     in exactly that window.  The guest fabric already tolerates the
+--     the Z80 nets indefinitely.  All five strobes are idle-gated high
+--     in exactly that window.  The Z80 fabric already tolerates the
 --     STOP-style idle gap (panel STOP exercises the same shape).
 --   * Release semantics: busrq_n high (bridge released) or engine cycle
 --     complete; the T80 resumes at its frozen state with strobes restored.
@@ -57,7 +57,7 @@ entity z80_bus_mux is
         eng_m1_n      : in  std_logic;
         eng_mrd_t1    : in  std_logic;
 
-        -- guest nets (drive the existing CPM fabric unchanged)
+        -- Z80 nets (drive the existing CPM fabric unchanged)
         cpu_addr      : out std_logic_vector(15 downto 0);
         cpu_dout      : out std_logic_vector(7  downto 0);
         cpu_mreq_n    : out std_logic;

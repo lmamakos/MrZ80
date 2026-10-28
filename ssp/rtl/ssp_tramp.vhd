@@ -1,9 +1,9 @@
--- ssp_tramp.vhd -- guest CPU reset vent + reset-vector trampoline injector
+-- ssp_tramp.vhd -- Z80 CPU reset vent + reset-vector trampoline injector
 -- (D-02, SSP_DESIGN 7.4; moved into P1a by D-39, R27).  Z80-side logic, so
 -- VHDL (D-33) and verified against the real T80 in sim/tb_tramp.vhd.
 -- Lives at the CPM boundary beside z80_bus_mux.
 --
--- "G aaaa" = reset the guest CPU, make it execute JP aaaa as its first
+-- "G aaaa" = reset the Z80 CPU, make it execute JP aaaa as its first
 -- instruction, let it run.  A Z80 starts at $0000 after reset, and a JP is
 -- three bus reads (opcode, lo, hi) at $0000, $0001, $0002; this module
 -- substitutes C3, lo(aaaa), hi(aaaa) on the CPU's data input for exactly
@@ -17,7 +17,7 @@
 --     is released, the reset is held for VENT_CEN more cpu_cen pulses, so a
 --     short FW pulse is still a clean reset (D-30 RESET_VENT).  Only the T80
 --     is reset -- peripherals and the MMU hang off the system reset, so the
---     guest's machine state persists (7.3: "monitor state persists").
+--     Z80's machine state persists (7.3: "monitor state persists").
 --     vent_q is a register and is constant 1 unless the bridge requests a
 --     vent, so with the SSP idle t80_rst_n is exactly sys_rst_n.
 --
@@ -53,7 +53,7 @@ entity ssp_tramp is
 
         -- reset
         sys_rst_n  : in  std_logic;         -- existing reset_n_internal
-        z_reset_n  : in  std_logic;         -- bridge: low = vent the guest CPU
+        z_reset_n  : in  std_logic;         -- bridge: low = vent the Z80 CPU
         t80_rst_n  : out std_logic;         -- to T80s RESET_n
 
         -- bridge handshake (clk domain)
@@ -62,7 +62,7 @@ entity ssp_tramp is
         done       : out std_logic;         -- 1-clk pulse: 3 bytes delivered
         active     : out std_logic;         -- armed / injecting
 
-        -- guest bus as seen by the CPU (after z80_bus_mux)
+        -- Z80 bus as seen by the CPU (after z80_bus_mux)
         addr       : in  std_logic_vector(15 downto 0);
         mreq_n     : in  std_logic;
         rd_n       : in  std_logic;

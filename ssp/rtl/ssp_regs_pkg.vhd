@@ -10,7 +10,7 @@ package ssp_regs_pkg is
     constant C_SSP_ID             : natural := 536870912;  -- 0x20000000 R | bridge ID 0x4D52_5Axx; rev-stamped
     constant C_SSP_ID_REV          : natural range 0 to 31 := 27;  -- field 27:0
 
-    constant C_SSP_CTRL           : natural := 536870916;  -- 0x20000004 RW | park/hold/trampoline/escape enables; Z_RST_N: set = assert guest CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the guest reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the guest parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
+    constant C_SSP_CTRL           : natural := 536870916;  -- 0x20000004 RW | park/hold/trampoline/escape enables; Z_RST_N: set = assert Z80 CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the Z80 reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the Z80 parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- Z80 owns the SNAC at power (boot sovereignty R25: FW death never blocks the Z80); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
     constant C_SSP_CTRL_Z_RST_N      : natural range 0 to 31 := 0;  -- field 0:0
     constant C_SSP_CTRL_Z_BUSRQ_N    : natural range 0 to 31 := 1;  -- field 1:1
     constant C_SSP_CTRL_Z_WAIT_N     : natural range 0 to 31 := 2;  -- field 2:2
@@ -20,7 +20,7 @@ package ssp_regs_pkg is
     constant C_SSP_CTRL_CONSOLE_OWN  : natural range 0 to 31 := 8;  -- field 8:8
     constant C_SSP_CTRL_PANEL_LOCK   : natural range 0 to 31 := 9;  -- field 9:9
 
-    constant C_SSP_TRAMP_ADDR     : natural := 536870920;  -- 0x20000008 RW | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a guest reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02)
+    constant C_SSP_TRAMP_ADDR     : natural := 536870920;  -- 0x20000008 RW | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a Z80 reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02)
     constant C_SSP_TRAMP_ADDR_ADDR         : natural range 0 to 31 := 15;  -- field 15:0
 
     constant C_SSP_STATUS         : natural := 536870924;  -- 0x2000000C R | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25)
@@ -186,16 +186,16 @@ package ssp_regs_pkg is
     constant C_SSP_CONN_ROUTE_IN_SNAC      : natural range 0 to 31 := 2;  -- field 2:2
     constant C_SSP_CONN_ROUTE_IN_KBD       : natural range 0 to 31 := 3;  -- field 3:3
 
-    constant C_SSP_MBX0           : natural := 536871120;  -- 0x200000D0 RW | guest mailbox mirror $D0
+    constant C_SSP_MBX0           : natural := 536871120;  -- 0x200000D0 RW | Z80 mailbox mirror $D0
     constant C_SSP_MBX0_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_MBX1           : natural := 536871124;  -- 0x200000D4 RW | guest mailbox mirror $D1
+    constant C_SSP_MBX1           : natural := 536871124;  -- 0x200000D4 RW | Z80 mailbox mirror $D1
     constant C_SSP_MBX1_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_MBX2           : natural := 536871128;  -- 0x200000D8 RW | guest mailbox mirror $D2
+    constant C_SSP_MBX2           : natural := 536871128;  -- 0x200000D8 RW | Z80 mailbox mirror $D2
     constant C_SSP_MBX2_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_MBX3           : natural := 536871132;  -- 0x200000DC RW | guest mailbox mirror $D3
+    constant C_SSP_MBX3           : natural := 536871132;  -- 0x200000DC RW | Z80 mailbox mirror $D3
     constant C_SSP_MBX3_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
     constant C_SSP_MAP0           : natural := 536871136;  -- 0x200000E0 R | MMU frame tap entry 0 (state-neutral P-D)
@@ -229,7 +229,7 @@ package ssp_regs_pkg is
     constant C_SSP_LED_DATA1_G            : natural range 0 to 31 := 15;  -- field 15:8
     constant C_SSP_LED_DATA1_R            : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_FP_SW          : natural := 536871168;  -- 0x20000100 R | debounced toggle bank; same source as guest ports $FC-$FF
+    constant C_SSP_FP_SW          : natural := 536871168;  -- 0x20000100 R | debounced toggle bank; same source as Z80 ports $FC-$FF
     constant C_SSP_FP_SW_S31          : natural range 0 to 31 := 31;  -- field 31:31
     constant C_SSP_FP_SW_S30          : natural range 0 to 31 := 30;  -- field 30:30
     constant C_SSP_FP_SW_S29          : natural range 0 to 31 := 29;  -- field 29:29
@@ -239,7 +239,7 @@ package ssp_regs_pkg is
     constant C_SSP_FP_FN          : natural := 536871172;  -- 0x20000104 R | live debounced SPDT function lines (MMU-EXAM/DEPOSIT at 17:16)
     constant C_SSP_FP_FN_LINES        : natural range 0 to 31 := 17;  -- field 17:0
 
-    constant C_SSP_FP_ENC_CNT     : natural := 536871176;  -- 0x20000108 R | menu-selection counter; same source as guest port $FB
+    constant C_SSP_FP_ENC_CNT     : natural := 536871176;  -- 0x20000108 R | menu-selection counter; same source as Z80 port $FB
     constant C_SSP_FP_ENC_CNT_CNT          : natural range 0 to 31 := 7;  -- field 7:0
 
     constant C_SSP_FP_ENC_STAT    : natural := 536871180;  -- 0x2000010C R | encoder status (D-23); read clears event strobes

@@ -140,7 +140,7 @@ entity MicrocomputerZ80CPM is
 		-- input defaults to its idle value so a core without the SSP (and
 		-- the GHDL benches) behaves exactly as before.
 		ssp_busrq_n		: in  std_logic := '1';	-- park request to the T80
-		ssp_z_reset_n	: in  std_logic := '1';	-- low = vent the guest CPU
+		ssp_z_reset_n	: in  std_logic := '1';	-- low = vent the Z80 CPU
 		ssp_tramp_arm	: in  std_logic := '0';	-- G aaaa: arm reset-vector JP
 		ssp_tramp_target	: in  std_logic_vector(15 downto 0) := (others => '0');
 		ssp_freeze_any	: in  std_logic := '0';
@@ -180,7 +180,7 @@ architecture struct of MicrocomputerZ80CPM is
 	signal cpuDataIn				: std_logic_vector(7 downto 0);
 	signal cpuDbgRegisters			: std_logic_vector(211 downto 0);
 
-	-- T80 pins before z80_bus_mux (the names above are the guest nets
+	-- T80 pins before z80_bus_mux (the names above are the Z80 nets
 	-- AFTER the mux: n_MREQ/n_IORQ/n_RD/n_WR/n_M1, cpuAddress, cpuDataOut,
 	-- cpu_mrd_t1).
 	signal t80_addr					: std_logic_vector(15 downto 0);
@@ -497,7 +497,7 @@ port map (
 	cpu_mrd_t1   => cpu_mrd_t1
 );
 
--- Guest-CPU reset vent + reset-vector JP injector for "G aaaa" (D-02, R28).
+-- Z80-CPU reset vent + reset-vector JP injector for "G aaaa" (D-02, R28).
 -- Idle: t80_rst_n = reset_n_internal and t80_din = cpuDataIn.
 tramp : entity work.ssp_tramp
 port map (

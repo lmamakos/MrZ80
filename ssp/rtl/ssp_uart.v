@@ -14,21 +14,21 @@
 // * Escape recognizer (D-14, rev R15) with byte-level relay consumption
 //   (OQ-22 option (a), ratified R24): while OSD OM is On the incoming
 //   SNAC stream is deserialized here, ESC-matched bytes are consumed, and
-//   the remainder is RE-serialized toward the guest ACIA.  R25/H6: the
-//   guest RX mux at ssp_top switches between the RAW pin (OM off -- bit-
+//   the remainder is RE-serialized toward the Z80 ACIA.  R25/H6: the
+//   Z80 RX mux at ssp_top switches between the RAW pin (OM off -- bit-
 //   transparent, R-43) and the RELAY line (OM on).  The relay idles high;
 //   switching happens without duplication because in OM mode the raw wire
 //   is NEVER routed -- the relay deserializes from the raw pin and
-//   re-emits, so the guest sees each byte exactly once (worst case one
+//   re-emits, so the Z80 sees each byte exactly once (worst case one
 //   mid-byte torn frame at OM toggle, tolerable: OM is a config switch).
 // * Relay TX has a 2-deep queue (R25/H8: survives an off-by-one fast
 //   sender: at incr 2416 the relay line runs ~0.8% slow vs the sender, so
 //   a one-tick inter-byte stretch is inserted after every 12 back-to-back
 //   bytes instead of silently dropping the 13th).
 // * RX FIFO is fed only while the monitor owns the console
-//   (console_own = fw_console_ok): bytes routed to the guest are not
-//   stolen from the guest by firmware.  While owned, ESC_CHAR is NOT
-//   consumed (guest is parked -- the REPL sees the raw ^] byte).
+//   (console_own = fw_console_ok): bytes routed to the Z80 are not
+//   stolen from the Z80 by firmware.  While owned, ESC_CHAR is NOT
+//   consumed (Z80 is parked -- the REPL sees the raw ^] byte).
 //
 // TX: 1-deep holding (tx_ready = holding empty); monitor TX reaches the
 // SNAC pin through the top-level console mux when console_own.
@@ -58,17 +58,17 @@ module ssp_uart #(
     // ---------------- escape / console policy ----------------------------
     input  wire [7:0]  esc_char,
     input  wire        esc_eff,            // OM & CTRL.esc_break_en & ssp_active
-    input  wire        relay_en,          // OM: RX->guest goes through relay
-    input  wire        parked,            // guest bus-parked (bridge truth)
+    input  wire        relay_en,          // OM: RX->Z80 goes through relay
+    input  wire        parked,            // Z80 bus-parked (bridge truth)
     input  wire        console_own,       // fw_console_ok
 
     // ---------------- serial lines -----------------------------------------
     input  wire        snac_rxd,          // raw SNAC RX pin (async)
-    output wire        relay_txd,         // relay TX pin (guest RX wire, OM on)
+    output wire        relay_txd,         // relay TX pin (Z80 RX wire, OM on)
     output wire        mon_txd,          // monitor TX (to console mux)
 
     // ---------------- events -----------------------------------------------
-    output wire        esc_evt,          // 1-cycle: escape matched, guest ran
+    output wire        esc_evt,          // 1-cycle: escape matched, Z80 ran
     output reg         rx_push,        // 1-cycle: byte pushed into RX FIFO
     output wire [7:0]  rx_rnext        // FIFO head valid at pop-launch time
 );
@@ -76,7 +76,7 @@ module ssp_uart #(
     // ------------------------------------------------ RX path ------------
     // 2FF sync of the async pin (relay re-tx also re-synchronises: the
     // relay output is a synchronous, re-clocking copy -- legal because the
-    // guest ACIA re-samples with its own identical-rate divider; +-0.8%
+    // Z80 ACIA re-samples with its own identical-rate divider; +-0.8%
     // rate skew and the 2FF latency are within the 8N1 tolerance budget).
     reg [1:0] rx_sync;
     always @(posedge clk) rx_sync <= {rx_sync[0], snac_rxd};
@@ -152,7 +152,7 @@ module ssp_uart #(
     // bridge must instead capture this combinational head value.
     assign rx_rnext = fifo[rp[FIFO_LOG2-1:0]];
 
-    // escape consumption (OQ-22a): match only while the guest runs
+    // escape consumption (OQ-22a): match only while the Z80 runs
     wire esc_hit = byte_done && rx_stop && esc_eff && !parked
                    && (rx_byte == esc_char);
     assign esc_evt = esc_hit;
@@ -225,7 +225,7 @@ module ssp_uart #(
     end
 
     // ------------------------------------------------ relay TX -----------
-    // Re-serializes filtered RX bytes toward the guest while OM On.
+    // Re-serializes filtered RX bytes toward the Z80 while OM On.
     // 2-deep queue + inter-byte stretch (R25/H8).
     reg         rel_hold_v, rel_hold2_v, rel_act;
     reg  [7:0]  rel_hold, rel_hold2;
@@ -250,7 +250,7 @@ module ssp_uart #(
             rel_tcnt <= 8'd0; rel_run <= 4'd0; rel_stretch <= 1'b0;
         end else if (en) begin
             rel_acc <= rel_nsum[15:0];
-            // push completed, non-escaped bytes toward the guest
+            // push completed, non-escaped bytes toward the Z80
             if (byte_done && rx_stop && relay_en && !console_own && !esc_hit) begin
                 if (!rel_hold_v) begin
                     rel_hold   <= rx_byte;

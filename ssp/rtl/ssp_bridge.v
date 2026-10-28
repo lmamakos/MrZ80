@@ -28,12 +28,12 @@
 // step modes via FREEZE_any).
 //
 // Boot sovereignty / FW hang (owner ruling R25): with !ssp_active (OSD OK
-// off) every guest control is force-inactive -- monitor-disabled is
-// indistinguishable from monitor-absent (P-B).  Additionally, guest
+// off) every Z80 control is force-inactive -- monitor-disabled is
+// indistinguishable from monitor-absent (P-B).  Additionally, Z80
 // controls, park holds and console ownership are released when the RV core
 // is unwell: OSD rv_rst_n (host reset, sticky-pulsed at integration) and
 // the WDG_RUN expiry (RV stalled on the bus ~1.3 ms) both assert
-// rv_ctrl_ok=0.  A hung FW therefore cannot hold the guest: parks
+// rv_ctrl_ok=0.  A hung FW therefore cannot hold the Z80: parks
 // auto-release (WDG_PARK, ~1 s, D-13) and the escape hatch (hardware
 // escape + WDG_PARK expiry) works even with FW dead.
 //
@@ -61,7 +61,7 @@ module ssp_bridge (
     output wire        mem_wbusy,
     output wire        is_bridge,          // 0x2000_0xxx page hit (to top)
 
-    // ---------------- guest clock + bus view (via z80_bus_mux) -----------
+    // ---------------- Z80 clock + bus view (via z80_bus_mux) -----------
     input  wire        cpu_clk_en,        // cpu_cen RAW (never CEN-gated,
                                           //   else the engine stalls itself)
     input  wire [7:0]  cpu_din,          // cpuDataIn (peripheral/RAM mux)
@@ -85,7 +85,7 @@ module ssp_bridge (
     input  wire        rv_stalled,     // RV core waiting on bus/ALU (top)
     input  wire        rv_alive,       // RV seen fetching (top liveness)
 
-    // ---------------- guest control outputs -------------------------------
+    // ---------------- Z80 control outputs -------------------------------
     output wire        z_busrq_n,       // = FREEZE_req_n at T80s
     output wire        z_reset_n,       // CTRL.Z_RST_N effect (integration:
     output wire        z_wait_n,       //   AND with CPM reset stretcher)
@@ -130,7 +130,7 @@ module ssp_bridge (
 
     // ---------------- console / park state (to top console mux) -----------
     output wire        console_own,    // fw_console_ok (D-01)
-    output wire        parked,         // guest held by us (BusAck confirmed)
+    output wire        parked,         // Z80 held by us (BusAck confirmed)
 
     // ---------------- optional IRQ line (v1 FW polls, D-27) ---------------
     output wire        ssp_irq
@@ -195,7 +195,7 @@ module ssp_bridge (
     // ------------------------------------------------ CTRL ---------------
     reg  [9:0]  ctr;
     wire        ctrl_or_rst = rst_n && rv_rst_n;   // host-reset domain
-    // rv_ctrl_ok: FW may exert guest control only while the RV core itself
+    // rv_ctrl_ok: FW may exert Z80 control only while the RV core itself
     // is healthy (R25).  WDG_RUN expiry also drops it (sticky until the FW
     // is reset or kicks WDG_RUN_KICK).
     reg         run_expired_l;                     // 0 = expired (active-low)
@@ -224,11 +224,11 @@ module ssp_bridge (
 
     // ------------------------------------------------ watchdogs (D-13) -----
     // WDG_RUN: RV stalled on the bus (core hung on a peripheral that never
-    // answers) for WDG_RUN_T -> run_expired_l <- 0 -> ALL guest controls
+    // answers) for WDG_RUN_T -> run_expired_l <- 0 -> ALL Z80 controls
     // release (R25 sovereignty).  Refreshed while not stalled, by
     // WDG_RUN_KICK, or on any host-reset-domain transition.
     // WDG_PARK: a park held with no FW refresh for WDG_PARK_T releases the
-    // guest (park_dead_l sticky; halt_reason=9).  A live FW kicks
+    // Z80 (park_dead_l sticky; halt_reason=9).  A live FW kicks
     // WDG_PARK_KICK from its REPL loop each pass.
     reg  [24:0] wdg_run, wdg_park;
     reg         park_dead_l;                      // 0 = a park expired (sticky)

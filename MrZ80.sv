@@ -707,9 +707,9 @@ wire flow_control_enable = status[14];    // 0 = No flow control, 1 = RTS/CTS en
 
 // Serial interface routing 
 wire serial_rx = serial_port_select ? user_rx : UART_RXD;
-wire serial_tx;      // selected-port TX pin: from ssp_top (monitor or guest passthrough)
-wire guest_rx;       // guest ACIA RX wire (from ssp_top)
-wire guest_tx;       // guest ACIA TX wire
+wire serial_tx;      // selected-port TX pin: from ssp_top (monitor or Z80 passthrough)
+wire z80_rx;       // Z80 ACIA RX wire (from ssp_top)
+wire z80_tx;       // Z80 ACIA TX wire
 wire fpLED_serial;   // Front-panel WS2812 line, routed to USER_OUT[6]
 
 localparam INIT_TIMEOUT = 24'd50000; // 1ms at 50MHz clock
@@ -1027,8 +1027,8 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
 	.sdSCLK		(sdclk),
 	.sdCD		(SD_CD),
     .driveLED(driveLED),
-    .rxd1(guest_rx),
-    .txd1(guest_tx),
+    .rxd1(z80_rx),
+    .txd1(z80_tx),
     .rts1(serial_rts),
     .cts1(serial_cts),
     .fpLED_serial(fpLED_serial),
@@ -1097,10 +1097,10 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
 //
 // D-40: the SSP console follows the OSD serial-port selection, so ssp_top sits
 // AFTER the port-select mux: snac_rxd is the selected port's RX pin, snac_txd
-// is the selected port's TX (monitor output, or the guest's TX passed through),
-// and the guest ACIA hangs off guest_rxd/guest_txd. With "SSP Monitor" Off
+// is the selected port's TX (monitor output, or the Z80's TX passed through),
+// and the Z80 ACIA hangs off z80_rxd/z80_txd. With "SSP Monitor" Off
 // (status[20]=0) ssp_top is a bit-transparent wire in both directions (P-B,
-// R-43). RTS/CTS flow control stays guest-only (the SSP UART has none, R4).
+// R-43). RTS/CTS flow control stays Z80-only (the SSP UART has none, R4).
 // "Reset SSP" (status[23], a trigger item): stretch the pulse to ~1.3 ms so the
 // RV core sees a clean reset whatever the OSD pulse width.
 reg [15:0] ssp_rv_rst_cnt = 16'd0;
@@ -1118,7 +1118,7 @@ ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif")) ssp_top
     .osd_esc_en     (status[22]),
     .esc_disable    (1'b0),                 // panel frame bit 32 (P1b)
     .panel_stop     (1'b0),                 // panel STOP latch (P1b)
-    .baud_increment (baud_increment),       // the O9B value the guest UART uses
+    .baud_increment (baud_increment),       // the O9B value the Z80 UART uses
 
     .cpu_clk_en_raw (ssp_cpu_cen),
     .cpu_din        (ssp_cpu_din),
@@ -1153,8 +1153,8 @@ ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif")) ssp_top
 
     .snac_rxd       (serial_rx),
     .snac_txd       (serial_tx),
-    .guest_rxd      (guest_rx),
-    .guest_txd      (guest_tx),
+    .z80_rxd      (z80_rx),
+    .z80_txd      (z80_tx),
 
     .ssp_irq        (ssp_irq),
     .rv_alive       (ssp_rv_alive),

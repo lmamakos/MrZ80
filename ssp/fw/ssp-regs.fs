@@ -3,7 +3,7 @@
 $20000000 constant SSP_ID ( R | bridge ID 0x4D52_5Axx; rev-stamped )
 $0FFFFFFF constant SSP_ID_REV ( field 27:0 )
 
-$20000004 constant SSP_CTRL ( RW | park/hold/trampoline/escape enables; Z_RST_N: set = assert guest CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the guest reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the guest parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- guest owns the SNAC at power (boot sovereignty R25: FW death never blocks the guest); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE )
+$20000004 constant SSP_CTRL ( RW | park/hold/trampoline/escape enables; Z_RST_N: set = assert Z80 CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the Z80 reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the Z80 parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- Z80 owns the SNAC at power (boot sovereignty R25: FW death never blocks the Z80); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE )
 $00000001 constant SSP_CTRL_Z_RST_N ( field 0:0 )
 $00000002 constant SSP_CTRL_Z_BUSRQ_N ( field 1:1 )
 $00000004 constant SSP_CTRL_Z_WAIT_N ( field 2:2 )
@@ -13,7 +13,7 @@ $00000020 constant SSP_CTRL_ESC_BREAK_EN ( field 5:5 )
 $00000100 constant SSP_CTRL_CONSOLE_OWN ( field 8:8 )
 $00000200 constant SSP_CTRL_PANEL_LOCK ( field 9:9 )
 
-$20000008 constant SSP_TRAMP_ADDR ( RW | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a guest reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02) )
+$20000008 constant SSP_TRAMP_ADDR ( RW | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a Z80 reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02) )
 $0000FFFF constant SSP_TRAMP_ADDR_ADDR ( field 15:0 )
 
 $2000000C constant SSP_STATUS ( R | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25) )
@@ -179,16 +179,16 @@ $00000002 constant SSP_CONN_ROUTE_OUT_HDMI ( field 1:1 )
 $00000004 constant SSP_CONN_ROUTE_IN_SNAC ( field 2:2 )
 $00000008 constant SSP_CONN_ROUTE_IN_KBD ( field 3:3 )
 
-$200000D0 constant SSP_MBX0 ( RW | guest mailbox mirror $D0 )
+$200000D0 constant SSP_MBX0 ( RW | Z80 mailbox mirror $D0 )
 $000000FF constant SSP_MBX0_DATA ( field 7:0 )
 
-$200000D4 constant SSP_MBX1 ( RW | guest mailbox mirror $D1 )
+$200000D4 constant SSP_MBX1 ( RW | Z80 mailbox mirror $D1 )
 $000000FF constant SSP_MBX1_DATA ( field 7:0 )
 
-$200000D8 constant SSP_MBX2 ( RW | guest mailbox mirror $D2 )
+$200000D8 constant SSP_MBX2 ( RW | Z80 mailbox mirror $D2 )
 $000000FF constant SSP_MBX2_DATA ( field 7:0 )
 
-$200000DC constant SSP_MBX3 ( RW | guest mailbox mirror $D3 )
+$200000DC constant SSP_MBX3 ( RW | Z80 mailbox mirror $D3 )
 $000000FF constant SSP_MBX3_DATA ( field 7:0 )
 
 $200000E0 constant SSP_MAP0 ( R | MMU frame tap entry 0 (state-neutral P-D) )
@@ -222,7 +222,7 @@ $00FF0000 constant SSP_LED_DATA1_B ( field 23:16 )
 $0000FF00 constant SSP_LED_DATA1_G ( field 15:8 )
 $000000FF constant SSP_LED_DATA1_R ( field 7:0 )
 
-$20000100 constant SSP_FP_SW ( R | debounced toggle bank; same source as guest ports $FC-$FF )
+$20000100 constant SSP_FP_SW ( R | debounced toggle bank; same source as Z80 ports $FC-$FF )
 $80000000 constant SSP_FP_SW_S31 ( field 31:31 )
 $40000000 constant SSP_FP_SW_S30 ( field 30:30 )
 $20000000 constant SSP_FP_SW_S29 ( field 29:29 )
@@ -232,7 +232,7 @@ $0FFFFFFF constant SSP_FP_SW_ADDR ( field 27:0 )
 $20000104 constant SSP_FP_FN ( R | live debounced SPDT function lines (MMU-EXAM/DEPOSIT at 17:16) )
 $0003FFFF constant SSP_FP_FN_LINES ( field 17:0 )
 
-$20000108 constant SSP_FP_ENC_CNT ( R | menu-selection counter; same source as guest port $FB )
+$20000108 constant SSP_FP_ENC_CNT ( R | menu-selection counter; same source as Z80 port $FB )
 $000000FF constant SSP_FP_ENC_CNT_CNT ( field 7:0 )
 
 $2000010C constant SSP_FP_ENC_STAT ( R | encoder status (D-23); read clears event strobes )
