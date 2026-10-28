@@ -109,7 +109,7 @@ package ssp_regs_pkg is
     constant C_SSP_MEM_DATA       : natural := 536871036;  -- 0x2000007C RCW | read = captured byte (latched at strobe release); write = data-out
     constant C_SSP_MEM_DATA_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_MD             : natural := 536871040;  -- 0x20000080 RCW | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write
+    constant C_SSP_MD             : natural := 536871040;  -- 0x20000080 RCW | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 rejects MEMORY kicks (ENGINE_ERR) until the P1b-M3 physical path; I/O kicks unaffected (ports are unmapped)
     constant C_SSP_MD_PHYS         : natural range 0 to 31 := 0;  -- field 0:0
 
     constant C_SSP_AR             : natural := 536871044;  -- 0x20000084 RCW | shared address register (logical ops use low 16)

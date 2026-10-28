@@ -348,10 +348,12 @@ module ssp_bridge (
         end else begin
             // completion flag: read clears (CSV ENG_STAT), errors set below
             if (rd_fire && (widx == `SSP_RIDX_ENG_STAT)) eng_err <= 1'b0;
-            // enqueue (one-deep macro queue; parked-only per 9.1;
-            // MD=physical needs ssp_mem_client -- P1b, R-27)
+            // enqueue (one-deep macro queue; parked-only per 9.1).
+            // MD=physical rejects MEMORY kicks -- physical memory needs
+            // ssp_mem_client (P1b-M3, R-27).  I/O kicks are exempt: ports
+            // are never MMU-translated, so the addressing mode is moot (R37).
             if (kick) begin
-                if (!park_act || md_phys)  eng_err <= 1'b1;
+                if (!park_act || (md_phys && !kick_isio)) eng_err <= 1'b1;
                 else if (q_valid || (st != 2'd0)) eng_err <= 1'b1;
                 else begin
                     q_valid <= 1'b1;

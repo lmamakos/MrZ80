@@ -45,9 +45,20 @@ SSP_CTRL_ESC_BREAK_EN
 0 variable m-bad                           \ argument error flag
 
 \ ---- output ------------------------------------------------------------------
+\ Color API (M1 stubs -- they deliberately emit nothing yet).  Planned: ANSI
+\ SGR sequences choosing the prompt colour (col-prompt), the key-echo colour
+\ while a command line is typed (col-input), the command-response colour
+\ (col-output), and the terminal default (col-reset).  Call sites are already
+\ wired in the command loop; implementing the words is then a local change.
+: col-prompt ( -- ) ;   \ planned: ESC [ 36 m   (cyan prompt)
+: col-input  ( -- ) ;   \ planned: ESC [ 37 m   (bright white echo)
+: col-output ( -- ) ;   \ planned: ESC [ 32 m   (green responses)
+: col-reset  ( -- ) ;   \ planned: ESC [ 0 m    (terminal default)
 : m-h1 ( u -- )  $F and dup 10 < if 48 else 55 then + emit ;
 : m-h2 ( u -- )  dup 4 rshift m-h1 m-h1 ;
+: m-h3 ( u -- )  dup 8 rshift m-h1 m-h2 ;
 : m-h4 ( u -- )  dup 8 rshift m-h2 m-h2 ;
+: m-h7 ( u -- )  dup 16 rshift m-h3 $FFFF and m-h4 ;   \ 28-bit phys addr
 : m-ascii ( b -- )  dup 32 < over 126 > or if drop 46 then emit ;
 : m-q ( -- )  ." ?" cr ;
 
@@ -59,12 +70,19 @@ SSP_CTRL_ESC_BREAK_EN
   drop ;
 
 \ ---- Z80 memory through the D-30 sequencer (Z80 must be parked) ----------
-: m-wait ( -- )  begin SSP_STATUS @ SSP_STATUS_SEQ_BUSY and 0= until ;
-: gc@ ( addr -- b )
+\ m-wait blocks until the sequencer goes idle, then reports success via the
+\ engine error latch (RC: reading ENG_STAT clears it).  A rejected kick --
+\ e.g. MD=physical before M3 -- never sets SEQ_BUSY, so the ERR check is the
+\ only way to see it; without it the caller would echo stale MEM_DATA.
+: m-wait ( -- f )
+  begin SSP_STATUS @ SSP_STATUS_SEQ_BUSY and 0= until
+  SSP_ENG_STAT @ SSP_ENG_STAT_ENGINE_ERR and 0= ;
+: gc@ ( addr -- b f )
   SSP_MEM_ADDR !
   SSP_MEM_CTL_START SSP_MEM_CTL_RNW or SSP_MEM_CTL !
-  m-wait SSP_MEM_DATA @ $FF and ;
-: gc! ( b addr -- )
+  m-wait 0= if drop false exit then
+  SSP_MEM_DATA @ $FF and true ;
+: gc! ( b addr -- f )
   SSP_MEM_ADDR !  SSP_MEM_DATA !
   SSP_MEM_CTL_START SSP_MEM_CTL !
   m-wait ;
@@ -107,9 +125,78 @@ SSP_CTRL_ESC_BREAK_EN
   m-num if nip then ;
 : m-end ( -- )  m-spaces m-getc if 1 m-bad ! then ;     \ junk / extra tokens
 
+\ ---- I / O : Z80 I/O ports through the engine (D-30 IO_RD/IO_WR) ---------------
+\ Ports are never MMU-translated, so I/O works in either addressing mode
+\ (R37: the bridge exempts IS_IO kicks from the MD=physical reservation).
+\ The result flags from m-wait still catch genuine engine faults -- without
+\ them a failed op would echo stale MEM_DATA.
+0 variable m-ioa                                  \ last I/O port
+: m-io@ ( p -- b true | false )
+  SSP_MEM_ADDR !
+  SSP_MEM_CTL_START SSP_MEM_CTL_RNW or SSP_MEM_CTL_IS_IO or SSP_MEM_CTL !
+  m-wait 0= if false exit then
+  SSP_MEM_DATA @ $FF and true ;
+: m-io! ( b p -- f )
+  SSP_MEM_ADDR !  SSP_MEM_DATA !
+  SSP_MEM_CTL_START SSP_MEM_CTL_IS_IO or SSP_MEM_CTL !
+  m-wait ;
+: m-port-r ( -- )
+  0 m-bad !
+  m-ioa @ m-arg $FFFF and m-ioa !  m-end
+  m-bad @ if m-q exit then
+  m-need-park 0= if exit then
+  m-ioa @ m-io@ if
+    ." I " m-ioa @ m-h4 space ." =" space m-h2 cr
+  else ." I/O ERR" cr then ;
+: m-port-w ( -- )
+  0 m-bad !  0 m-n !
+  m-ioa @ m-arg $FFFF and m-ioa !
+  m-num if dup $FF u> if drop 1 m-bad ! else m-n ! then else 1 m-bad ! then
+  m-end
+  m-bad @ if m-q exit then
+  m-need-park 0= if exit then
+  m-n @ m-ioa @ m-io! if
+    ." O " m-ioa @ m-h4 space ." =" space m-n @ m-h2 cr
+  else ." O ERR" cr then ;
+
+\ ---- MAP : MMU frames, logical -> physical view ------------------------------------
+\ Read through engine I/O reads of the MMU mapping ports ($B0+n low, $B4+n
+\ high); reads are state-neutral (P-D).  Page = 14 bits (physical_page_bits 14);
+\ page 8192 = the relocated block-RAM page (phys 0x0800_0000), else SDRAM.
+0 variable m-pg
+0 variable m-kn
+: m-map1 ( n -- )
+  m-kn !
+  $B0 m-kn @ + m-io@ 0= if drop 1 m-bad ! exit then  m-pg !
+  $B4 m-kn @ + m-io@ 0= if drop 1 m-bad ! exit then
+  $3F and 8 lshift  m-pg @ or  $3FFF and  m-pg !
+  70 emit m-kn @ 48 + emit space space ." page " m-pg @ m-h4 space space ." phys "
+  m-pg @ 14 lshift m-h7
+  m-pg @ 8192 = if space space ." BRAM" then cr ;
+: m-map ( -- )
+  m-need-park 0= if exit then
+  0 m-bad !
+  4 0 do i m-map1 loop
+  m-bad @ if m-q exit then ;
+
+\ ---- PHY / LOG : addressing mode (MD, D-22) --------------------------------------
+\ PHY selects the physical (28-bit) view for E/D.  Until M3 lands
+\ ssp_mem_client the bridge rejects memory kicks while MD=1, so the monitor
+\ refuses E/D honestly instead of showing stale data.  Port I/O is unaffected
+\ by the mode (ports are unmapped, R37); G stays logical (the Z80's own
+\ address bus is what it is).  Switch back with LOG.
+: m-phys? ( -- f )  SSP_MD @ 1 and ;
+: m-phy ( -- )  1 SSP_MD ! ." PHYSICAL (E/D PENDING M3)" cr ;
+: m-log ( -- )  0 SSP_MD ! ." LOGICAL" cr ;
+: m-phystest ( -- f )  m-phys? dup if ." PHYSICAL E/D PENDING M3" cr then ;
+
 \ ---- E : examine ---------------------------------------------------------------
-: m-rd-row ( addr k -- )
-  0 do dup i + $FFFF and gc@ m-row i + c! loop drop ;
+: m-rd-row ( addr k -- f )
+  0 do dup i + $FFFF and gc@
+    0= if nip nip false exit then
+    m-row i + c!
+  loop
+  drop true ;
 : m-pr-row ( k -- )
   >r
   r@ 0 do m-row i + c@ m-h2 space loop
@@ -121,11 +208,12 @@ SSP_CTRL_ESC_BREAK_EN
   m-next @ m-arg $FFFF and m-a !
   $80 m-arg $FFFF and m-n !  m-end
   m-bad @ if m-q exit then
+  m-phystest if exit then
   m-need-park 0= if exit then
   begin m-n @ while
     m-n @ 16 min m-k !
     m-a @ m-h4 ." : "
-    m-a @ m-k @ m-rd-row
+    m-a @ m-k @ m-rd-row 0= if ." RD ERR" cr m-a @ m-next ! exit then
     m-k @ m-pr-row cr
     m-k @ m-a +!  m-a @ $FFFF and m-a !
     m-k @ negate m-n +!
@@ -135,17 +223,19 @@ SSP_CTRL_ESC_BREAK_EN
 \ ---- D : deposit ----------------------------------------------------------------
 \ one prompt; true when the session is over
 : m-dep1 ( -- f )
-  m-a @ m-h4 ." : " m-a @ gc@ m-h2 space
+  m-a @ m-h4 ." : " m-a @ gc@ if m-h2 else 45 emit 45 emit then space
   m-line-in cr m-spaces
   m-getc 0= if 1 m-a +! false exit then           \ bare CR: leave, advance
   m-getc 46 = if true exit then                   \ .  ends
   m-num 0= if m-q false exit then
   dup $FF u> if drop m-q false exit then
-  m-a @ gc!  1 m-a +! false ;
+  m-a @ gc! 0= if ." WR ERR" cr true exit then
+  1 m-a +! false ;
 : m-deposit ( -- )
   0 m-bad !
   m-next @ m-arg $FFFF and m-a !  m-end
   m-bad @ if m-q exit then
+  m-phystest if exit then
   m-need-park 0= if exit then
   begin m-dep1  m-a @ $FFFF and m-a !  until
   m-a @ m-next ! ;
@@ -200,7 +290,14 @@ SSP_CTRL_ESC_BREAK_EN
   ." D [AAAA]      DEPOSIT: HEX=SET  CR=SKIP  .=END" cr
   ." G [AAAA]      GO (NO ADDRESS = CONTINUE)" cr
   ." R             REGISTERS" cr
+  ." I AAAA       INPUT: READ Z80 I/O PORT" cr
+  ." O AAAA DD    OUTPUT: WRITE Z80 I/O PORT" cr
+  ." MAP          MMU FRAMES: LOGICAL -> PHYSICAL" cr
+  ." PHY / LOG    ADDRESS MODE (PHYSICAL E/D PENDING M3)" cr
   ." F             FORTH" cr ;
+: m-ch ( c -- f )  m-getc 32 or = dup if m-adv then ;   \ exact letter, CI
+: m-tail-hy ( -- f )  104 m-ch if 121 m-ch exit else false then ;
+: m-tail-og ( -- f )  111 m-ch if 103 m-ch exit else false then ;
 : m-cmd ( -- )
   m-spaces m-getc dup 0= if drop exit then
   m-adv 32 or
@@ -208,10 +305,15 @@ SSP_CTRL_ESC_BREAK_EN
   dup 100 = if drop m-deposit exit then       \ d
   dup 103 = if drop m-go exit then            \ g
   dup 114 = if drop m-regs exit then          \ r
+  dup 105 = if drop m-port-r exit then        \ i
+  dup 111 = if drop m-port-w exit then        \ o
+  dup 109 = if drop m-map exit then           \ m
+  dup 112 = if drop m-tail-hy if m-phy exit else m-q exit then then  \ p-h-y
+  dup 108 = if drop m-tail-og if m-log exit else m-q exit then then  \ l-o-g
   dup 102 = if drop 2 m-state ! exit then     \ f
   dup 63 = over 104 = or if drop m-help exit then   \ ? h
   drop m-q ;
-: m-banner ( -- )  cr ." MRZ80 SSP MONITOR  ? = HELP" cr ;
+: m-banner ( -- )  col-output cr ." MRZ80 SSP MONITOR  ? = HELP" cr col-reset ;
 : m-console? ( -- f )  SSP_STATUS @ SSP_STATUS_FW_CONSOLE_OK and ;
 
 : mon ( -- )
@@ -219,7 +321,10 @@ SSP_CTRL_ESC_BREAK_EN
     begin m-console? until                    \ the operator's escape
     m-banner
     0 m-state !
-    begin ." ." m-line-in cr m-cmd m-state @ until
+    begin col-prompt ." ." col-input
+          m-line-in
+          col-output cr m-cmd col-reset
+          m-state @ until
     m-state @ 2 = if ." FORTH" cr exit then
     begin m-console? 0= until                 \ Z80 has the console again
   again ;

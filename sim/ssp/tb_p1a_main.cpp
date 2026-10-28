@@ -209,11 +209,13 @@ int main(int argc, char **argv) {
 
     fprintf(stderr,
             "[p1a] done: cycles=%lld tx=%ld rx=%ld rom_illegal=%u bus_errs=%u"
-            " guest_rx=%u freeze_acc=%u\n",
+            " guest_rx=%u freeze_acc=%u io_wr=%u(%02x,%02x)\n",
             g_cycle, g_tx_bytes, g_rx_bytes,
             (unsigned)g_top->dbg_rom_illegal_writes,
             (unsigned)g_top->dbg_bus_errs,
-            (unsigned)g_top->dbg_guest_rx, (unsigned)g_top->dbg_freeze_acc);
+            (unsigned)g_top->dbg_guest_rx, (unsigned)g_top->dbg_freeze_acc,
+            (unsigned)g_top->dbg_io_wr_count, (unsigned)g_top->dbg_io_wr_port,
+            (unsigned)g_top->dbg_io_wr_data);
 
     if (g_tx_bytes == 0) { fprintf(stderr, "[p1a] no console output -- boot dead\n"); rc = 3; }
     if (g_top->dbg_bus_errs) rc = rc ? rc : 1;

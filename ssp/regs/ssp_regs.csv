@@ -50,7 +50,7 @@ offset,name,access,reset,bits,fields,doc
 074,MEM_CTL,RCW,00000000,3:0,"START=0; RNW=1; IS_IO=2; USE_SHARED=3","shared engine kick (D-30 macro enqueue); busy/done/timeout via STATUS; panel wins simultaneity"
 078,MEM_ADDR,RCW,00000000,27:0,ADDR=27:0,"op address; AR/PR source when USE_SHARED"
 07C,MEM_DATA,RCW,00000000,7:0,DATA=7:0,"read = captured byte (latched at strobe release); write = data-out"
-080,MD,RCW,00000000,0:0,PHYS=0,"addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write"
+080,MD,RCW,00000000,0:0,PHYS=0,"addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 rejects MEMORY kicks (ENGINE_ERR) until the P1b-M3 physical path; I/O kicks unaffected (ports are unmapped)"
 084,AR,RCW,00000000,27:0,ADDR=27:0,"shared address register (logical ops use low 16)"
 088,DR,RCW,00000000,7:0,DATA=7:0,"shared data register"
 08C,PR,RCW,00000000,7:0,PORT=7:0,"shared I/O port register"

@@ -102,7 +102,7 @@ $0FFFFFFF constant SSP_MEM_ADDR_ADDR ( field 27:0 )
 $2000007C constant SSP_MEM_DATA ( RCW | read = captured byte (latched at strobe release); write = data-out )
 $000000FF constant SSP_MEM_DATA_DATA ( field 7:0 )
 
-$20000080 constant SSP_MD ( RCW | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write )
+$20000080 constant SSP_MD ( RCW | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 rejects MEMORY kicks (ENGINE_ERR) until the P1b-M3 physical path; I/O kicks unaffected (ports are unmapped) )
 $00000001 constant SSP_MD_PHYS ( field 0:0 )
 
 $20000084 constant SSP_AR ( RCW | shared address register (logical ops use low 16) )

@@ -44,7 +44,7 @@ W1C, RCW (shared FW/engine, G-3).
 | 0x074 | `MEM_CTL` | RCW | `00000000` | START 0:0; RNW 1:1; IS_IO 2:2; USE_SHARED 3:3 | shared engine kick (D-30 macro enqueue); busy/done/timeout via STATUS; panel wins simultaneity |
 | 0x078 | `MEM_ADDR` | RCW | `00000000` | ADDR 27:0 | op address; AR/PR source when USE_SHARED |
 | 0x07C | `MEM_DATA` | RCW | `00000000` | DATA 7:0 | read = captured byte (latched at strobe release); write = data-out |
-| 0x080 | `MD` | RCW | `00000000` | PHYS 0:0 | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write |
+| 0x080 | `MD` | RCW | `00000000` | PHYS 0:0 | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 rejects MEMORY kicks (ENGINE_ERR) until the P1b-M3 physical path; I/O kicks unaffected (ports are unmapped) |
 | 0x084 | `AR` | RCW | `00000000` | ADDR 27:0 | shared address register (logical ops use low 16) |
 | 0x088 | `DR` | RCW | `00000000` | DATA 7:0 | shared data register |
 | 0x08C | `PR` | RCW | `00000000` | PORT 7:0 | shared I/O port register |

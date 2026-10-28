@@ -257,7 +257,7 @@
 `define SSP_HI_MEM_DATA_DATA       7          // field high index
 `define SSP_LO_MEM_DATA_DATA       0          // field low index
 
-`define SSP_MD               32'h20000080  // RCW reset 32'h00000000 | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write
+`define SSP_MD               32'h20000080  // RCW reset 32'h00000000 | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 rejects MEMORY kicks (ENGINE_ERR) until the P1b-M3 physical path; I/O kicks unaffected (ports are unmapped)
 `define SSP_RIDX_MD           10'h020      // word index (offset/4)
 `define SSP_MD_RESET 32'h00000000          // reset value
 `define SSP_MD_RESET_1 1'h0     // reset, 1-bit sized

@@ -325,6 +325,16 @@ export, our file, allowed); `PHY`/`LOG` mode verbs; physical-vs-logical command
 letters = OQ-24. Also pending: `PR`/mailbox, step assist, MROM/MPKG mount path,
 ODT skin. Bridge board design (OQ-09) runs in parallel.
 
+**M1 DONE (R37):** `I`/`O`/`MAP`/`PHY`/`LOG` + colour stubs are in the monitor
+(`monitor.fs`), covered by new Part E of `p1a_smoke.sh`; item (b) is fully
+closed — with the owner ruling that port I/O is address-mode-independent, the
+bridge now rejects only MEMORY kicks while `MD=physical` (`IS_IO` exempt).
+Physical E/D (item (a)) still awaits `ssp_mem_client` (M3): FW refuses with
+`PHYSICAL E/D PENDING M3`. `MAP` currently reads the $B0..$BF engine path;
+`MAP0..3` direct frame taps remain M2 work. Factory `forth_rom.mif` regenerated
+with M1; owner rebuild (`tools/build.sh`) + `make install` to see the new
+commands on hardware.
+
 ### Owner questions outstanding
 
 | # | Question | Where it blocks |

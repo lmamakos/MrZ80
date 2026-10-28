@@ -26,7 +26,10 @@ module ssp_p1a_top (
     output wire [31:0] dbg_rom_illegal_writes,
     output wire [31:0] dbg_bus_errs,
     output wire [31:0] dbg_guest_rx,         // bytes the guest ACIA model received
-    output wire [31:0] dbg_freeze_acc        // park grants the guest CPU accepted
+    output wire [31:0] dbg_freeze_acc,       // park grants the guest CPU accepted
+    output wire [31:0] dbg_io_wr_count,     // engine I/O writes seen by the BFM
+    output wire [31:0] dbg_io_wr_port,
+    output wire [31:0] dbg_io_wr_data
 );
 
     import "DPI-C" function void tb_putc(int c);
@@ -417,6 +420,9 @@ module ssp_p1a_top (
     // ------------------------------------------------ final info line -----
     assign dbg_guest_rx   = guest_rx_count;
     assign dbg_freeze_acc = freeze_accept_count;
+    assign dbg_io_wr_count = io_wr_count;
+    assign dbg_io_wr_port  = {24'd0, io_wr_port};
+    assign dbg_io_wr_data  = {24'd0, io_wr_data};
     export "DPI-C" task tb_info;
     task tb_info;
         $display("[p1a-info] cycles=%0d fetches=%0d freeze_acc=%0d guest_rx=%0d last_rx=%02x io_wr=%0d(%02x,%02x) rom_illegal=%0d bus_errs=%0d parked=%0b alive=%0b",

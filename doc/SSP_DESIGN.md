@@ -2253,3 +2253,26 @@ changes exempt); never `git push` — pushing is the owner's manual step. Regres
 after the rename: regmap-check, lint-ssp, p1a + tramp-p1a + uart-fifo + dict-p1a +
 smoke-p1a, stub/dict/smoke lanes (picorv32, gracilis, qemu), GHDL sync + tramp +
 integ-park + integ-mux + integ-core + cycle-golden — all PASS.
+
+R37 **P1b-M1: monitor I/O, MAP view, PHY/LOG + colour stubs (2026-10-28).** FW
+`monitor.fs` gains `I aaaa` (port read), `O aaaa dd` (port write), `MAP`
+(MMU frames F0-F3: page + physical base, block-RAM page annotated), `PHY`/`LOG`
+(addressing mode via readable `MD` bit 0), and no-op colour words `col-prompt
+col-input col-output col-reset` wired into the prompt loop and banner (real SGR
+sequences later). Memory/I/O transfers now check `ENG_STAT.ENGINE_ERR` after the
+sequencer idles (`RC` self-clearing): a rejected op prints `RD/WR/I/O ERR`
+instead of echoing stale `MEM_DATA` -- the failure mode that motivated this
+check appeared during bring-up. **Owner ruling (R37): port I/O is
+address-mode-independent** -- ports are never MMU-translated, so `MD=physical`
+must not gate them. RTL change in `ssp_bridge.v`: the MD-reservation reject now
+covers MEMORY kicks only (`md_phys && !kick_isio`); `IS_IO` kicks stay legal
+until M3 gives physical memory a path (`ssp_mem_client`). FW `E`/`D` continue
+to refuse physically (`PHYSICAL E/D PENDING M3`) until M3, and `G` is always
+logical. CSV `MD` description updated + regmap regenerated. Evidence: new Part
+E in `sim/ssp/p1a_smoke.sh` (14 checks; BFM oracles: I/O read returns
+`port^0x0F`, last I/O write captured; physical-mode `O 00CC 3C` lands at the
+BFM, `io_wr=..(cc,3c)`), mutation-tested -- removing the `IS_IO` exemption
+kills exactly the three physical-mode checks. Lanes after the change:
+regmap-check, lint-ssp, p1a, dict-p1a, smoke-p1a (Parts A-E), tramp-p1a,
+uart-fifo -- all PASS. Factory `ssp/fw/forth_rom.mif` regenerated to carry the
+M1 monitor (recommit-on-FW-change rule honored).

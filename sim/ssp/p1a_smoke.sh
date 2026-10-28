@@ -194,5 +194,55 @@ if grep -aq 'WDG_PARK expired' "$WORK/D.events.log"; then
   echo "  FAIL: WDG_PARK expired while the FW sat at the prompt (kernel key-wait must kick it)"; fail=1
 else echo "  ok: WDG_PARK never expired while idle at the prompt"; fi
 
+# ======================= Part E: I/O ports, MAP view, PHY/LOG mode (OM=1) ========
+# M1 commands.  BFM oracles (z80_bfm.v): an I/O READ returns port^0x0F; the
+# I/O WRITE capture holds the last (port,data).  MMU mapping ports read through
+# the engine too, so the MAP pages are (B0+n)^0x0F low / (B4+n)^0x0F high ->
+# pages 3BBF/3ABE/39BD/38BC, phys = page<<14.  PHY sets MD (D-22): E/D refuse
+# with a PENDING note until M3 lands ssp_mem_client; I/O + G are unaffected.
+TAG=E
+{
+  printf '\x1d'
+  printf '?\r'
+  printf 'I 0080\r'
+  printf 'O 00BB 5A\r'
+  printf 'O BB G\r'                                 # bad data -> ?
+  printf 'O FF\r'                                 # missing data -> ?
+  printf 'MAP\r'
+  printf 'PHY\r'
+  printf 'E 100 4\r'                             # refused: physical pending M3
+  printf 'D 100\r'                              # refused likewise
+  printf 'I 0081\r'                             # I/O works even in PHYSICAL (R37)
+  printf 'O 00CC 3C\r'                          # ... reads and writes alike
+  printf 'PPX\rLO\r'                            # near-miss verbs -> ? ?
+  printf 'LOG\r'
+  printf 'E 100 4\r'                            # logical E restored
+  printf 'G\r'
+} | runmodel E +OM=1 +LINEWAIT=2 +QUIET=150000
+echo "--- Part E console ---"; cat "$WORK/E.norm.log"
+check "help lists I/O/MAP/PHY"                   '^I AAAA       INPUT'
+check "help lists MAP"                           '^MAP          MMU FRAMES'
+check "I reads a port (BFM pattern addr^0x0F)"  '^I 0080 = 8F$'
+check "O writes a port and echoes"               '^O 00BB = 5A$'
+n_qE=$(grep -ac '^?$' "$WORK/E.norm.log")
+[ "$n_qE" -eq 4 ] && echo "  ok: 4 '?' replies (O BB G, O FF, PPX, LO)" \
+  || { echo "  FAIL: expected 4 '?' replies, got $n_qE"; fail=1; }
+check "MAP F0 frame + physical base"             '^F0  page 3BBF  phys EEFC000$'
+check "MAP F3 frame + physical base"             '^F3  page 38BC  phys E2F0000$'
+check "PHY mode message"                         '^PHYSICAL \(E/D PENDING M3\)$'
+n_rej=$(grep -ac '^PHYSICAL E/D PENDING M3$' "$WORK/E.norm.log")
+[ "$n_rej" -eq 2 ] && echo "  ok: E and D both refused in physical mode" \
+  || { echo "  FAIL: expected 2 physical refusals, got $n_rej"; fail=1; }
+check "port read works even in PHYSICAL mode"    '^I 0081 = 8E$'
+check "port write works even in PHYSICAL mode"   '^O 00CC = 3C$'
+check "LOG mode message"                         '^LOGICAL$'
+check "logical E/D restored after LOG"          '^0100: C3 00 01 02'
+io_wr_line=$(grep -aoE 'io_wr=[0-9]+\(cc,3c\)' "$WORK/E.info.log" | tail -1)
+[ -n "$io_wr_line" ] && echo "  ok: BFM captured the physical-mode I/O write $io_wr_line" \
+  || { echo "  FAIL: no io_wr(cc,3c) in the info line"; fail=1; }
+if grep -aq 'p1a-ERR' "$WORK/E.events.log"; then
+  echo "  FAIL: BUSRQ released during an engine cycle (Part E)"; fail=1
+fi
+
 [ $fail -eq 0 ] && echo "p1a_smoke: PASS" || echo "p1a_smoke: FAIL"
 exit $fail
