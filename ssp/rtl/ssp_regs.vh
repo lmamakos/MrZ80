@@ -40,10 +40,10 @@
 `define SSP_HI_TRAMP_ADDR_ADDR       15          // field high index
 `define SSP_LO_TRAMP_ADDR_ADDR       0          // field low index
 
-`define SSP_STATUS           32'h2000000C  // R reset 32'h00000000 | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25)
+`define SSP_STATUS           32'h2000000C  // R reset 32'h00000000 | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25); STEP_BUSY=instruction-step sequencer running, asserted from the arming STEP_CTL write on so a poll can never miss the start (R39)
 `define SSP_RIDX_STATUS       10'h003      // word index (offset/4)
 `define SSP_STATUS_RESET 32'h00000000          // reset value
-`define SSP_STATUS_RESET_21 21'h0     // reset, 21-bit sized
+`define SSP_STATUS_RESET_22 22'h0     // reset, 22-bit sized
 `define SSP_STATUS_BUSACK         32'h00000001  // 0:0
 `define SSP_BIT_STATUS_BUSACK     0         // bit index
 `define SSP_STATUS_HALT_N         32'h00000002  // 1:1
@@ -80,8 +80,10 @@
 `define SSP_BIT_STATUS_RV_TRAP    19         // bit index
 `define SSP_STATUS_RV_ALIVE       32'h00100000  // 20:20
 `define SSP_BIT_STATUS_RV_ALIVE   20         // bit index
+`define SSP_STATUS_STEP_BUSY      32'h00200000  // 21:21
+`define SSP_BIT_STATUS_STEP_BUSY  21         // bit index
 
-`define SSP_HALT_REASON      32'h20000010  // R reset 32'h00000000 | halt reason codes sec 10.3 (+wdg); read clears
+`define SSP_HALT_REASON      32'h20000010  // R reset 32'h00000000 | halt reason codes sec 10.3 (+wdg): 1=fw-hold/stop 2=bp 3=step one-shot re-park (R39) 4=escape 9=wdg_park; read clears
 `define SSP_RIDX_HALT_REASON  10'h004      // word index (offset/4)
 `define SSP_HALT_REASON_RESET 32'h00000000          // reset value
 `define SSP_HALT_REASON_RESET_4 4'h0     // reset, 4-bit sized
@@ -139,16 +141,18 @@
 `define SSP_LIVE_REG6        32'h2000004C  // R reset 32'h00000000 | combinational REG word 6
 `define SSP_RIDX_LIVE_REG6    10'h013      // word index (offset/4)
 `define SSP_LIVE_REG6_RESET 32'h00000000          // reset value
-`define SSP_STEP_CTL         32'h20000050  // RW reset 32'h00000000 | step assist: off/INSN/MCYCLE/TSTATE x n (P-C)
+`define SSP_STEP_CTL         32'h20000050  // RCW reset 32'h00000000 | step assist (D-08/D-25, R39): write {MODE=1 INSN, N>=1} while parked arms the one-shot -- releases the Z80, re-parks at each insn_end via the T80 freeze gate, N steps; N=0 and MODE=0/2/3 (off/MCYCLE/TSTATE reserved until the freeze_any milestone) rejected STEP_ERR; kick while busy or un-parked rejected; sovereignty loss (!rv_ctrl_ok, P-B) abandons the sequence and releases INT; escape does not abort; re-park sets HALT_REASON=3; busy=STATUS.STEP_BUSY; STEP_ERR sticky, read clears; INT is held inactive for the whole step sequence (owner ruling R39: a 50-100 Hz clock tick must not hijack a trace; pending sources stay visible in IRQ_PENDING)
 `define SSP_RIDX_STEP_CTL     10'h014      // word index (offset/4)
 `define SSP_STEP_CTL_RESET 32'h00000000          // reset value
-`define SSP_STEP_CTL_RESET_11 11'h0     // reset, 11-bit sized
-`define SSP_STEP_CTL_MODE           32'h00000600  // 10:9
-`define SSP_HI_STEP_CTL_MODE       10          // field high index
-`define SSP_LO_STEP_CTL_MODE       9          // field low index
+`define SSP_STEP_CTL_RESET_13 13'h0     // reset, 13-bit sized
 `define SSP_STEP_CTL_N              32'h000001FF  // 8:0
 `define SSP_HI_STEP_CTL_N          8          // field high index
 `define SSP_LO_STEP_CTL_N          0          // field low index
+`define SSP_STEP_CTL_MODE           32'h00000600  // 10:9
+`define SSP_HI_STEP_CTL_MODE       10          // field high index
+`define SSP_LO_STEP_CTL_MODE       9          // field low index
+`define SSP_STEP_CTL_STEP_ERR       32'h00001000  // 12:12
+`define SSP_BIT_STEP_CTL_STEP_ERR   12         // bit index
 
 `define SSP_BP0              32'h20000054  // RW reset 32'h00000000 | breakpoint 0
 `define SSP_RIDX_BP0          10'h015      // word index (offset/4)

@@ -9,6 +9,15 @@
 //     instruction, as the real T80 freeze gate); release on request deassert.
 //     (The real core may take up to a full instruction; that variance is
 //     exactly what the bridge's request-level park controller tolerates.)
+//   * R39 (single-step contract, as the real T80): the request is SAMPLED on
+//     cpu_cen like T80.BusReq_s, so a deassert pulse shorter than a cen
+//     period can be missed entirely; a release ends the boundary, so the
+//     next grant needs a further instruction (a re-assert straight after the
+//     release must not re-grant with zero instructions executed).  The
+//     bridge's "observe the BusAck drop" wait is what makes a step reliable.
+//   * +STEPHANG=<n> [+STEPHANG_CLKS=<c>]: after n grants refuse to grant for c
+//     clocks (the step-timeout test: the Z80 keeps running, never re-parks;
+//     the grant resumes afterwards -- the "late park" case).
 //   * 3T byte cycles for the built-in program: opcode fetch + operand
 //     reads from a 64K image.  Reset vector $0000 = JP $0100; JP is real
 //     (R27: operands are fetched and loaded into PC); self-loops at
@@ -57,6 +66,11 @@ module z80_bfm (
     output wire        would_boundary,
     output reg  [211:0] t80_reg,
     output reg         m1_n,
+    output wire        halt_n,
+
+    // R39 step-timeout test hook (0 = off)
+    input  wire [31:0] hang_n,
+    input  wire [31:0] hang_clks,
 
     // guest strobes (self-driven; engine muxed at this boundary)
     output wire [15:0] cpu_addr,
@@ -149,6 +163,30 @@ module z80_bfm (
     wire       is_hlt   = (cyc == 2'd0) & (fbyte == 8'h76) & ~halted;
 
     wire sel_eng = ~busack_n;             // engine drives the bus (D-26)
+    assign halt_n = ~halted;
+
+    // BusReq_s: the request as the T80 sees it (sampled every cen)
+    reg req_s;
+    always @(posedge clk)
+        if (!cpu_rst_n) req_s <= 1'b0;
+        else if (cen_run) req_s <= ~freeze_req_n;
+
+    // +STEPHANG: refuse grants for hang_clks clocks once hang_n have been given
+    reg [1:0]  hang_st;                   // 0 armed, 1 hanging, 2 done
+    reg [31:0] hang_cnt;
+    initial begin hang_st = 2'd0; hang_cnt = 32'd0; end
+    wire hang_now = (hang_n != 32'd0) && (freeze_accept_count >= hang_n)
+                    && (hang_st != 2'd2);
+    always @(posedge clk) begin
+        if (hang_now && hang_st == 2'd0 && cen_run && boundary && req_s
+            && busack_n) begin
+            hang_st <= 2'd1;  hang_cnt <= 32'd0;
+        end else if (hang_st == 2'd1) begin
+            hang_cnt <= hang_cnt + 32'd1;
+            if (hang_cnt >= hang_clks) hang_st <= 2'd2;
+        end
+    end
+    wire refuse = hang_now;
 
     always @(posedge clk) begin
         tramp_done <= 1'b0;
@@ -170,8 +208,8 @@ module z80_bfm (
             if (sel_eng) begin
                 // engine holds the bus: T80 model frozen, strobes idle
                 m1_n <= 1'b1;
-            end else if (cen_run && boundary && freeze_req_n == 1'b0
-                         && busack_n == 1'b1) begin
+            end else if (cen_run && boundary && req_s
+                         && busack_n == 1'b1 && !refuse) begin
                 // T80 freeze gate (D-25): grant at the instruction boundary;
                 // NO further instruction cycle is started, so PC is the next
                 // instruction (verified on the real T80, sim/tb_tramp.vhd).
@@ -184,6 +222,7 @@ module z80_bfm (
                 if (is_hlt) begin
                     halted   <= 1'b1;
                     boundary <= 1'b1;              // HALT parks anywhere
+                    pc <= pc + 16'd1;              // PC = HALT + 1, as the T80
                 end else if (is_jp) begin
                     cyc <= 2'd1;
                     boundary <= 1'b0;
@@ -206,8 +245,9 @@ module z80_bfm (
                     if (!halted) pc <= pc + 16'd1;
                 end
             end
-            if (freeze_req_n == 1'b1 && busack_n == 1'b0) begin
+            if (cen_run && !req_s && busack_n == 1'b0) begin
                 busack_n <= 1'b1;                // release to the guest
+                boundary <= 1'b0;                // next grant needs an insn (R39)
             end
         end
     end

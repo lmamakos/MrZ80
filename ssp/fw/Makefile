@@ -65,7 +65,7 @@ check-tools:
 	@$(AS) --version | head -1
 	@test -d $(MECRISP)/common || { \
 	  echo "MECRISP=$(MECRISP) has no common/*.s -- set MECRISP to a"; \
-	  echo "Mecrisp-Quintus distribution root (see doc/SSP_HANDOFF.md)"; \
+	  echo "Mecrisp-Quintus distribution root (see doc/SSP_STATUS.md)"; \
 	  exit 1; }
 
 clean:

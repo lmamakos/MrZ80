@@ -47,7 +47,11 @@
 `timescale 1 ns / 1 ps
 `include "ssp_regs.vh"
 
-module ssp_bridge (
+module ssp_bridge #(
+    // R39: step phase watchdog (clk_sys cycles).  Default = the WDG_PARK budget;
+    // the p1a simulation lane shortens it so the timeout path is testable.
+    parameter [24:0] STEP_TIMEOUT_T = 25'd20_000_000
+) (
     input  wire        clk,
     input  wire        rst_n,
 
@@ -91,6 +95,10 @@ module ssp_bridge (
     output wire        z_wait_n,       //   AND with CPM reset stretcher)
     output wire        z_cen_gate,
     output wire        freeze_any,      // P1a constant 0 (step modes P1b)
+    output wire        int_hold,        // R39: park INT at the CPM during the
+                                       //   instruction-step sequence (owner
+                                       //   ruling: a clock-tick INT must not
+                                       //   hijack a single-step trace)
 
     // ---------------- engine bus master (to z80_bus_mux) ------------------
     output reg         eng_own,        // engine in-cycle mux select (D-26)
@@ -214,13 +222,37 @@ module ssp_bridge (
     reg  at_boundary_q;
     reg  esc_pending;               // escape requested, park not yet taken
     reg  [3:0]  halt_reason;       // 1=fw-halt 2=bp 3=step 4=escape
-                                    // 9=wdg_park expiry
+                                    // 9=wdg_park expiry (CSV 0x010; 3 armed by
+                                    //   the R39 step sequencer)
     reg  [15:0] pc_latch;
     reg  [211:0] snap_q;
 
-    wire park_req   = (hold_fw | panel_stop) & ssp_active & rv_ctrl_ok;
+    // R39 step sequencer (INSN one-shot, §7.2).  step_busy suppresses the
+    // FW/panel park-request level while the sequencer drives busrq_act
+    // itself; it still holds the request line asserted (busrq_keep) so a
+    // sovereignty event (rv_ctrl_ok fall, P-B) releases the Z80 and the
+    // sequencer abandons quietly (step_abort).  HALT_REASON=3 is qualified
+    // by step_busy itself: at a step re-park's park-entry edge step_busy is
+    // still 1 (it falls the cycle after park_act), so no separate qualifier
+    // register is needed (review B4).
+    reg         step_busy;
+    reg  [13:0] step_rem;               // remaining steps (loaded at arm)
+    reg  [24:0] step_to;              // per-phase watchdog counter
+    reg         step_to_err;          // 1-clk: phase timeout -> STEP_ERR
+    wire        step_abort = !rv_ctrl_ok || !ssp_active;   // P-B (review B8)
+    reg  [10:0] step_ctl;            // {MODE, N} as written by FW (regfile)
+    reg         step_go;             // 1-clk arm pulse (regfile decode)
+    reg         step_err;            // sticky RC (CSV 0x50 bit 12, R39)
+    localparam [2:0] s_idl = 3'd0,   // idle
+                       s_rlk = 3'd1,  // released, awaiting BusAck drop
+                       s_ras = 3'd2,  // re-assert request level
+                       s_rpk = 3'd3;  // awaiting boundary re-park
+    reg [2:0] step_st;              // (park controller reads these phases)
+    wire park_req   = (hold_fw | panel_stop) & ssp_active & rv_ctrl_ok
+                      & ~step_busy;
     wire seq_busy;
-    wire busrq_keep = (park_req | (eng_own & ssp_active)) & rv_ctrl_ok;
+    wire busrq_keep = (park_req | step_busy | (eng_own & ssp_active))
+                      & rv_ctrl_ok;
 
     // ------------------------------------------------ watchdogs (D-13) -----
     // WDG_RUN: RV stalled on the bus (core hung on a peripheral that never
@@ -246,6 +278,11 @@ module ssp_bridge (
         end else begin
             // ---- FREEZE request level
             if (park_req)    busrq_act <= 1'b1;
+            // R39: while the step sequencer is armed it drives the request
+            // level itself (park_req is suppressed); RLK releases, RAS/RPK
+            // insist.  Abort still wins here (busrq_keep fall => release).
+            if (step_busy && step_st == s_rlk) busrq_act <= 1'b0;
+            if (step_busy && (step_st != s_rlk)) busrq_act <= 1'b1;
             if (!busrq_keep) busrq_act <= 1'b0;   // release / P-B / FW-dead
             park_act <= busrq_act & ~z_busack_n;
             // Grant was boundary-aligned by the T80 freeze gate: capture the
@@ -279,6 +316,88 @@ module ssp_bridge (
     end
     // park force-release rides the rv_ctrl_ok/ssp_active gating above:
     // busrq_keep deasserts => request line drops; park_dead_l reports it.
+
+    // ------------------------------------------------ STEP one-shot (R39) --
+    // INSN single-step (D-08/D-25, §7.2c).  The T80's freeze gate (R25)
+    // guarantees "run to the next insn_end"; this sequencer supplies the
+    // other half of the contract: release, WAIT FOR BusAck TO DROP (never
+    // a blind delay -- the mutation-test target), re-assert the request
+    // level, and wait for the boundary re-park.  Snapshots refresh on every
+    // park-entry edge (park controller), so each step lands with fresh
+    // architectural state and HALT_REASON=3.  Timeout rides the WDG_PARK
+    // constant (R39 ruling): on expiry the request stays ASSERTED (never a
+    // half-asserted line), STEP_ERR latches, FW sees CPU_RUNNING and can
+    // wait for a late park, G, or reset.  Sovereignty (!rv_ctrl_ok or
+    // !ssp_active, P-B) abandons the sequence quietly and the Z80 is
+    // released by busrq_keep; int_hold is gated the same way so a dead RV
+    // can never leave INT masked on a running Z80 (review B8).  Escape is
+    // NOT an abort: the monitor already owns the console, and the escape
+    // recognizer only matches while the Z80 runs (ssp_uart: !parked), i.e.
+    // inside the ~20-clk released window -- harmless, the step completes.
+    // INT is held inactive for the whole sequence (int_hold -> CPM gating,
+    // owner ruling: a 50-100 Hz clock tick must not hijack a trace).
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            step_st <= s_idl; step_busy <= 1'b0;
+            step_rem <= 14'd0; step_to <= 25'd0;  step_to_err <= 1'b0;
+        end else begin
+            step_to_err <= 1'b0;                  // self-clearing pulse
+            if (step_abort && step_busy) begin
+                step_st   <= s_idl;
+                step_busy <= 1'b0;
+                step_to   <= 25'd0;
+                // the request line resolves in the park process:
+                // busrq_keep falls with rv_ctrl_ok/ssp_active => released.
+            end else case (step_st)
+            s_idl: if (step_go) begin
+                       step_busy <= 1'b1;
+                       step_rem  <= {5'd0, step_ctl[8:0]};   // N (decode-owned)
+                       step_to   <= 25'd0;
+                       step_st   <= s_rlk;
+                   end
+            s_rlk: if (z_busack_n) begin       // grant dropped: observed
+                       step_to <= 25'd0;
+                       step_st <= s_ras;
+                   end else if (step_to >= STEP_TIMEOUT_T) begin
+                       step_busy   <= 1'b0;
+                       step_to_err <= 1'b1;
+                       step_to     <= 25'd0;
+                       step_st     <= s_idl;
+                   end else begin
+                       step_to <= step_to + 25'd1;
+                   end
+            s_ras: begin                      // request re-asserted (park
+                       step_to <= 25'd0;     //   process drives the level)
+                       step_st <= s_rpk;
+                   end
+            s_rpk: if (park_act) begin        // boundary re-park, snap fresh
+                       step_to <= 25'd0;
+                       if (step_rem != 14'd1) begin
+                           step_rem <= step_rem - 14'd1;
+                           step_st  <= s_rlk;
+                       end else begin
+                           step_busy <= 1'b0;
+                           step_st   <= s_idl;
+                       end
+                   end else if (step_to >= STEP_TIMEOUT_T) begin
+                       step_busy   <= 1'b0;
+                       step_to_err <= 1'b1;    // -> STEP_ERR (regfile sets)
+                       step_to     <= 25'd0;
+                       step_st     <= s_idl;
+                       // the request re-asserts the cycle after (park_req's
+                       // FW hold level returns when step_busy clears): the
+                       // line is never left floating; a late park still lands
+                       // with fresh snapshots (R39 ruling).
+                   end else begin
+                       step_to <= step_to + 25'd1;
+                   end
+            default: step_st <= s_idl;
+            endcase
+        end
+    end
+
+    assign int_hold = step_busy & ssp_active & rv_ctrl_ok;   // P-B (B8)
 
     assign z_busrq_n   = ~(busrq_act & ssp_active & rv_ctrl_ok);
     assign z_reset_n   = ~ctr_eff[`SSP_BIT_CTRL_Z_RST_N];
@@ -323,6 +442,10 @@ module ssp_bridge (
     wire kick_rnw        = mem_wdata[1];
     wire kick_isio       = mem_wdata[2];
     wire kick_use_shared = mem_wdata[3];
+    // R39 step kick: any full-word (both-lane) write to STEP_CTL arms or
+    // rejects; N=0, MODE=0/2/3 and bad states raise STEP_ERR (see decode).
+    wire step_kick = wr_fire && (widx == `SSP_RIDX_STEP_CTL)
+                     && mem_wmask[0] && mem_wmask[1];
     // Padding below is explicit and lossless (integer values identical);
     // linters flag the self-determined concat against the 28-bit LHS.
     // verilator lint_off WIDTHEXPAND
@@ -439,7 +562,6 @@ module ssp_bridge (
 
     // ------------------------------------------------ register file ------
     reg  [15:0] tramp_addr;
-    reg  [10:0] step_ctl;
     reg  [16:0] bp0, bp1, bp2, bp3;
     reg  [3:0]  bp_skip;
     reg  [2:0]  trap_ctl;
@@ -483,6 +605,7 @@ module ssp_bridge (
         if (!rst_n) begin
             ctr      <= `SSP_CTRL_RESET_10;
             tramp_addr <= 16'd0; step_ctl <= 11'd0;
+            step_err <= 1'b0; step_go <= 1'b0;
             bp0 <= 17'd0; bp1 <= 17'd0; bp2 <= 17'd0; bp3 <= 17'd0;
             bp_skip <= 4'd0; trap_ctl <= 3'd0; trap_addr_r <= 8'd0;
             trap_data <= 16'd0;
@@ -508,14 +631,21 @@ module ssp_bridge (
             uart_tx_wr_r  <= 1'b0;
             wdg_run_kick  <= 1'b0;
             wdg_park_kick <= 1'b0;
+            step_go       <= 1'b0;
 
             if (rd_fire && (widx == `SSP_RIDX_HALT_REASON))
                 halt_reason <= 4'd0;             // RC per CSV
+            if (rd_fire && (widx == `SSP_RIDX_STEP_CTL))
+                step_err <= 1'b0;                // RC per CSV (R39)
+            if (step_to_err)                   // step phase watchdog expired
+                step_err <= 1'b1;
 
             if (busrq_act & ~z_busack_n & ~park_act) begin   // park entry
                 pc_latch    <= t80_reg[79:64];  // REG PC field (vector doc 1.1)
                 snap_q      <= t80_reg;
-                halt_reason <= esc_pending ? 4'd4 : 4'd1;  // escape | stop
+                halt_reason <= step_busy ? 4'd3         // step re-park (R39)
+                            : esc_pending ? 4'd4        // escape
+                            : 4'd1;                     // fw hold/stop
                 esc_pending <= 1'b0;
             end
             if (!rv_ctrl_ok && park_act)
@@ -527,6 +657,22 @@ module ssp_bridge (
             if (tramp_done) ctr[`SSP_BIT_CTRL_TRAMP_EN] <= 1'b0;
 
             if (wr_fire) begin
+                if (step_kick) begin
+                    // R39 arm/reject (parked-only per §9.1; engine idle; no
+                    // trampoline armed; sequencer idle).  N=0 and the
+                    // reserved MCYCLE/TSTATE modes reject with STEP_ERR.
+                    if (step_busy || step_go || !park_act || !rv_ctrl_ok
+                        || !ssp_active
+                        || seq_busy || ctr_eff[`SSP_BIT_CTRL_TRAMP_EN])
+                        step_err <= 1'b1;
+                    else if (mem_wdata[`SSP_HI_STEP_CTL_MODE-:2] != 2'd1
+                             || mem_wdata[8:0] == 9'd0)
+                        step_err <= 1'b1;
+                    else begin
+                        step_ctl <= mem_wdata[10:0];   // {MODE, N}; sequencer
+                        step_go  <= 1'b1;              //      loads N from here
+                    end
+                end
                 case (widx)
                 `SSP_RIDX_CTRL: begin
                     // lane0 covers bits 0..7 (used: 0..5); lane1 8..9
@@ -537,7 +683,7 @@ module ssp_bridge (
                     if (mem_wmask[0]) tramp_addr[7:0]  <= w;
                     if (mem_wmask[1]) tramp_addr[15:8] <= w1;
                 end
-                `SSP_RIDX_STEP_CTL:   step_ctl[7:0] <= w;   // P1b: mode bits
+                // STEP_CTL: written only by the R39 kick decode above
                 `SSP_RIDX_BP0:      begin bp0[7:0] <= w;
                                       if (mem_wmask[2]) bp0[16] <= w2[0]; end
                 `SSP_RIDX_BP1:      begin bp1[7:0] <= w;
@@ -628,7 +774,7 @@ module ssp_bridge (
     end
 
     // ------------------------------------------------ STATUS --------------
-    wire [20:0] status_bits;
+    wire [21:0] status_bits;
     assign status_bits[`SSP_BIT_STATUS_BUSACK]        = ~z_busack_n;
     assign status_bits[`SSP_BIT_STATUS_HALT_N]        = z_halt_n;
     assign status_bits[`SSP_BIT_STATUS_M1_N]          = z_m1_n;
@@ -646,6 +792,9 @@ module ssp_bridge (
     assign status_bits[`SSP_BIT_STATUS_OSD_ESC_EN]    = osd_esc_en;
     assign status_bits[`SSP_BIT_STATUS_RV_TRAP]       = 1'b0; // gracilis, D-37
     assign status_bits[`SSP_BIT_STATUS_RV_ALIVE]      = rv_alive;
+    // step_go covers the arm cycle so a FW poll right after the kick store
+    // can never see "idle" before the sequencer has started (review B5).
+    assign status_bits[`SSP_BIT_STATUS_STEP_BUSY]     = step_busy | step_go;
 
     // ------------------------------------------------ read mux ------------
     reg  [31:0] q_reg;                 // combinational read at launch
@@ -654,7 +803,7 @@ module ssp_bridge (
         `SSP_RIDX_ID:            q_reg = `SSP_ID_RESET;
         `SSP_RIDX_CTRL:          q_reg = {22'd0, ctr};
         `SSP_RIDX_TRAMP_ADDR:    q_reg = {16'd0, tramp_addr};
-        `SSP_RIDX_STATUS:        q_reg = {11'd0, status_bits};
+        `SSP_RIDX_STATUS:        q_reg = {10'd0, status_bits};
         `SSP_RIDX_HALT_REASON:   q_reg = {28'd0, halt_reason};
         `SSP_RIDX_PC_LATCH:      q_reg = {16'd0, pc_latch};
         `SSP_RIDX_SNAP_REG0:     q_reg = snap_q[31:0];
@@ -671,7 +820,7 @@ module ssp_bridge (
         `SSP_RIDX_LIVE_REG4:     q_reg = t80_reg[159:128];
         `SSP_RIDX_LIVE_REG5:     q_reg = t80_reg[191:160];
         `SSP_RIDX_LIVE_REG6:     q_reg = {12'd0, t80_reg[211:192]};
-        `SSP_RIDX_STEP_CTL:      q_reg = {21'd0, step_ctl};
+        `SSP_RIDX_STEP_CTL:      q_reg = {19'd0, step_err, 1'b0, step_ctl};
         `SSP_RIDX_BP0:           q_reg = {15'd0, bp0};
         `SSP_RIDX_BP1:           q_reg = {15'd0, bp1};
         `SSP_RIDX_BP2:           q_reg = {15'd0, bp2};

@@ -23,7 +23,7 @@ package ssp_regs_pkg is
     constant C_SSP_TRAMP_ADDR     : natural := 536870920;  -- 0x20000008 RW | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a Z80 reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02)
     constant C_SSP_TRAMP_ADDR_ADDR         : natural range 0 to 31 := 15;  -- field 15:0
 
-    constant C_SSP_STATUS         : natural := 536870924;  -- 0x2000000C R | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25)
+    constant C_SSP_STATUS         : natural := 536870924;  -- 0x2000000C R | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25); STEP_BUSY=instruction-step sequencer running, asserted from the arming STEP_CTL write on so a poll can never miss the start (R39)
     constant C_SSP_STATUS_BUSACK       : natural range 0 to 31 := 0;  -- field 0:0
     constant C_SSP_STATUS_HALT_N       : natural range 0 to 31 := 1;  -- field 1:1
     constant C_SSP_STATUS_M1_N         : natural range 0 to 31 := 2;  -- field 2:2
@@ -41,8 +41,9 @@ package ssp_regs_pkg is
     constant C_SSP_STATUS_OSD_ESC_EN   : natural range 0 to 31 := 18;  -- field 18:18
     constant C_SSP_STATUS_RV_TRAP      : natural range 0 to 31 := 19;  -- field 19:19
     constant C_SSP_STATUS_RV_ALIVE     : natural range 0 to 31 := 20;  -- field 20:20
+    constant C_SSP_STATUS_STEP_BUSY    : natural range 0 to 31 := 21;  -- field 21:21
 
-    constant C_SSP_HALT_REASON    : natural := 536870928;  -- 0x20000010 R | halt reason codes sec 10.3 (+wdg); read clears
+    constant C_SSP_HALT_REASON    : natural := 536870928;  -- 0x20000010 R | halt reason codes sec 10.3 (+wdg): 1=fw-hold/stop 2=bp 3=step one-shot re-park (R39) 4=escape 9=wdg_park; read clears
     constant C_SSP_HALT_REASON_REASON       : natural range 0 to 31 := 3;  -- field 3:0
 
     constant C_SSP_PC_LATCH       : natural := 536870932;  -- 0x20000014 R | PC latched at match/park instant
@@ -62,9 +63,10 @@ package ssp_regs_pkg is
     constant C_SSP_LIVE_REG4      : natural := 536870980;  -- 0x20000044 R | combinational REG word 4
     constant C_SSP_LIVE_REG5      : natural := 536870984;  -- 0x20000048 R | combinational REG word 5
     constant C_SSP_LIVE_REG6      : natural := 536870988;  -- 0x2000004C R | combinational REG word 6
-    constant C_SSP_STEP_CTL       : natural := 536870992;  -- 0x20000050 RW | step assist: off/INSN/MCYCLE/TSTATE x n (P-C)
-    constant C_SSP_STEP_CTL_MODE         : natural range 0 to 31 := 10;  -- field 10:9
+    constant C_SSP_STEP_CTL       : natural := 536870992;  -- 0x20000050 RCW | step assist (D-08/D-25, R39): write {MODE=1 INSN, N>=1} while parked arms the one-shot -- releases the Z80, re-parks at each insn_end via the T80 freeze gate, N steps; N=0 and MODE=0/2/3 (off/MCYCLE/TSTATE reserved until the freeze_any milestone) rejected STEP_ERR; kick while busy or un-parked rejected; sovereignty loss (!rv_ctrl_ok, P-B) abandons the sequence and releases INT; escape does not abort; re-park sets HALT_REASON=3; busy=STATUS.STEP_BUSY; STEP_ERR sticky, read clears; INT is held inactive for the whole step sequence (owner ruling R39: a 50-100 Hz clock tick must not hijack a trace; pending sources stay visible in IRQ_PENDING)
     constant C_SSP_STEP_CTL_N            : natural range 0 to 31 := 8;  -- field 8:0
+    constant C_SSP_STEP_CTL_MODE         : natural range 0 to 31 := 10;  -- field 10:9
+    constant C_SSP_STEP_CTL_STEP_ERR     : natural range 0 to 31 := 12;  -- field 12:12
 
     constant C_SSP_BP0            : natural := 536870996;  -- 0x20000054 RW | breakpoint 0
     constant C_SSP_BP0_EN           : natural range 0 to 31 := 16;  -- field 16:16

@@ -14,24 +14,26 @@ high-level words), archived from the top-level README; sourced from
 archived from the top-level README. The 6502 and 6809 CPUs have been removed
 from the core.
 
-`SSP_DESIGN.md` -- draft design spec (v1.0-draft; renamed from
-`ODT_MONITOR_DESIGN.md` at R13 -- the subsystem is now the **SSP = System
-Support Processor**) for the FPGA-resident
-debug/console/assist subsystem: a compact RV32IMC support CPU (P0 two-core
-bake-off since R14: PicoRV32 `COMPRESSED_ISA` vs FemtoRV32 `gracilis`;
-R15 design review: boundary parking, single bus mux, polled FW, OSD-gated
-serial escape character, RAM-only Forth, P1a/P1b split;
-VexRiscv shelved) running
-Mecrisp-Quintus FORTH, a cycle-accurate `ssp_bridge` MMIO interface, and a
-hardware classic-console front-panel engine (halt/step/examine/deposit,
-breakpoints, jump history, downloadable monitor ROM + Forth packs via OSD).
-§17 records the design decision sessions of 2026-10-22/23.
+The System Support Processor (SSP) is documented in two files with separate
+jobs (update rules in `SSP_STATUS.md` §0):
 
-`SSP_HANDOFF.md` -- session hand-off (2026-10-26, after R15): environment and
-tool availability, network-fetch recipes, the existing GHDL `sim/` flow and
-its current drift, core-integration gotchas, Mecrisp licensing, capture-chain
-headroom, owner conventions, and proposed R16 findings (H-1..H-8). Read
-after the design doc when resuming work.
+`SSP_STATUS.md` -- **start here.** The living state/plan/hand-off document:
+current state and milestones, the active milestone's plan and verification
+checklist, the next milestone's plan, backlog, owner questions, hazards and
+lessons, commands, conventions and environment facts; Appendix A keeps the
+completed P1a execution notes. Rewritten every session. (Replaced
+`SSP_HANDOFF.md` and the separate milestone plan files at R39.)
+
+`SSP_DESIGN.md` -- the design spec (v1.0-draft; renamed from
+`ODT_MONITOR_DESIGN.md` at R13): the FPGA-resident debug/console/assist
+subsystem built on a FemtoRV32-gracilis RV32 core running Mecrisp-Quintus
+Forth, the `ssp_bridge` register interface, boundary-aligned Z80 parking,
+the single Z80 bus mux, the monitor, and the front-panel engine. Decision
+table (§2), requirements ↔ benches (§13), open questions (§14), phasing
+(§15), and the round-by-round decision log R1… (§17).
+
+`SSP_REGS.md` -- SSP bridge register table, generated from
+`ssp/regs/ssp_regs.csv` (do not hand-edit).
 
 `SSP_PANEL_UX.md` -- front-panel user-experience spec (v0.2; deep-dive
 2026-10-23 + MMU-switch addendum): lamp zones/chrome/colours, paged state

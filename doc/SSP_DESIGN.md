@@ -87,6 +87,14 @@ corrections), `archive/ODT_CHANGE.md`
 detailed spec — traceability note added there), `HARDWARE.md` (I/O map; must
 be updated when this lands).
 
+**Document map (R39).** This file answers *what and why*: spec, decisions,
+requirements, open questions, phasing, and the round log (§17). Current
+state, the active and next milestone plans, backlog, owner questions,
+hazards, commands and environment live in **`doc/SSP_STATUS.md`**, which
+replaced `SSP_HANDOFF.md` and the separate milestone plan files at R39
+(§17 entries that cite "the handoff" refer to that earlier document, in git
+history). Update rules for both files: `SSP_STATUS.md` §0.
+
 ### Naming (R13, 2026-10-26) `[decided]`
 
 **SSP — System Support Processor**: the RISC-V support CPU *and* its
@@ -988,6 +996,47 @@ sequence completes before park; EI's one-instruction interrupt shadow is
 preserved across a step; LDIR-class instructions park per iteration (PC
 re-points at the instruction). `insn_end` is produced inside `T80s` by the
 D-08 port-out mod, which therefore exports MC/TS/ALT **and `insn_end`**.
+7.2c `[landed R39, INSN mode]` **What M4 actually implements.** Serial `S
+[N]` (default 1) writes `STEP_CTL={MODE=INSN, N=1}` once per step (FW loop, one
+printed line per step: the next instruction's PC and four bytes, then AF BC DE
+HL SP after the stepped instruction); any key breaks an `S N` trace; a bare CR
+repeats the last `S` count, and any other command forgets it. The bridge
+one-shot, per count: drop the FREEZE request level, **wait until BusAck is
+observed de-asserted** (never a blind delay -- FW release/re-assert loops are
+wrong because the RV poll is far slower than a Z80 instruction), re-assert the
+level, and wait for the boundary re-park. `STATUS.STEP_BUSY` covers the
+sequencer *from the arming write on* (`step_busy | step_go`), so a poll right
+after the kick cannot miss the start. `STEP_CTL.STEP_ERR` (bit 12, sticky,
+read-clear) reports rejects and timeouts. `HALT_REASON=3` is qualified by the
+sequencer's own busy level at the park-entry edge (no separate register).
+Each re-park refreshes `SNAP`/`PC_LATCH` on the park-entry edge. Arm requires:
+parked, `rv_ctrl_ok`, `ssp_active`, engine idle, no trampoline armed, and
+sequencer idle (including its arm cycle); N=0 and MODE=0/2/3
+(off/MCYCLE/TSTATE -- reserved until the `freeze_any` milestone) reject
+`STEP_ERR`. Timeout budget = `WDG_PARK_T`; on expiry the request stays asserted
+(the line is never half-driven), `STEP_ERR` latches and FW reports `STEP ERR`
+-- a late park still lands correctly. Sovereignty loss (`!rv_ctrl_ok` --
+including WDG_RUN expiry -- or `!ssp_active`, P-B) abandons the sequence, and
+both the request and `int_hold` drop with it, so a dead RV can never leave the
+Z80 held or its INT masked. Escape is *not* an abort: the monitor already owns
+the console, and the escape recognizer only matches while the Z80 runs, i.e.
+inside the ~20-clock released window, where it is harmless. **INT is held
+inactive for the whole sequence** (owner ruling R39: a 50-100 Hz clock tick
+must not hijack a trace -- an INT would be acknowledged instead of the stepped
+instruction executing): `int_hold` forces the T80's `int_n` *high* (inactive)
+in the CPM core, pending sources stay pending and fire after `G`. NMI is not
+masked; the monitor reports `NMI` when a step lands on the NMI shape (IFF1
+cleared, IFF2 kept, PC=0066h) -- a plain IFF1 fall is just a stepped `DI`.
+Consequence to know: stepping an `EI; HALT` wait-for-interrupt loop shows
+`HALTED` indefinitely, because the masked interrupt cannot wake it -- `G` to
+let it run. Z80 serial output produced by stepped instructions is dropped (the
+monitor owns the console TX). `z80_bus_mux` is untouched -- a step is a fast
+park/release/re-park on the existing `BUSRQ_n` discipline. D-33 note: the
+sequencer lives in the Verilog bridge although D-33 files "boundary-park
+logic" on the VHDL side; since R25 the alignment itself is inside the T80 and
+the bridge only drives the request level, so the sequencer is request-level
+orchestration beside the existing park controller. The price is a two-half
+proof (GHDL real-T80 contract + Verilator bridge/FW), recorded in R39.
 7.3 RESET: panel *Reset CPU* / serial `A` → HW-stretched ≥8-`cpu_cen` vent
 on `reset_n_internal`; monitor state persists; auto-repark after (examine
 context). Panel *Reset System* = `hard_reset_req` path (OSD-equivalent core
@@ -1399,32 +1448,9 @@ OQ-18)**.
 
 ## 16. Resume Checklist
 
-1. `doc/t80_reg_debug_vector.md` (register/snapshot semantics) then this doc.
-2. §17 decision log = authoritative deltas from v0.2; `SSP_RISCV_REVIEW.md`
-   §2 for the fact corrections (freeze-not-tri-state, bit-14, 28-bit,
-   cpu>vid arbitration, MMU auto-increment hazard).
-3. Owner confirmations outstanding: OQ-10 (Reset-System scope), OQ-18
-   (board-freeze UX values incl. panel BP-clear gesture), OQ-11/13/15
-   (deferrals acknowledged); panel-UX second pass after first hardware.
-   R15 opened OQ-22 (escape-byte consumption, lean relay) and OQ-23 (BP
-   self-loop injection edge cases) — both settled in sim, not by owner.
-4. P0 spike first, absolutely — **two-core bake-off: PicoRV32
-   (`COMPRESSED_ISA`) vs FemtoRV32-gracilis** (R14, §5.8 criteria table):
-   vendored files + packaged `riscv64-unknown-elf` GNU toolchain
-   (`-march=rv32imc_zicsr_zifencei -mabi=ilp32`); optional riscv-formal
-   tie-breaker via one-shot eqy container. VexRiscv/vexgen shelved (§5.7,
-   reopen conditions OQ-21). Cores vendored (`Components/RISCV/`,
-   2026-10-26). **R15: P0 also delivers the two simulation flows (D-28) and
-   the register-map generator (D-29)** — everything after depends on them.
-5. RTL order (R15): `insn_end` export in `T80s` + boundary-park logic
-   (D-25, integration sim) → `z80_bus_mux` + cycle-faithful engine (D-26)
-   → bridge P1a regs + sequencer (D-30) against the BFM → UART + escape
-   recognizer (D-14) → **P1a hardware first light** → P1b
-   (`ssp_mem_client`, mount path, WDGs, trampoline) → `fp_engine` macros
-   standalone (R-28) → FW. Mux hookup only after `tb_bridge_*` green with
-   gates stubbed transparent (R-21 discipline).
-6. Update `HARDWARE.md` incrementally with each landed surface; keep
-   `REQUIREMENTS.md` item 1 note current.
+Moved at R39 to `doc/SSP_STATUS.md` (§0 reading order, §1 current state,
+§2–§3 milestone plans). The pre-R39 checklist (P0-era resume order) is in git
+history; every item on it is complete or superseded by the P1b plans there.
 
 ---
 
@@ -2295,3 +2321,113 @@ tap without an address-map change. Monitor `MAP` on the I/O path is permanent.
 Milestone numbering stays stable: M2 is the shelved tap, M3 remains the
 physical-memory path (`ssp_mem_client`). CSV + regenerated outputs updated;
 regmap-check PASS.
+
+R39 **Single-step instruction (`S`) -- INSN step assist lands (2026-10-29;
+owner rulings this round).** Monitor `S [N]` (default 1, bare-CR repeat) arms
+a bridge one-shot (§7.2c): release FREEZE, wait for BusAck to be *observed*
+de-asserted, re-assert, re-park at the next `insn_end` -- N times. Key
+decisions: (i) **hardware one-shot, never a FW bit-toggle** (the RV poll loop
+is far slower than a Z80 instruction: a FW release/re-assert window would eat
+many instructions; the "observe the ack drop before re-asserting" rule is the
+mutation-test target); (ii) **INT held inactive for the whole sequence**
+(owner: a real 50-100 Hz clock interrupt must not hijack a trace -- it would
+acknowledge instead of executing the stepped instruction) via a new
+`int_hold` seam output that forces the T80 `int_n` inactive (high) in the CPM
+core (source is still tied '1' today: the gate is future-proofing and
+bench-exercised; NMI untouched; dropped with `rv_ctrl_ok` so RV death never
+leaves INT masked); (iii) **INSN only** -- MCYCLE/TSTATE MODEs reject `STEP_ERR`
+until the `freeze_any` export milestone, keeping the parked-state contract
+architectural; (iv) completion reporting added to the ABI:
+`STATUS.STEP_BUSY` (bit 21, asserted from the arming write on),
+`STEP_CTL.STEP_ERR` (bit 12, sticky, read-clear), `HALT_REASON` code 3 now
+produced (qualified by the sequencer busy level at park entry); (v) timeout = `WDG_PARK_T`, and on expiry
+the request stays asserted (never a half-driven line): FW prints `STEP ERR`,
+a late park still lands with fresh snapshots, and RV death still releases the
+Z80 (P-B). Arm prereqs: parked ∧ ctrl-ok ∧ active ∧ engine idle ∧ no
+trampoline armed; N=0 rejected. `z80_bus_mux` untouched (a step is a fast
+park/release/re-park on the existing BUSRQ discipline) -- `tb_integ_mux` and
+`cycle-golden` re-run unmodified remain the Z80-timing proof; the exact
+"one instruction per step" contract is proven in two halves because no
+single-language bench spans Verilog-bridge and VHDL-T80 (§7.2c; checklist
+in `SSP_STATUS.md` §2): GHDL `tb_integ_park` drives the release/re-assert
+sequence against the real T80 over the R-40 mix, and the Verilator p1a lane
+(+ smoke Part F, BFM FREEZE model) checks the bridge produces that sequence
+and FW renders it. Code landed: `ssp_bridge.v` sequencer + regmap (CSV
+regenerated, regmap-check PASS 72 regs/140 fields), `ssp_top.v`/`MrZ80.sv`
+seam, CPM INT gate (+ sim twin in sync), monitor `S`/`S N`/CR-repeat with
+per-step PC/opcode/regs line, `NMI`/`HALTED`/`STEP ERR`/`BREAK` reporting,
+any-key trace break, bare-CR repeat forgotten by any other command.
+Placement note vs D-33 recorded in §7.2c (sequencer in the Verilog bridge,
+beside the existing request-level park controller).
+**Independent code review (2026-10-29, before any build).** A second-model
+review of the written-but-unbuilt change found 8 blocking defects, all fixed
+before anything ran: (B1) the INT gate forced `int_n` LOW (asserting the
+interrupt it was meant to mask); (B2) `int_hold` declared but never connected
+in `MrZ80.sv` (both instances); (B3) `STEP_CTL` read concatenation 50 bits
+wide -- `STEP_ERR` landed in bit 30; (B4) the HALT_REASON=3 qualifier was
+never set (replaced by `step_busy` at park entry); (B5) FW `m-stepwait`
+polled the wrong polarity and could race the 2-clock arm latency (STEP_BUSY
+now includes the arm pulse); (B6) Forth forward references (`m-step-n`,
+`m-console?`, `m-w`) -- the monitor would not have compiled; (B7) a stack
+underflow and a per-step stack leak in `m-step1`; (B8) WDG_RUN expiry did not
+abort the sequencer, leaving INT masked on a released Z80 for 0.4 s. Also
+fixed: escape no longer listed as a trace abort (it cannot fire while the
+monitor owns the console) -- any key breaks instead; bare CR no longer steps
+after unrelated commands; the `INT ACK` flag (false positive on `DI`)
+replaced by an NMI-shape check; a leftover `STEP_CTL` byte-write branch
+removed; per-phase timeout counter zeroed on every transition; a second kick
+in the arm cycle now rejected; p1a harness gains the `.int_hold()` pin.
+Lesson recorded: B1/B2 are invisible to both simulation halves (each stubs
+the other side), so verification adds an explicit INT-mask assertion in the
+GHDL half and a top-level connectivity check.
+**Documentation consolidated (owner request, same round):** the hand-off
+document and the two milestone plan files (previously outside `doc/`) are
+merged into one living document, `doc/SSP_STATUS.md` (current state, active
+and next milestone plans with checklists, backlog, owner questions, hazards,
+commands, environment; P1a execution notes kept as its Appendix A).
+`SSP_DESIGN.md` keeps the spec, decisions and this log; its §16 resume
+checklist moved to the status document. Rule: design changes and per-round
+outcomes go here, everything about "now and next" goes there.
+**Verification (all green, R39 close-out):**
+- **GHDL half, real T80** (`tb_integ_park`, 12921 checks): the bridge's exact
+  sequence (release, observe the BusAck drop, re-assert, re-grant) repeated
+  1106 times inside random park windows over the R-40 mix (prefixes, DDCB,
+  block iterations, DJNZ, EI shadow, IM2, 0-3 wait states). Every step lands
+  exactly one instruction start later on the unparked-reference oracle. A
+  directed section proves the INT mask on HALT and mid-LDIR (INT pending the
+  whole time, BC falls by exactly 4 over 4 steps, no acknowledge, acknowledged
+  right after the sequence).
+- **INT gate on the real core** (`tb_integ_core`, +5 checks): `n_INT` is
+  forced active through an external name and `n_INT_ssp` observed: masked
+  while `ssp_int_hold`=1, transparent otherwise.
+- **Top-level wiring** (`sim/check_seam.py`, `make -C sim seam-check`):
+  every `ssp_*` CPM port and every `ssp_top` port is connected in `MrZ80.sv`,
+  and the CPM seam nets appear on the `ssp_top` instance.
+- **Verilator half, bridge + FW** (smoke Part F): `z80_bfm.v` now models the
+  T80 contract (request sampled on cpu_cen like `BusReq_s`; a release ends the
+  boundary so a re-assert straight after needs a further instruction; HALT
+  leaves PC = HALT+1 and drives `halt_n`), `+STEPHANG/+STEPHANG_CLKS` refuse
+  re-parks, the harness gains an in-band eager key (`0x02`, `+BRKTX`), and
+  `p1a_sim_top.v` logs `[p1a-step]` events. Part F checks: relative PC walk
+  of a 5-instruction loop (21 steps), per-kick event framing (kick, int_hold
+  up, regrant with >= 1 fetch, int_hold down) incl. one `N=3` kick with
+  `int_hold` up once, bare-CR repeat and its forgetting, `S 0`/`S zz`/`S 1 2`
+  -> `?`, HALTED (PC=HALT+1), STEP_ERR for kick-while-running / MODE=MCYCLE /
+  N=0 and its read-clear, HALT_REASON=3, keystroke BREAK mid-trace, step
+  timeout -> `STEP ERR` with the request kept asserted and a late park
+  recovering, and an OSD RV reset mid-step dropping `int_hold` with the abort.
+  `ssp_bridge`/`ssp_top` gained a `STEP_TIMEOUT_T` parameter (default
+  unchanged, 20M clocks); only the p1a lane shortens it (1M).
+- **Mutation results** (bridge mutants vs Part F, GHDL mutants vs
+  `tb_integ_park`/`tb_integ_core`): CAUGHT -- no BusAck-drop observe (bridge:
+  17 PC breaks, zero-fetch regrants; bench-level `STEP_OBSERVE=false`: "a step
+  advanced 0 instruction starts"); N decrement off; parked-prerequisite reject
+  removed; `int_hold` forced 0; `step_abort` without `rv_ctrl_ok`;
+  HALT_REASON qualifier removed; INT gate removed or inverted (both benches).
+  SURVIVES, understood: `int_hold` without the `& rv_ctrl_ok` term -- it falls
+  one clock later through `step_abort` instead of the same clock (redundant
+  defence in depth; the check window is 2000 clocks).
+- Full regression green: regmap-check, sync, seam-check, lint-ssp, p1a,
+  dict-p1a, smoke-p1a A-F, tramp-p1a, uart-fifo, GHDL tramp, integ-park,
+  integ-mux, integ-core, cycle-golden, engine-golden. Factory ROM regenerated.
+  **Status: complete in simulation; hardware check pending (owner rebuild).**

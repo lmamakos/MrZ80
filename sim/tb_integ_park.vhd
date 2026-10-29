@@ -26,6 +26,16 @@
 -- HALT is checked separately at the end (parks anywhere, PC = HALT + 1; INT
 -- raised while parked wakes it on release).
 --
+-- R39 (single-step): the bridge's one-shot step is "release BUSRQ, observe the
+-- BusAck drop, re-assert, wait for the boundary re-grant".  The stepped runs
+-- repeat that exact sequence from inside random park windows and require the
+-- grant to land exactly ONE instruction start later, on the same oracle; INT
+-- is masked (bench copy of the CPM core's n_INT_ssp gate) for the whole
+-- sequence and a window never starts with INT pending or runs past a trigger,
+-- so the reference trace stays valid.  Directed checks then prove the mask on
+-- a HALT and mid-LDIR, and that a held INT is taken after the release.
+-- STEP_OBSERVE=false (-g) is the "no observe" mutant: re-assert straight away.
+--
 -- Mutation results on the T80 freeze_ok gate (T80_DIR=<copy> sim/run_integ_park.sh),
 -- R31: CAUGHT -- grant at any T_Res (vanilla T80); Prefix="00" term removed;
 -- DJNZ term without the zero test; MCycle=MCycles replaced by "always";
@@ -48,7 +58,8 @@ entity tb_integ_park is
         TRG_BLK : natural := 16#0412#;
         TRG_DDC : natural := 16#033F#;
         END_PC  : natural := 16#0121#;
-        INIT_PC : natural := 16#0113#
+        INIT_PC : natural := 16#0113#;
+        STEP_OBSERVE : boolean := true
     );
 end tb_integ_park;
 
@@ -191,6 +202,8 @@ architecture sim of tb_integ_park is
     signal busrq_n   : std_logic := '1';
     signal int_n     : std_logic := '1';
     signal int_req   : std_logic := '0';   -- stim: hold INT asserted (HALT section)
+    signal int_hold  : std_logic := '0';   -- stim: bridge int_hold (step sequence)
+    signal int_t80   : std_logic;
     signal wait_k    : natural := 0;
 
     signal m1_n, mreq_n, iorq_n, rd_n, wr_n, rfsh_n, halt_n, busak_n : std_logic;
@@ -209,10 +222,14 @@ architecture sim of tb_integ_park is
 
     signal cmp_en    : boolean := true;    -- false: HALT section (no trace compare)
     signal init_ns   : natural := 0;       -- reference start index of INITOK
+    signal steps_done : natural := 0;
 
 begin
 
     clk <= not clk after 10 ns when not stop_sim else '0';      -- 50 MHz
+
+    -- same gate as MicrocomputerZ80CPM: n_INT_ssp
+    int_t80 <= '1' when int_hold = '1' else int_n;
 
     process (clk)
     begin
@@ -227,7 +244,7 @@ begin
         generic map (Mode => 1, T2Write => 1, IOWait => 0)
         port map (
             RESET_n => reset_n, CLK_n => clk, CEN => cen,
-            WAIT_n => wait_n, INT_n => int_n, NMI_n => '1',
+            WAIT_n => wait_n, INT_n => int_t80, NMI_n => '1',
             BUSRQ_n => busrq_n,
             M1_n => m1_n, MREQ_n => mreq_n, IORQ_n => iorq_n, RD_n => rd_n,
             WR_n => wr_n, RFSH_n => rfsh_n, HALT_n => halt_n,
@@ -531,6 +548,168 @@ begin
             check(grants - g0 > 40, what & ": a meaningful number of parks");
         end procedure;
 
+        -- one bridge step from a park (busrq_n low, BusAck high-active asserted):
+        -- release, observe the BusAck drop, re-assert, wait for the re-grant
+        procedure step_once(what : string) is
+            variable n0 : natural;
+        begin
+            n0 := nstart;
+            busrq_n <= '1';
+            if STEP_OBSERVE then
+                wait until busak_n = '1' for 5 us;
+                cnt.chk;
+                if busak_n /= '1' then cnt.err(what & ": BusAck did not drop"); end if;
+            else
+                clks(1);
+            end if;
+            busrq_n <= '0';
+            wait until busak_n = '0' for 100 us;
+            clks(4);
+            cnt.chk;
+            if busak_n /= '0' then cnt.err(what & ": no re-grant after a step"); end if;
+            cnt.chk;
+            if nstart /= n0 + 1 then
+                cnt.err(what & ": a step advanced " & integer'image(nstart - n0) &
+                        " instruction starts, expected 1");
+            end if;
+            steps_done <= steps_done + 1;
+        end procedure;
+
+        impure function pc_now return natural is
+        begin return to_integer(unsigned(reg(79 downto 64))); end function;
+
+        -- a step window from the current park, bridge-style: INT masked for
+        -- the whole sequence, dropped again while still parked
+        procedure step_window(maxk : natural; what : string) is
+            variable k : natural;
+            variable pc0 : natural;
+        begin
+            rnd(maxk, k);
+            if k = 0 or int_n = '0' or halt_n = '0' then return; end if;
+            int_hold <= '1';
+            clks(2);
+            for i in 1 to k loop
+                exit when int_n = '0' or halt_n = '0';
+                pc0 := pc_now;
+                step_once(what);
+                exit when pc0 = TRG_EI or pc0 = TRG_BLK or pc0 = TRG_DDC;
+            end loop;
+            clks(2);
+            int_hold <= '0';
+            clks(1);
+        end procedure;
+
+        procedure run_stepped(s1, s2 : positive; wk, gapmax, holdmax, stepmax : natural;
+                              what : string) is
+        begin
+            report "stepped run: " & what;
+            seed1 := s1;  seed2 := s2;
+            ref_mode <= false;  wait_k <= wk;
+            cpu_reset;
+            g0 := grants;
+            while halt_n = '1' loop
+                rnd(gapmax, gap);
+                clks(gap);
+                exit when halt_n = '0';
+                busrq_n <= '0';
+                wait until busak_n = '0' for 100 us;
+                if busak_n /= '0' then
+                    if halt_n = '1' then
+                        cnt.err(what & ": no BusAck within 100 us");
+                    end if;
+                    busrq_n <= '1';
+                    exit;
+                end if;
+                rnd(holdmax, hold);
+                clks(hold);
+                step_window(stepmax, what);
+                busrq_n <= '1';
+                wait until busak_n = '1' for 5 us;
+                cnt.chk;
+                if busak_n /= '1' then cnt.err(what & ": BusAck stuck after release"); end if;
+            end loop;
+            clks(40);
+            check(halt_n = '0', what & ": reached HALT");
+            dif := reg xor ref_final;
+            dif(47 downto 40) := x"00";
+            check(dif = (211 downto 0 => '0'),
+                  what & ": final REG (except R) equals the reference");
+            check(mem.hash(16#8000#, 16#8FFF#) = ref_hash,
+                  what & ": data-memory hash equals the reference");
+            check(to_integer(unsigned(mem.rd(16#8040#))) = ref_isr,
+                  what & ": same number of interrupts taken");
+            report "  " & integer'image(grants - g0) & " grants, " &
+                   integer'image(steps_done) & " steps so far";
+        end procedure;
+
+        -- INT mask: HALT and mid-LDIR, INT pending the whole time
+        procedure step_mask_checks is
+            variable isr0, bc0, steps0 : natural;
+            variable bc_n : natural;
+        begin
+            report "STEP: INT masked across a step sequence";
+            cmp_en <= false;
+            -- (1) HALT: stepping must not wake the CPU while the mask is on
+            cpu_reset;
+            ref_mode <= false;
+            wait until halt_n = '0' for 20 ms;
+            check(halt_n = '0', "step/halt: reached HALT");
+            clks(7);
+            isr0 := to_integer(unsigned(mem.rd(16#8040#)));
+            busrq_n <= '0';
+            wait until busak_n = '0' for 20 us;
+            check(busak_n = '0', "step/halt: parked");
+            int_req <= '1';
+            clks(2);
+            int_hold <= '1';
+            clks(2);
+            for i in 1 to 6 loop step_once("step/halt"); end loop;
+            check(halt_n = '0', "step/halt: still halted after stepping with INT held");
+            check(pc_now = END_PC + 1, "step/halt: PC = HALT + 1 after stepping");
+            check(to_integer(unsigned(mem.rd(16#8040#))) = isr0,
+                  "step/halt: no interrupt serviced while masked");
+            int_hold <= '0';
+            clks(2);
+            busrq_n <= '1';
+            wait until iorq_n = '0' and m1_n = '0' for 20 us;
+            check(iorq_n = '0' and m1_n = '0', "step/halt: held INT acknowledged after the sequence");
+            int_req <= '0';
+            clks(600);
+            check(to_integer(unsigned(mem.rd(16#8040#))) = isr0 + 1, "step/halt: ISR ran once");
+
+            -- (2) mid-LDIR: park on the first iteration boundary with INT pending
+            cpu_reset;
+            ref_mode <= false;
+            wait until m1_n = '0' and to_integer(unsigned(a)) = TRG_BLK for 20 ms;
+            check(to_integer(unsigned(a)) = TRG_BLK, "step/ldir: reached the LDIR");
+            busrq_n <= '0';
+            wait until busak_n = '0' for 20 us;
+            check(busak_n = '0', "step/ldir: parked");
+            clks(4);
+            check(int_n = '0', "step/ldir: INT is pending at the park");
+            isr0 := to_integer(unsigned(mem.rd(16#8040#)));
+            bc0 := to_integer(unsigned(reg(95 downto 80)));
+            check(pc_now = TRG_BLK, "step/ldir: parked with PC on the LDIR");
+            int_hold <= '1';
+            clks(2);
+            for i in 1 to 4 loop step_once("step/ldir"); end loop;
+            bc_n := to_integer(unsigned(reg(95 downto 80)));
+            check(bc0 - bc_n = 4, "step/ldir: BC fell by exactly 4 (one iteration per step), was " &
+                  integer'image(bc0) & " now " & integer'image(bc_n));
+            check(pc_now = TRG_BLK, "step/ldir: PC re-points at the LDIR");
+            check(to_integer(unsigned(mem.rd(16#8040#))) = isr0,
+                  "step/ldir: no interrupt acknowledged while masked");
+            check(int_n = '0', "step/ldir: INT still pending");
+            int_hold <= '0';
+            clks(2);
+            busrq_n <= '1';
+            wait until iorq_n = '0' and m1_n = '0' for 20 us;
+            check(iorq_n = '0' and m1_n = '0', "step/ldir: held INT acknowledged after the sequence");
+            clks(600);
+            check(to_integer(unsigned(mem.rd(16#8040#))) = isr0 + 1, "step/ldir: ISR ran once");
+            cmp_en <= true;
+        end procedure;
+
         procedure halt_checks is
             variable isr0 : natural;
         begin
@@ -593,6 +772,14 @@ begin
         end loop;
 
         halt_checks;
+
+        -- ---- single-step windows inside parks (R39)
+        run_stepped(211, 13, 0, 4, 3, 4, "steps, no waits");
+        run_stepped(223, 17, 2, 10, 6, 3, "steps with 2 wait states");
+        run_stepped(239, 29, 0, 30, 10, 12, "long step windows");
+        run_stepped(251, 31, 3, 6, 4, 6, "dense steps with 3 wait states");
+        check(steps_done > 150, "a meaningful number of steps (" & integer'image(steps_done) & ")");
+        step_mask_checks;
 
         -- ---- coverage: the instruction classes parks landed after (dense runs)
         report "coverage (parks that followed each instruction class):";

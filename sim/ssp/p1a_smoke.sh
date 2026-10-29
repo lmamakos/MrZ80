@@ -35,6 +35,8 @@ if [ ! -f "$APP" ] || [ ssp/fw/apps/monitor.fs -nt "$APP" ] || [ ssp/fw/terminal
 fi
 
 fail=0
+# PARTS=F runs only Part F (default: all parts)
+want() { [[ "${PARTS:-ABCDEF}" == *$1* ]]; }
 runmodel() { # $1 = tag, rest = plusargs; stdin = operator input
   local tag=$1; shift
   # caller plusargs first: the harness takes the FIRST occurrence of a key
@@ -82,6 +84,7 @@ PYEOF
 }
 rx() { sed -E 's/[][*.+?^$(){}|\\]/\\&/g' <<<"$1"; }   # literal -> ERE
 
+if want A; then
 # ======================= Part A: operator session (OM=1) ========================
 TAG=A
 {
@@ -160,7 +163,9 @@ if grep -aq 'p1a-ERR' "$WORK/A.events.log"; then
 else echo "  ok: BUSRQ held through every engine cycle"; fi
 grep -E 'bus_errs=[1-9]|rom_illegal=[1-9]' "$WORK/A.info.log" \
   && { echo "  FAIL: harness diagnostics flagged"; fail=1; }
+fi
 
+if want B; then
 # ======================= Part B: OM off -> bit-transparent (R-43) ==================
 TAG=B
 printf 'ab\x1dcd\r' | ALLOW_SILENT=1 runmodel B +OM=0 +RXAT=200000
@@ -171,7 +176,9 @@ echo "--- Part B: $gi $fa"
   || { echo "  FAIL: expected guest_rx=6, got '$gi'"; fail=1; }
 [ "$fa" = "freeze_acc=0" ] && echo "  ok: no park with OM off" || { echo "  FAIL: guest was parked with OM off ($fa)"; fail=1; }
 if grep -aq 'ESC matched' "$WORK/B.events.log"; then echo "  FAIL: escape matched with OM off"; fail=1; else echo "  ok: escape not matched with OM off"; fi
+fi
 
+if want C; then
 # ======================= Part C: OM on -> escape byte consumed ====================
 TAG=C
 printf 'ab\x1d' | runmodel C +OM=1 +RXAT=200000
@@ -180,7 +187,9 @@ echo "--- Part C: $gi"
 [ "$gi" = "guest_rx=2" ] && echo "  ok: only the 2 bytes before the escape reached the guest; ESC_CHAR consumed" \
   || { echo "  FAIL: expected guest_rx=2, got '$gi'"; fail=1; }
 check "monitor banner after the escape"              '^MRZ80 SSP MONITOR'
+fi
 
+if want D; then
 # ======================= Part D: an idle operator must not lose the park ===========
 # WDG_PARK (~0.4 s, D-13) flags (spec: demotes) a park the FW stops refreshing.  The kernel's
 # key-wait loop kicks it (terminal.s serial_key, R30), so a human sitting at the
@@ -193,7 +202,9 @@ absent "no NOT PARKED after the idle period"         'NOT PARKED'
 if grep -aq 'WDG_PARK expired' "$WORK/D.events.log"; then
   echo "  FAIL: WDG_PARK expired while the FW sat at the prompt (kernel key-wait must kick it)"; fail=1
 else echo "  ok: WDG_PARK never expired while idle at the prompt"; fi
+fi
 
+if want E; then
 # ======================= Part E: I/O ports, MAP view, PHY/LOG mode (OM=1) ========
 # M1 commands.  BFM oracles (z80_bfm.v): an I/O READ returns port^0x0F; the
 # I/O WRITE capture holds the last (port,data).  MMU mapping ports read through
@@ -242,6 +253,187 @@ io_wr_line=$(grep -aoE 'io_wr=[0-9]+\(cc,3c\)' "$WORK/E.info.log" | tail -1)
   || { echo "  FAIL: no io_wr(cc,3c) in the info line"; fail=1; }
 if grep -aq 'p1a-ERR' "$WORK/E.events.log"; then
   echo "  FAIL: BUSRQ released during an engine cycle (Part E)"; fail=1
+fi
+fi
+
+
+if want F; then
+# ======================= Part F: single-step (S), R39 ==============================
+# Hardware one-shot (spec 7.2c): release, observe the BusAck drop, re-assert, boundary
+# re-grant.  The BFM models the T80 contract (request sampled on cpu_cen; a grant needs
+# one more instruction after every release) and the harness events carry the oracles:
+#   [p1a-step] kick / regrant fetches=N pc=P / int_hold -> b / timeout.
+# Program: $5000: 4 x NOP, JP $5000 (a five-instruction loop; the escape lands anywhere
+# in it, so the checks are on the RELATIVE PC progression).  HALT at $5010.
+TAG=F
+{
+  printf '\x1d'
+  printf 'D 5000\r00\r00\r00\r00\rC3\r00\r50\r.\r'
+  printf 'D 5010\r76\r.\r'
+  printf 'G 5000\r'
+  printf '\x1d'
+  printf 'S\r'                                      # one step
+  printf 'S 4\r'                                    # a short trace
+  printf 'S 7\r'                                    # wraps through the JP
+  printf 'S 0\rS zz\rS 1 2\r'                       # argument errors -> ?
+  printf 'R\r'
+  printf 'S 3\r'
+  printf '\r\r'                                     # bare CR repeats S 3 (twice)
+  printf 'E 5000 1\r'                               # any other command forgets it
+  printf '\r'                                       # ... so this does nothing
+  printf 'G 5010\r'
+  printf '\x1d'
+  printf 'S 2\r'                                    # HALT: HALTED on every step
+  printf 'R\r'
+  printf 'F\r'
+  printf '$120 SSP_CTRL !\r'                        # Z80 released, console still ours
+  printf '$201 SSP_STEP_CTL !\r'                    # kick while running: rejected
+  printf '$122 SSP_CTRL !\r'                        # parked again
+  printf 'SSP_STEP_CTL @ hex.\r'                    # STEP_ERR set (bit 12) ...
+  printf 'SSP_STEP_CTL @ hex.\r'                    # ... and read-clear
+  printf '$401 SSP_STEP_CTL !\r'                    # reserved MODE (MCYCLE): rejected
+  printf 'SSP_STEP_CTL @ hex.\r'
+  printf '$200 SSP_STEP_CTL !\r'                    # N = 0: rejected
+  printf 'SSP_STEP_CTL @ hex.\r'
+  printf '$203 SSP_STEP_CTL !\r'                   # N = 3 in ONE kick (INT held across all 3)
+  printf 'SSP_PC_LATCH @ hex.\r'
+  printf '$20000010 @ hex.\r'                # re-park reason: 3 = step
+} | runmodel F +OM=1 +LINEWAIT=2 +QUIET=150000
+echo "--- Part F console ---"; cat "$WORK/F.norm.log"
+# oracle 1: the console's step lines walk the loop one instruction at a time
+python3 - "$WORK/F.norm.log" "$WORK/F.events.log" <<'PYEOF'
+import re, sys
+con = open(sys.argv[1], errors="replace").read()
+ev = open(sys.argv[2], errors="replace").read()
+head = con.split("G 5010")[0]
+lines = re.findall(r"^([0-9A-F]{4}): ((?:[0-9A-F-]{2} ){4})AF=", head, re.M)
+pcs = [int(l[0], 16) for l in lines]
+loop = [0x5000, 0x5001, 0x5002, 0x5003, 0x5004]
+bad = [(i, pcs[i - 1], pcs[i]) for i in range(1, len(pcs))
+       if pcs[i] != loop[(loop.index(pcs[i - 1]) + 1) % 5]]
+ok = len(pcs) == 21 and not bad and all(p in loop for p in pcs)
+print("  %s: 21 step lines, each exactly one instruction on (%d lines, %d breaks)"
+      % ("ok" if ok else "FAIL", len(pcs), len(bad)))
+# oracle 2: harness events -- kick, int_hold up, regrant (>= 1 fetch), int_hold down
+toks = []
+for m in re.finditer(r"\[p1a-step @\d+\] (kick N=\d+ MODE=1|int_hold -> [01]|regrant fetches=(\d+) pc=([0-9a-f]{4})|timeout)", ev):
+    t = m.group(1)
+    toks.append(("kick" if t.startswith("kick") else
+                 "regrant" if t.startswith("regrant") else
+                 "ih1" if t.endswith("1") and t.startswith("int") else
+                 "ih0" if t.startswith("int") else "timeout", m.group(2), m.group(3)))
+seq = [t[0] for t in toks]
+good = (seq == ["kick", "ih1", "regrant", "ih0"] * 23 +
+        ["kick", "ih1", "regrant", "regrant", "regrant", "ih0"])
+print("  %s: 23 single steps = kick, int_hold up, regrant, int_hold down; then one N=3 kick"
+      " = int_hold up ONCE, 3 regrants, down once (%d kicks)"
+      % ("ok" if good else "FAIL", seq.count("kick")))
+fe = [int(t[1]) for t in toks if t[0] == "regrant"]
+print("  %s: every regrant followed >= 1 fetch (no zero-instruction step)"
+      % ("ok" if fe and min(fe) >= 1 else "FAIL"))
+rp = [int(t[2], 16) for t in toks if t[0] == "regrant"][:21]
+n3 = [t[0] for t in toks if t[0] == "kick"]
+kn = re.findall(r"kick N=(\d+)", ev)
+print("  %s: the last kick carried N=3" % ("ok" if kn and kn[-1] == "3" else "FAIL"))
+if not (kn and kn[-1] == "3"): good = False
+print("  %s: bridge-side parked PCs equal the displayed PCs"
+      % ("ok" if rp == pcs else "FAIL"))
+sys.exit(0 if (ok and good and fe and min(fe) >= 1 and rp == pcs) else 1)
+PYEOF
+[ $? -eq 0 ] || fail=1
+check "R after S 7 shows the PC of the last step"     '^PC=5001 '
+n_h=$(grep -ac '^HALTED' "$WORK/F.norm.log")
+[ "$n_h" -eq 2 ] && echo "  ok: HALTED reported on both steps in HALT" || { echo "  FAIL: HALTED x$n_h (want 2)"; fail=1; }
+check "HALT parks with PC = HALT + 1"                 '^PC=5011 '
+n_qF=$(grep -ac '^?$' "$WORK/F.norm.log")
+[ "$n_qF" -eq 3 ] && echo "  ok: S 0, S zz, S 1 2 each answered ?" || { echo "  FAIL: expected 3 '?', got $n_qF"; fail=1; }
+n_e1=$(grep -aEc 'SSP_STEP_CTL @ hex\. 0*1201 +ok' "$WORK/F.norm.log")
+[ "$n_e1" -eq 3 ] && echo "  ok: STEP_ERR (bit 12) set by a kick while running, MODE=MCYCLE and N=0" \
+  || { echo "  FAIL: expected 3 STEP_ERR reads, got $n_e1"; fail=1; }
+check "STEP_ERR is read-clear"                         'SSP_STEP_CTL @ hex\. 0*201 +ok'
+check "HALT_REASON = 3 after a step re-park"           '[$]20000010 @ hex\. 0*3 +ok'
+absent "no unknown words"                              'not found'
+if grep -aq 'p1a-step.*timeout' "$WORK/F.events.log"; then
+  echo "  FAIL: a step timed out in the normal session"; fail=1; else echo "  ok: no step timeout"; fi
+if grep -aq 'p1a-ERR' "$WORK/F.events.log"; then echo "  FAIL: BUSRQ released during an engine cycle (Part F)"; fail=1; fi
+
+# ---- F2: a keystroke ends a long trace (BREAK).  \x02 = harness eager key.
+TAG=F2
+{
+  printf '\x1d'
+  printf 'D 5000\r00\r00\r00\r00\rC3\r00\r50\r.\r'
+  printf 'G 5000\r'
+  printf '\x1d'
+  printf 'S 40\r'
+  printf '\x02x'                                   # a key in the middle of the trace
+  printf 'R\r'
+} | runmodel F2 +OM=1 +LINEWAIT=2 +QUIET=150000
+echo "--- Part F2 console (tail) ---"; tail -12 "$WORK/F2.norm.log" | grep -v '^$'
+check "BREAK ends the trace"                          '^BREAK'
+nk=$(grep -ac 'p1a-step.*kick' "$WORK/F2.events.log")
+[ "$nk" -ge 2 ] && [ "$nk" -lt 40 ] && echo "  ok: trace stopped early ($nk of 40 steps)" \
+  || { echo "  FAIL: kicks=$nk (want 2..39)"; fail=1; }
+check "monitor alive after BREAK: R works"            '^PC=50'
+
+# ---- F4: sovereignty.  The OSD RV-reset hatch (rv_rst_n low) mid-step: the sequence is
+# abandoned, the Z80 released, and int_hold must DROP with it -- a dead RV may never leave
+# INT masked on a running Z80 (review B8).
+TAG=F4
+{
+  printf '\x1d'
+  printf 'D 5000\r00\r00\r00\r00\rC3\r00\r50\r.\r'
+  printf 'G 5000\r'
+  printf '\x1d'
+  printf 'S\r'
+  printf 'S\r'                                      # hangs in the re-park (BFM)
+} | ALLOW_SILENT=1 runmodel F4 +OM=1 +LINEWAIT=2 +QUIET=150000 +STEPHANG=3 +STEPHANG_CLKS=3000000 +RVRST +RVRST_AT=4000000 +IDLE=6000000
+python3 - "$WORK/F4.events.log" <<'PYEOF'
+import re, sys
+RVRST_AT = 4000000
+ev = open(sys.argv[1], errors="replace").read()
+ih = [(int(m.group(1)), m.group(2)) for m in
+      re.finditer(r"\[p1a-step @(\d+)\] int_hold -> ([01])", ev)]
+kicks = len(re.findall(r"p1a-step.*kick", ev))
+dn = [t for t, v in ih if v == "0"]
+ok_run = (kicks == 2 and 'timeout' not in ev)
+ok_drop = bool(ih) and ih[-1][1] == "0" and RVRST_AT <= dn[-1] <= RVRST_AT + 2000
+print("  %s: the second step was hung in the re-park (%d kicks, no timeout yet) when the RV reset hit"
+      % ("ok" if ok_run else "FAIL", kicks))
+print("  %s: int_hold fell with the abort (last fall @%s, RV reset @%d)"
+      % ("ok" if ok_drop else "FAIL", dn[-1] if dn else "-", RVRST_AT))
+sys.exit(0 if ok_run and ok_drop else 1)
+PYEOF
+[ $? -eq 0 ] || fail=1
+
+# ---- F3: step timeout.  The BFM stops re-parking after the escape+steps (STEPHANG),
+# for 2.2M clocks; the bridge's 1M-clock sim budget expires -> STEP ERR, the request stays
+# asserted, and the late park lands afterwards with fresh state.  (R typed while hung does
+# not say NOT PARKED: m-parked? polls BUSACK for ~200k iterations, longer than this hang,
+# so it simply waits for the late park.)
+TAG=F3
+{
+  printf '\x1d'
+  printf 'D 5000\r00\r00\r00\r00\rC3\r00\r50\r.\r'
+  printf 'G 5000\r'
+  printf '\x1d'
+  printf 'S\r'                                      # fine
+  printf 'S\r'                                      # the BFM refuses to re-park
+  printf 'R\r'                                      # typed while hung: waits, then shows
+  printf '\x01'                                     # wait out the hang
+  printf 'R\r'                                      # late park landed
+  printf 'S\r'                                      # and stepping works again
+} | runmodel F3 +OM=1 +LINEWAIT=2 +QUIET=150000 +STEPHANG=3 +STEPHANG_CLKS=2200000 +PAUSE=1200000
+echo "--- Part F3 console (tail) ---"; tail -14 "$WORK/F3.norm.log" | grep -v '^$'
+check "step timeout reported as STEP ERR"             '^STEP ERR'
+n_pcF3=$(grep -ac '^PC=50' "$WORK/F3.norm.log")
+[ "$n_pcF3" -eq 2 ] && echo "  ok: the request stayed asserted: R typed while hung and R after the pause both show registers (late park landed)" \
+  || { echo "  FAIL: expected 2 R register lines, got $n_pcF3"; fail=1; }
+absent "no NOT PARKED (the park was never given up)"    'NOT PARKED'
+nt=$(grep -ac 'p1a-step.*timeout' "$WORK/F3.events.log")
+[ "$nt" -eq 1 ] && echo "  ok: exactly one step timeout" || { echo "  FAIL: timeouts=$nt (want 1)"; fail=1; }
+ns=$(grep -ac 'p1a-step.*regrant' "$WORK/F3.events.log")
+[ "$ns" -eq 2 ] && echo "  ok: the first S and the post-recovery S re-parked (2 regrants)" \
+  || { echo "  FAIL: regrants=$ns (want 2)"; fail=1; }
 fi
 
 [ $fail -eq 0 ] && echo "p1a_smoke: PASS" || echo "p1a_smoke: FAIL"

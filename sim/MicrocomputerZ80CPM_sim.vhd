@@ -144,6 +144,7 @@ entity MicrocomputerZ80CPM is
 		ssp_tramp_arm	: in  std_logic := '0';	-- G aaaa: arm reset-vector JP
 		ssp_tramp_target	: in  std_logic_vector(15 downto 0) := (others => '0');
 		ssp_freeze_any	: in  std_logic := '0';
+		ssp_int_hold		: in  std_logic := '0';	-- R39: block INT while stepping
 		ssp_eng_own		: in  std_logic := '0';	-- engine master (mux B)
 		ssp_eng_addr	: in  std_logic_vector(15 downto 0) := (others => '0');
 		ssp_eng_dout	: in  std_logic_vector(7 downto 0) := (others => '0');
@@ -202,6 +203,7 @@ architecture struct of MicrocomputerZ80CPM is
 	-- future cleverness awaits.   This allows us to wire these up to the
 	-- signal chain thing now.
 	signal n_INT   : std_logic;
+	signal n_INT_ssp : std_logic;	-- R39: n_INT as seen by the T80
 	signal n_NMI   : std_logic;
 	signal n_BUSRQ : std_logic;
 	signal n_M1    : std_logic;
@@ -437,7 +439,7 @@ port map(
 	clk_n => clk,
 	cen => cpu_cen,
 	wait_n => cpu_wait_n,
-	int_n => n_INT,
+	int_n => n_INT_ssp,	-- R39: gated by ssp_int_hold (step mask)
 	nmi_n => n_NMI,
 	busrq_n => n_BUSRQ,
 	mreq_n => t80_mreq_n,
@@ -533,6 +535,13 @@ ssp_t80_reg        <= cpuDbgRegisters;
 -- future cleverness awaits. n_int1/n_int2 (the io1/io2 interrupt outputs)
 -- are currently unconnected and would be the natural source for n_INT.
 n_INT   <= '1';
+-- R39 single-step interrupt mask (owner ruling): while the SSP step
+-- sequencer is armed (ssp_int_hold), INT is forced inactive for the T80.
+-- The source stays n_INT='1' until a real time/interrupt device lands, but
+-- the gating point exists and is exercised by the benches from M4 onward:
+-- a 50-100 Hz clock tick must never hijack a single-step trace (it would
+-- INT-acknowledge instead of executing the stepped instruction).
+n_INT_ssp <= '1' when ssp_int_hold = '1' else n_INT;   -- held INACTIVE (active-low)
 n_NMI   <= '1';
 n_BUSRQ <= ssp_busrq_n;
 

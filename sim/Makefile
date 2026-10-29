@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp seam-check p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -18,6 +18,10 @@ regmap-check:
 
 sync:
 	$(ROOT)/sim/check_sync.sh
+
+# top-level wiring of the SSP seam in MrZ80.sv (invisible to every bench)
+seam-check:
+	python3 $(ROOT)/sim/check_seam.py
 
 # Mecrisp SSP firmware (needs $MECRISP, see ssp/fw/Makefile)
 fw:

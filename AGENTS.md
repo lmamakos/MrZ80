@@ -154,6 +154,19 @@ Cyclone V `5CSEBA6U23I7` (DE10-Nano / MiSTer).
   `set_instance_assignment` IO standard, matching the pattern of existing
   entries in the `.qsf`.
 
+## SSP documentation
+
+The System Support Processor work is documented in two files in `doc/`:
+
+- `doc/SSP_STATUS.md` — current state, the active and next milestone plans
+  with checklists, backlog, owner questions, hazards, commands and
+  environment. Read it first; update its §1–§5 at the end of every session.
+- `doc/SSP_DESIGN.md` — spec and decisions (what and why). Change spec
+  sections only when a design decision changes; append one §17 entry per
+  round. Never rewrite earlier history (mark errors `[Rn erratum: …]`).
+
+Keep milestone plans in `SSP_STATUS.md`, not in separate plan files.
+
 ## What not to commit
 
 Do **not** track intermediate files that are ephemeral or can easily be
@@ -172,4 +185,4 @@ new tool produces a new kind of intermediate file, add it to the relevant
 built by a documented recipe, such as committed firmware `.hex` goldens or
 release `.rbf` files. Large generated files committed by mistake bloat the
 history permanently unless it is rewritten, which happened once already
-(see `doc/SSP_HANDOFF.md` §1.1).
+(see `doc/SSP_STATUS.md` §1.5).

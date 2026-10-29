@@ -55,7 +55,9 @@
 module ssp_top #(
     // Factory ROM image (D-38) for the MROM's altsyncram init_file; path relative
     // to the Quartus project directory.  Simulation ignores it (+ROM/$readmemh).
-    parameter MROM_INIT = "ssp/fw/forth_rom.mif"
+    parameter MROM_INIT = "ssp/fw/forth_rom.mif",
+    // R39: step phase watchdog, passed to ssp_bridge (default = WDG_PARK budget)
+    parameter [24:0] STEP_TIMEOUT_T = 25'd20_000_000
 ) (
     input  wire        clk,             // clk_sys 50 MHz (shared domain)
     input  wire        rst_n,         // subsystem reset (= Z80 reset now;
@@ -91,6 +93,8 @@ module ssp_top #(
     output wire [15:0] tramp_target,
     input  wire        tramp_done,
     output wire        freeze_any,   // 0 in P1a (step modes P1b)
+    output wire        int_hold,     // R39: INT blocked for the Z80 during the
+                                    //   single-step sequence (to CPM INT gate)
     // engine master (mux inputs)
     output wire        eng_own,
     output wire [15:0] eng_addr,
@@ -223,7 +227,7 @@ module ssp_top #(
     wire        mon_txd, relay_txd;
     wire        console_own, parked;
 
-    ssp_bridge u_bridge (
+    ssp_bridge #(.STEP_TIMEOUT_T(STEP_TIMEOUT_T)) u_bridge (
         .clk (clk), .rst_n (rst_n),
         .mem_addr (mem_addr), .mem_wdata (mem_wdata), .mem_wmask (mem_wmask),
         .mem_rstrb (mem_rstrb), .mem_rdata (bridge_rdata),
@@ -238,7 +242,7 @@ module ssp_top #(
         .rv_rst_n (rv_rst_n), .rv_stalled (rv_stalled), .rv_alive (rv_alive),
         .z_busrq_n (z_busrq_n), .z_reset_n (z_reset_n),
         .z_wait_n (z_wait_n), .z_cen_gate (z_cen_gate),
-        .freeze_any (freeze_any),
+        .freeze_any (freeze_any), .int_hold (int_hold),
         .eng_own (eng_own), .eng_addr (eng_addr), .eng_dout (eng_dout),
         .eng_mreq_n (eng_mreq_n), .eng_iorq_n (eng_iorq_n),
         .eng_rd_n (eng_rd_n), .eng_wr_n (eng_wr_n),

@@ -993,6 +993,7 @@ wire  [3:0] fp_osd_profile = (status[19:16] >= 4'd1 && status[19:16] <= 4'd8)
 
 // SSP seam nets (ssp_top instance below, after the core)
 wire        ssp_busrq_n, ssp_z_reset_n, ssp_z_wait_n, ssp_z_cen_gate, ssp_freeze_any;
+wire        ssp_int_hold;   // R39: INT blocked during single-step sequence
 wire        ssp_tramp_arm, ssp_tramp_done;
 wire [15:0] ssp_tramp_target;
 wire        ssp_eng_own, ssp_eng_mreq_n, ssp_eng_iorq_n, ssp_eng_rd_n, ssp_eng_wr_n;
@@ -1070,6 +1071,7 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
     .ssp_tramp_arm      (ssp_tramp_arm),
     .ssp_tramp_target   (ssp_tramp_target),
     .ssp_freeze_any     (ssp_freeze_any),
+    .ssp_int_hold       (ssp_int_hold),
     .ssp_eng_own        (ssp_eng_own),
     .ssp_eng_addr       (ssp_eng_addr),
     .ssp_eng_dout       (ssp_eng_dout),
@@ -1139,6 +1141,7 @@ ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif")) ssp_top
     .tramp_target   (ssp_tramp_target),
     .tramp_done     (ssp_tramp_done),
     .freeze_any     (ssp_freeze_any),
+    .int_hold       (ssp_int_hold),
     .eng_own        (ssp_eng_own),
     .eng_addr       (ssp_eng_addr),
     .eng_dout       (ssp_eng_dout),

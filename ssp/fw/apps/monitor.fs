@@ -17,6 +17,9 @@
 \   G aaaa        Z80 restarts at aaaa (reset vent + reset-vector JP, D-02)
 \   G             continue: resume the parked Z80, console back to it
 \   R             registers (parked snapshot)
+\   S [n]         single-step n instructions (default 1) with boundary
+\                 re-park; INT is held off for the whole sequence (R39);
+\                 bare CR repeats the last S; any key breaks a trace
 \   F             leave to the Forth REPL (`mon` re-enters)
 \   ? / H         help
 \ Numbers are hex, 1..8 digits, any case.  Memory is the Z80's LOGICAL
@@ -43,6 +46,7 @@ SSP_CTRL_ESC_BREAK_EN
 0 variable m-n
 0 variable m-k
 0 variable m-bad                           \ argument error flag
+0 variable m-stepn                          \ last step count (bare-CR repeat)
 
 \ ---- output ------------------------------------------------------------------
 \ Color API (M1 stubs -- they deliberately emit nothing yet).  Planned: ANSI
@@ -97,6 +101,7 @@ SSP_CTRL_ESC_BREAK_EN
   drop false ;
 : m-need-park ( -- f )
   m-parked? dup 0= if ." NOT PARKED" cr then ;
+: m-console? ( -- f )  SSP_STATUS @ SSP_STATUS_FW_CONSOLE_OK and ;
 
 \ ---- line input and parsing ---------------------------------------------------
 : m-line-in ( -- )  m-line 120 accept m-len !  0 m-pos ! ;
@@ -195,6 +200,67 @@ SSP_CTRL_ESC_BREAK_EN
 : m-log ( -- )  0 SSP_MD ! ." LOGICAL" cr ;
 : m-phystest ( -- f )  m-phys? dup if ." PHYSICAL E/D PENDING M3" cr then ;
 
+\ ---- S : single-step (STEP assist, R39) ----------------------------------------
+\ Hardware one-shot in the bridge (spec 7.2c): release the Z80, re-park at
+\ each instruction boundary via the T80 freeze gate.  It is NOT a FW
+\ bit-toggle: between a FW release and re-assert many instructions would
+\ retire.  Owner ruling R39: INT is held inactive for the whole sequence (a
+\ 50-100 Hz clock tick must not hijack a trace; a pending source fires after
+\ G).  STATUS.STEP_BUSY covers the sequencer from the kick on; STEP_CTL
+\ .STEP_ERR is sticky, read clears.  Snapshots refresh at every re-park, so
+\ each line shows exact architectural state: the NEXT instruction's PC and
+\ bytes, and the registers after the stepped one.  S n prints one line per
+\ step (FW loops single kicks); any key aborts the trace.  Bare CR repeats
+\ the last S count; any other command forgets it.
+: m-w ( addr shift -- )  swap @ swap rshift m-h4 space ;
+0 variable m-iff1                                \ IFF1 before the step
+: m-iffs ( -- u )  SSP_SNAP_REG6 @ 18 rshift 3 and ;   \ bit0 IFF1, bit1 IFF2
+: m-stepwait ( -- f )   \ true = re-parked cleanly; false = STEP_ERR latched
+  begin SSP_STATUS @ SSP_STATUS_STEP_BUSY and 0= until
+  SSP_STEP_CTL @ SSP_STEP_CTL_STEP_ERR and 0= ;
+: m-key? ( -- f )   \ operator typed something: drain it, abort the trace
+  SSP_UART_STAT @ SSP_UART_STAT_RX_AVAIL and 0= if false exit then
+  begin SSP_UART_STAT @ SSP_UART_STAT_RX_AVAIL and while
+    SSP_UART_RXDATA @ drop repeat
+  true ;
+: m-step1 ( -- f )   \ one step + its display line; f = ok
+  m-iffs 1 and m-iff1 !
+  SSP_STEP_CTL_MODE 2/ SSP_STEP_CTL_MODE and 1 or   \ MODE=INSN(1) | N=1
+  SSP_STEP_CTL !
+  m-stepwait 0= if ." STEP ERR" cr false exit then
+  SSP_PC_LATCH @ $FFFF and m-h4 ." : "
+  4 0 do  SSP_PC_LATCH @ i + $FFFF and gc@
+          if m-h2 else 45 emit 45 emit then space loop
+  ." AF=" SSP_SNAP_REG0 @ dup $FF and m-h2 8 rshift m-h2 space
+  ." BC=" SSP_SNAP_REG2 16 m-w
+  ." DE=" SSP_SNAP_REG3 0 m-w
+  ." HL=" SSP_SNAP_REG3 16 m-w
+  ." SP=" SSP_SNAP_REG1 16 m-w cr
+  \ INT is masked while stepping, so an IFF1 fall here is DI or an NMI;
+  \ only the NMI shape (IFF1 cleared, IFF2 kept, PC=0066) is reported.
+  m-iff1 @  m-iffs 2 =  and  SSP_PC_LATCH @ $FFFF and $66 = and
+    if ." NMI" cr then
+  SSP_STATUS @ SSP_STATUS_HALT_N and 0= if ." HALTED" cr then
+  true ;
+: m-step-n ( n -- )
+  dup m-stepn !                                \ bare CR repeats this count
+  begin dup while
+    m-step1 0= if drop exit then             \ STEP ERR ends the trace
+    m-key? if ." BREAK" cr drop exit then   \ any key ends the trace
+    1-
+  repeat
+  drop ;
+: m-step ( -- )
+  0 m-bad !
+  1 m-arg $FFFF and  m-end
+  m-bad @ over 0= or if drop m-q exit then   \ S 0 / junk => ?
+  m-need-park 0= if drop exit then
+  m-step-n ;
+: m-repeat ( -- )   \ bare CR: repeat the last S, if one is latched
+  m-stepn @ 0= if exit then
+  m-need-park 0= if exit then
+  m-stepn @ m-step-n ;
+
 \ ---- E : examine ---------------------------------------------------------------
 : m-rd-row ( addr k -- f )
   0 do dup i + $FFFF and gc@
@@ -246,7 +312,6 @@ SSP_CTRL_ESC_BREAK_EN
   m-a @ m-next ! ;
 
 \ ---- R : registers ----------------------------------------------------------------
-: m-w ( addr shift -- )  swap @ swap rshift m-h4 space ;
 : m-regs ( -- )
   m-need-park 0= if exit then
   SSP_STATUS @ SSP_STATUS_AT_BOUNDARY and 0= if ." *MID-INSN* " then
@@ -271,7 +336,7 @@ SSP_CTRL_ESC_BREAK_EN
 
 \ ---- G : go ---------------------------------------------------------------------
 \ Print and drain BEFORE the CTRL writes: once console_own drops the monitor's
-\ TX is no longer on the pin (R25/R26).  Register recipe: SSP_HANDOFF 2/Step 1.
+\ TX is no longer on the pin (R25/R26).  Register recipe: SSP_STATUS App. A.3 Step 1.
 : m-go ( -- )
   m-spaces m-getc 0= if                         \ G : continue
     m-need-park 0= if exit then
@@ -298,14 +363,16 @@ SSP_CTRL_ESC_BREAK_EN
   ." I AAAA       INPUT: READ Z80 I/O PORT" cr
   ." O AAAA DD    OUTPUT: WRITE Z80 I/O PORT" cr
   ." MAP          MMU FRAMES: LOGICAL -> PHYSICAL" cr
+  ." S [N]        SINGLE-STEP N (INT HELD OFF; CR=REPEAT, KEY=BREAK)" cr
   ." PHY / LOG    ADDRESS MODE (PHYSICAL E/D PENDING M3)" cr
   ." F             FORTH" cr ;
 : m-ch ( c -- f )  m-getc 32 or = dup if m-adv then ;   \ exact letter, CI
 : m-tail-hy ( -- f )  104 m-ch if 121 m-ch exit else false then ;
 : m-tail-og ( -- f )  111 m-ch if 103 m-ch exit else false then ;
 : m-cmd ( -- )
-  m-spaces m-getc dup 0= if drop exit then
+  m-spaces m-getc dup 0= if drop m-repeat exit then   \ bare CR: repeat S
   m-adv 32 or
+  dup 115 <> if 0 m-stepn ! then              \ any other command forgets S
   dup 101 = if drop m-examine exit then       \ e
   dup 100 = if drop m-deposit exit then       \ d
   dup 103 = if drop m-go exit then            \ g
@@ -313,13 +380,13 @@ SSP_CTRL_ESC_BREAK_EN
   dup 105 = if drop m-port-r exit then        \ i
   dup 111 = if drop m-port-w exit then        \ o
   dup 109 = if drop m-map exit then           \ m
+  dup 115 = if drop m-step exit then          \ s
   dup 112 = if drop m-tail-hy if m-phy exit else m-q exit then then  \ p-h-y
   dup 108 = if drop m-tail-og if m-log exit else m-q exit then then  \ l-o-g
   dup 102 = if drop 2 m-state ! exit then     \ f
   dup 63 = over 104 = or if drop m-help exit then   \ ? h
   drop m-q ;
 : m-banner ( -- )  col-output cr ." MRZ80 SSP MONITOR  ? = HELP" cr col-reset ;
-: m-console? ( -- f )  SSP_STATUS @ SSP_STATUS_FW_CONSOLE_OK and ;
 
 : mon ( -- )
   begin

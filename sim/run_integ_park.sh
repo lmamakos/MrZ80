@@ -2,6 +2,7 @@
 # run_integ_park.sh - R-40: every SSP park lands on an instruction boundary,
 # on the real T80s (sim/tb_integ_park.vhd + sim/tb_integ_park.asm).
 # Exits non-zero on any failure.
+#   STEP_OBSERVE=false  the R39 "no BusAck-drop observe" mutant (must FAIL)
 #   T80_DIR=<dir>   use T80 sources from <dir> instead of Components/Z80
 #                   (mutation testing: a copy with a broken freeze gate)
 set -euo pipefail
@@ -31,4 +32,4 @@ done
 ghdl -e "${GHDL_FLAGS[@]}" tb_integ_park
 ghdl -r "${GHDL_FLAGS[@]}" tb_integ_park --assert-level=failure --ieee-asserts=disable \
     -gBIN="$WORKDIR/integ_park.bin" -gTRG_EI="$TRG_EI" -gTRG_BLK="$TRG_BLK" \
-    -gTRG_DDC="$TRG_DDC" -gEND_PC="$END_PC" -gINIT_PC="$INIT_PC" --stop-time=2000ms
+    -gTRG_DDC="$TRG_DDC" -gEND_PC="$END_PC" -gINIT_PC="$INIT_PC" -gSTEP_OBSERVE="${STEP_OBSERVE:-true}" --stop-time=2000ms

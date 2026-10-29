@@ -133,6 +133,7 @@ architecture sim of tb_integ_core is
     signal p_bram_wren : std_logic;
 
     signal done_flag : std_logic := '0';
+    signal int_hold  : std_logic := '0';   -- R39: ssp_int_hold into the core
 
 begin
 
@@ -172,7 +173,8 @@ begin
             ssp_eng_rd_n => e_rd_n, ssp_eng_wr_n => e_wr_n, ssp_eng_m1_n => e_m1_n,
             ssp_eng_mrd_t1 => e_mrd_t1,
             ssp_cpu_cen => s_cen, ssp_cpu_din => s_din, ssp_cpu_wait_n => s_wait_n,
-            ssp_busack_n => s_busack_n, ssp_halt_n => s_halt_n, ssp_m1_n => s_m1_n);
+            ssp_busack_n => s_busack_n, ssp_halt_n => s_halt_n, ssp_m1_n => s_m1_n,
+            ssp_int_hold => int_hold);
 
     cdc : entity work.sdram_cdc_fake(sim)
         port map (clk_sys => clk_sys, clk_ram => clk_ram,
@@ -480,6 +482,30 @@ begin
         check(nbursts >= 20, "a meaningful number of parks");
         check(nsdr_w > 5 and nsdr_rd > 5 and nbram_w > 5 and ndirect > 2 and nmmu > 2,
               "every engine op class was exercised");
+
+        -- R39: the step INT mask, through the REAL gate.  n_INT is tied inactive in
+        -- the core, so force it active from here (the guest has already halted) and
+        -- watch n_INT_ssp, the T80's INT input: held inactive while ssp_int_hold = 1,
+        -- following n_INT otherwise.  Polarity bugs (review B1) show up here.
+        report "INT gate: ssp_int_hold masks n_INT at the T80";
+        check(<< signal .tb_integ_core.dut.n_INT_ssp : std_logic >> = '1',
+              "INT gate: inactive with no source");
+        << signal .tb_integ_core.dut.n_INT : std_logic >> <= force '0';
+        clks(2);
+        check(<< signal .tb_integ_core.dut.n_INT_ssp : std_logic >> = '0',
+              "INT gate: active source passes through with ssp_int_hold = 0");
+        int_hold <= '1';
+        clks(2);
+        check(<< signal .tb_integ_core.dut.n_INT_ssp : std_logic >> = '1',
+              "INT gate: ssp_int_hold = 1 holds the T80 INT inactive over an active source");
+        int_hold <= '0';
+        clks(2);
+        check(<< signal .tb_integ_core.dut.n_INT_ssp : std_logic >> = '0',
+              "INT gate: source passes again after the hold drops");
+        << signal .tb_integ_core.dut.n_INT : std_logic >> <= release;
+        clks(2);
+        check(<< signal .tb_integ_core.dut.n_INT_ssp : std_logic >> = '1',
+              "INT gate: inactive after the force is released");
 
         if cnt.errors = 0 then
             report "tb_integ_core: ALL " & integer'image(cnt.checks) & " CHECKS PASSED";

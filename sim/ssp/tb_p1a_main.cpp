@@ -16,6 +16,13 @@
 //             2 (monitor): TX quiet for +QUIET=<n> cycles since the CR / the
 //               last TX byte (the monitor's commands are much faster than
 //               its serial output).
+//           In-band 0x02 marker (R39): the byte AFTER it is an "eager key": it
+//           bypasses the line-wait quiet gate and goes out once +BRKTX=<n>
+//           (default 150) TX bytes have been printed since the last CR --
+//           i.e. in the middle of a long monitor output such as an S n trace
+//           (TX is never quiet there, so a plain byte would only arrive after
+//           the trace ended).  The key then counts as a line end, so the
+//           next input waits for the monitor to go quiet again.
 // Exit codes: 0 normal, 3 nothing ever transmitted (boot dead),
 //             1 counted bus/rom-illegal errors (after dump).
 
@@ -48,6 +55,9 @@ static long long g_line_cr = -1;     // cycle the last CR went out (linewait)
 static bool      g_line_ok = false;  // "ok." seen since that CR
 static long long g_line_to = 8000000;
 static int       g_tx_hist = 0;      // last three TX bytes
+static bool      g_eager = false;    // next byte is an eager key (0x02 marker)
+static long      g_cr_tx = 0;        // TX byte count when the last CR went out
+static long      g_brktx = 150;
 static unsigned char g_buf[4096];
 static int g_b0 = 0, g_bn = 0;
 
@@ -89,7 +99,24 @@ extern "C" int tb_rx_poll(void) {
     // search, ~50k cycles) before the next escape, so a late-executing
     // line cannot overwrite the escape's hardware hand-over.
     if (g_cycle < g_pause_until) return -1;
-    if (g_line_cr >= 0) {
+    // eager-key marker: needs a peek at the input before the line gate
+    if (g_line_cr >= 0 && !g_eager && g_b0 == g_bn) {
+        g_b0 = g_bn = 0;
+        while (!g_eof) {
+            ssize_t n = read(0, g_buf + g_bn, sizeof(g_buf) - g_bn);
+            if (n > 0) { g_bn += (int)n; if ((size_t)g_bn == sizeof(g_buf)) break; continue; }
+            if (n == 0) g_eof = true;
+            break;
+        }
+    }
+    if (g_line_cr >= 0 && !g_eager && g_b0 < g_bn && g_buf[g_b0] == 0x02) {
+        g_b0++;  g_eager = true;
+        if (g_b0 == g_bn) g_b0 = g_bn = 0;
+    }
+    if (g_eager && g_line_cr >= 0) {
+        if (g_tx_bytes < g_cr_tx + g_brktx) return -1;
+        g_line_cr = -1;
+    } else if (g_line_cr >= 0) {
         if (g_linewait == 2) {
             long long since = g_last_tx > g_line_cr ? g_last_tx : g_line_cr;
             if (g_cycle < since + g_quiet) return -1;
@@ -138,7 +165,14 @@ extern "C" int tb_rx_poll(void) {
     }
     g_rx_bytes++;
     g_last_rx = g_cycle;
-    if (g_linewait && c == 0x0D) { g_line_cr = g_cycle; g_line_ok = false; }
+    if (g_eager) {                          // eager key: counts as a line end
+        g_eager = false;
+        g_line_cr = g_cycle;  g_line_ok = false;  g_cr_tx = g_tx_bytes;
+        return c;
+    }
+    if (g_linewait && c == 0x0D) {
+        g_line_cr = g_cycle; g_line_ok = false; g_cr_tx = g_tx_bytes;
+    }
     return c;
 }
 
@@ -163,6 +197,7 @@ int main(int argc, char **argv) {
     g_quiet = plusarg_ll("+QUIET=", 100000);
     g_linewait = (int)plusarg_ll("+LINEWAIT=", 0);
     g_line_to = plusarg_ll("+LINETO=", 8000000);
+    g_brktx = plusarg_ll("+BRKTX=", 150);
 
     struct termios tio_save;
     bool tty = isatty(0);

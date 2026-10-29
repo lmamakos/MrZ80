@@ -47,6 +47,15 @@ module ssp_p1a_top (
         if ($value$plusargs("OM=%d", v))    om = v[0];
     end
     wire inject_wait = $test$plusargs("WAIT");
+    // R39 step-timeout test (z80_bfm.v): after +STEPHANG=<n> grants, refuse
+    // to re-park for +STEPHANG_CLKS=<c> clocks
+    reg [31:0] stephang_n, stephang_clks;
+    initial begin
+        int v;
+        stephang_n = 32'd0;  stephang_clks = 32'd0;
+        if ($value$plusargs("STEPHANG=%d", v))      stephang_n = v;
+        if ($value$plusargs("STEPHANG_CLKS=%d", v)) stephang_clks = v;
+    end
     wire no_guest    = $test$plusargs("NOGUEST");
 
     // ---- rv_rst_n hatch exercise (+RVRST) ----------------------------------
@@ -106,7 +115,9 @@ module ssp_p1a_top (
     // undriven (0) line whenever the monitor does not own the console.
     assign guest_txd = 1'b1;
 
-    ssp_top u_dut (
+    // R39: a 1M-clock (20 ms) step watchdog instead of 20M, so the timeout path
+    // runs in a short simulation (a real step is ~30 clocks)
+    ssp_top #(.STEP_TIMEOUT_T(25'd1_000_000)) u_dut (
         .clk (clk), .rst_n (rst_n),
         .osd_ok (osd_ok), .osd_esc_en (om),
         .esc_disable (1'b0), .panel_stop (1'b0),
@@ -118,7 +129,7 @@ module ssp_p1a_top (
         .z_would_boundary (would_boundary), .t80_reg (t80_reg),
         .z_busrq_n (z_busrq_n), .z_reset_n (z_reset_n),
         .z_wait_n (z_wait_n), .z_cen_gate (z_cen_gate),
-        .freeze_any (freeze_any),
+        .freeze_any (freeze_any), .int_hold (/*R39: no CPM INT gate in P1a*/),
         .tramp_arm (tramp_arm), .tramp_target (tramp_target),
         .tramp_done (tramp_done),
         .eng_own (eng_own), .eng_addr (eng_addr), .eng_dout (eng_dout),
@@ -145,7 +156,8 @@ module ssp_p1a_top (
         .busack_n (z_busack_n),
         .would_boundary (would_boundary),
         .t80_reg (t80_reg),
-        .m1_n (z_m1_n),
+        .m1_n (z_m1_n), .halt_n (z_halt_n),
+        .hang_n (stephang_n), .hang_clks (stephang_clks),
         .cpu_addr (cpu_addr_bfm), .cpu_din (cpu_din_bfm),
         .cpu_wait_n (cpu_wait_n_bfm),
         .eng_own (eng_own), .eng_addr (eng_addr), .eng_dout (eng_dout),
@@ -323,6 +335,33 @@ module ssp_p1a_top (
                 $display("[p1a-eng]%s", eng_line);
                 eng_line = "";  eng_in = 1'b0;
             end
+        end
+    end
+    // R39 single-step trace (events log; the p1a smoke Part F oracles).
+    //   kick    : the bridge armed a step (N, MODE as written)
+    //   regrant : BusAck came back; fetches = guest fetch cycles since the
+    //             release (0 would be a zero-instruction step), pc = parked PC
+    //   int_hold: the CPM INT-gate request (must frame the whole sequence)
+    //   timeout : a phase watchdog expired (STEP_ERR)
+    reg        ibusack_q, ihold_q;
+    reg [31:0] fetch_at_rel;
+    always @(posedge clk) begin
+        ibusack_q <= z_busack_n;
+        ihold_q   <= u_dut.int_hold;
+        if (rst_n) begin
+            if (u_dut.u_bridge.step_go)
+                $display("[p1a-step @%0d] kick N=%0d MODE=%0d", tb_cycle,
+                         u_dut.u_bridge.step_ctl[8:0], u_dut.u_bridge.step_ctl[10:9]);
+            if (z_busack_n && !ibusack_q) fetch_at_rel <= fetch_count;
+            if (u_dut.u_bridge.step_busy && !z_busack_n && ibusack_q)
+                $display("[p1a-step @%0d] regrant fetches=%0d pc=%04x", tb_cycle,
+                         fetch_count - fetch_at_rel, t80_reg[79:64]);
+            if (u_dut.int_hold != ihold_q)
+                $display("[p1a-step @%0d] int_hold -> %b (step_busy=%b parked=%b)", tb_cycle,
+                         u_dut.int_hold, u_dut.u_bridge.step_busy, parked_dbg);
+            if (u_dut.u_bridge.step_to_err)
+                $display("[p1a-step @%0d] timeout (step_st=%0d)", tb_cycle,
+                         u_dut.u_bridge.step_st);
         end
     end
     // R30: WDG_PARK expiry (park held ~0.4 s with no WDG_PARK_KICK from the FW)
