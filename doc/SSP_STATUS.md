@@ -1,8 +1,8 @@
 # SSP_STATUS — state, plans and hand-off for the System Support Processor
 
-Updated: **2026-10-29 (round R39 committed locally)** · Branch `r24-p1b`, one
-commit ahead of `33d6127` (= `main` = `origin/main`; not pushed) · Phase
-**P1b**; M4 (single-step) done in simulation, **M3 is next**.
+Updated: **2026-10-29 (round R40, uncommitted)** · Branch `r24-p1b`, R39 committed
+locally (`30aed3a`, not pushed); R40 (M3) in the tree · Phase **P1b**; M4 and M3
+done in simulation, both await the owner's hardware check.
 
 ## 0. How to use the SSP documents
 
@@ -37,7 +37,7 @@ Planning documents are not kept outside `doc/`.
 | P1b M1 (R37) | Done: monitor `I`/`O`/`MAP`/`PHY`/`LOG` + colour stubs; port I/O independent of address mode; smoke Part E |
 | P1b M2 | **Shelved R38**: direct MMU frame taps + `MAP_CHANGED` IRQ (regmap slots reserved, read 0) |
 | P1b M4 single-step (R39) | Done in simulation (details: `SSP_DESIGN.md` §17 R39); needs the owner's hardware check (§2) |
-| **P1b M3 physical memory client** | **Next** (§3); log entry R40, smoke Part G |
+| P1b M3 physical memory client (R40) | Done in simulation (details: `SSP_DESIGN.md` §9.2 "as landed", §17 R40); Quartus synth OK; full compile + hardware check pending (§3) |
 
 ### 1.2 What is on hardware
 
@@ -62,8 +62,9 @@ committed factory ROM (`ssp/fw/forth_rom.mif`) is current through R39.
 
 - **WDG_PARK expiry** only latches `park_dead_l`; D-13 says it also demotes
   the console and releases the firmware hold. Awaiting an owner ruling (§5).
-- Physical (28-bit) examine/deposit: the monitor refuses with
-  `PHYSICAL E/D PENDING M3` until M3 lands.
+- Physical examine/deposit works on the SDRAM window only (§3); the monitor
+  UX for it (modal PHY/LOG vs per-command verbs) is deliberately still open
+  (OQ-24).
 
 ### 1.5 Baseline: what exists and where
 
@@ -74,7 +75,7 @@ committed factory ROM (`ssp/fw/forth_rom.mif`) is current through R39.
 | SSP RTL | `ssp_top.v` (core + MROM/RV RAM + decoder + bridge + UART + console mux), `ssp_bridge.v` (register file, park controller, D-30 sequencer for FW mem/IO kicks, WDG×2, `TICK_US`, R39 step sequencer), `ssp_uart.v` (8N1, 128-byte RX FIFO, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` and `ssp_tramp.vhd` (instantiated in the CPM core since R33) |
 | T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + boundary park gate (BusAck only when the next state is M1; prefix-gated). Wired since R33: `n_BUSRQ <= ssp_busrq_n`; `FREEZE_req_n` is a dead port (R28 finding). With the SSP idle the core is unchanged (P-B) |
 | GHDL integration benches | `integ-park` (R-40: every park on an instruction boundary vs an unparked reference), `integ-mux` (R-42: mux + real T80 + engine model), `integ-core` (R-42 against the real SDRAM/BRAM/MMU fabric), `cycle-golden` + `engine-golden` (engine strobes == real T80, per T-state; committed `sim/ssp/golden_cycles.txt`), `tramp` (`G aaaa` vs the real T80, 176 checks) |
-| Verilator lanes | `p1a`: real `ssp_top` + behavioural Z80 (`sim/ssp/z80_bfm.v`, no FREEZE-gate model) + pin-level serial; `smoke-p1a` Parts A–F; `tramp-p1a`; `uart-fifo` |
+| Verilator lanes | `p1a`: real `ssp_top` + behavioural Z80 (`sim/ssp/z80_bfm.v`, T80-contract model since R39) + pin-level serial + a mock physical client (R40); `smoke-p1a` Parts A–G; `tramp-p1a`; `uart-fifo` |
 | Hygiene | Build dirs and waveform dumps untracked and ignored. History was purged once (R26; old→new hashes `513a539`→`9ef7346`, `ba6cc92`→`d3a8b33`, `07a4ee9`→`12ad50b`) |
 
 ---
@@ -101,7 +102,7 @@ simulation: real INT sources (none exist yet), real clock-tick masking.
 | `sim/tb_integ_park.vhd` `step_once`/`step_window` | bridge-exact step sequence on the real T80; `STEP_OBSERVE=false sim/run_integ_park.sh` is the no-observe mutant |
 | `sim/tb_integ_core.vhd` INT-gate block | forces `n_INT` via external name, watches `n_INT_ssp` |
 | `make -C sim seam-check` (`sim/check_seam.py`) | `MrZ80.sv` seam wiring; run after any top-level or port change |
-| `PARTS=F sim/ssp/p1a_smoke.sh` | run selected smoke parts only (default `ABCDEF`; add `G` for M3) |
+| `PARTS=F sim/ssp/p1a_smoke.sh` | run selected smoke parts only (default `ABCDEFG`) |
 | `z80_bfm.v` T80-contract model | cen-sampled request, release ends boundary, `halt_n`, `+STEPHANG=<n> +STEPHANG_CLKS=<c>` |
 | harness `0x02` eager key, `+BRKTX=<n>` | send a key mid-output |
 | `[p1a-step]` events (`p1a_sim_top.v`) | kick / regrant (fetches, pc) / int_hold edges / timeout |
@@ -126,161 +127,46 @@ simulation: real INT sources (none exist yet), real clock-tick masking.
 
 ---
 
-## 3. Next — M3: parked physical memory client (`ssp_mem_client`)
+## 3. M3 physical memory client (R40): done, awaiting hardware
 
-Status: not started; plan written 2026-10-28, owner-approved design (`SSP_DESIGN.md` D-15-P, §9.2 with the R35 revision: SDRAM window only, BRAM page 8192 rejected `?`). Round number for its log entry: **R40**. M4 also edits `ssp_bridge.v`, so step 3 builds on the committed M4 bridge.
+Spec `SSP_DESIGN.md` §9.2 ("as landed (R40)"), results and mutation outcomes in
+§17 R40. SDRAM window only (phys 0000000..7FFFFFF); the block-RAM page is
+rejected; `z80_bus_mux` untouched. **Owner ruling (R40): the monitor UX stays
+open** -- modal `PHY`/`LOG` (current) or explicit per-command verbs (OQ-24). The
+FW isolates the choice behind `m-pa`/`m-amask`/`m-a.`/`m-arg-a`/`m-next@`/
+`m-next!` (`monitor.fs`, PHY/LOG section); a verb UX changes only where `m-pa`
+and `MD` come from. RTL needs no change either way.
 
-### 3.1 Goal
+### 3.1 Owner action: synthesis and hardware check
 
-Give the SSP monitor **physical (28-bit) examine/deposit** (D-15-P, §9.2 of
-`doc/SSP_DESIGN.md`), per owner ruling R35-rev: **SDRAM physical window only**
-(pages 0..8191 = phys 0x0000_0000..0x07FF_FFFF). Physical ops to page 8192
-(BRAM at 0x0800_0000) are **rejected `?`**; BRAM stays logically reachable only.
-`MD`/`AR`/`DR` regs and the modal `PHY`/`LOG` verbs already exist (R37); R37's
-MD-physical *reject* branch becomes a *route* to the new client.
+`tools/build.sh` (full compile: Analysis & Synthesis already passed at R40,
+place & route and timing not yet run), then `make install`. On the board: escape,
+`PHY`, `E 0 20` (physical SDRAM contents), `D`/`E` round trip at some address
+(e.g. `D 1000`, `E 1000 4`), `E 08000000` -> `?`, `LOG` and compare against the
+Z80's logical view through `MAP` (a frame's phys base + offset must show the
+same bytes logically and physically). While the Z80 runs (before the escape)
+nothing changes: the client is silent unless parked.
 
-**Architecture invariant (R35-rev/R38 + owner sign-off 2026-10-28): `z80_bus_mux`
-is NOT touched.** It has exactly two masters (T80, cycle-faithful engine).
-Physical traffic bypasses the mux AND the MMU, landing at the SDRAM client
-interface downstream. Exclusivity is inherited: all SSP ops are parked-only and
-the bridge serializes to one outstanding op, so client vs engine vs primary-CPU
-SDRAM traffic cannot co-occur. `tb_integ_mux` + `cycle-golden` re-run UNMODIFIED
-are the standing proof that Z80 cycle timing is unaffected.
+### 3.2 What was added (reuse)
 
-### 3.2 Memory map facts
+| Item | Use |
+|---|---|
+| `ssp/rtl/ssp_mem_client.vhd` | the client; generics `ADMIT_TO`, `OP_TO`, `GAP`; in `MrZ80.qsf` |
+| `make -C sim mem-client` (`sim/tb_mem_client.vhd`) | unit bench; `CLIENT=<file> sim/run_mem_client.sh` for mutants |
+| `tb_integ_core` physical ops | real fabric + CDC model; aliases phys 0800+ad with logical C800+ad |
+| p1a mock client (`p1a_sim_top.v`) | `+PHDELAY=n`; `ph=N(addr,data) phe=E` on the `[p1a] done:` line |
+| smoke Part G (`PARTS=G`) | physical E/D, window, stalls, watchdog |
 
-- phys = page << 14; page 14 bits. SDRAM = pages 0..8191 (128 MiB => addr[27]=0;
-  CPM entity `sdram_addr` is 27 bits = phys[26:0]).
-- BRAM page 8192 => phys bit 27 set (`0x0800_0000`) — window check rejects it.
-- CPM SDRAM client ports (`MicrocomputerZ80CPM.vhd` ~L86-91):
-  `sdram_addr(26:0)`, `sdram_din(7:0)`, `sdram_we`, `sdram_rd` out;
-  `sdram_dout(7:0)`, `sdram_ready` in. Byte lane via addr[0] handled at the
-  controller layer (`MrZ80.sv`: `sdram2.sv` sdram_32r8w @ clk_ram ~112 MHz,
-  `sdram_*_mux` signals, `sdram_ready_mux` = 1-clk clk_sys completion pulse).
-  Byte-write fidelity is inherited from the proven primary path; no new DQM logic.
-- Primary client FSM lives inside CPM: `sdram_state_t = (S_IDLE, S_REQ, S_HOLD,
-  S_DONE, S_WPOST, S_GAP)` (signals `sdram_addr_r`, `sdram_din_r`,
-  `sdram_we_reg`, `sdram_rd_reg`, `sdram_wait_n`, speculative reads).
-  Client protocol to mirror: hold request level stable until ready pulse; GAP
-  between transactions; ready is stall-tolerant (refresh).
+### 3.3 Known limitations
 
-### 3.3 Step 1 — unit RTL + GHDL bench (first session; self-contained)
-
-New `ssp/rtl/ssp_mem_client.vhd` (VHDL per D-33 language seam). Entity sketch:
-
-    clk, rst_n                          -- clk_sys domain
-    -- bridge seam (via ssp_top pins, plain signals)
-    ph_req   : in  std_logic;          -- level or pulse; decide+document (recommend level, held until done/err, self-timed out by bridge)
-    ph_we    : in  std_logic;
-    ph_addr  : in  std_logic_vector(27 downto 0);
-    ph_wdata : in  std_logic_vector(7 downto 0);
-    ph_done  : out std_logic;         -- 1-clk pulse
-    ph_err   : out std_logic;         -- 1-clk pulse with done on reject/timeout-assist
-    ph_rdata : out std_logic_vector(7 downto 0);
-    -- park + primary-idle gates (from CPM fabric)
-    parked   : in  std_logic;         -- busrq asserted AND busack confirmed
-    prim_idle: in  std_logic;         -- sdram_state = S_IDLE
-    -- borrowed SDRAM client wiring
-    c_addr   : out std_logic_vector(26 downto 0);
-    c_din    : out std_logic_vector(7 downto 0);
-    c_we     : out std_logic;
-    c_rd     : out std_logic;
-    c_dout   : in  std_logic_vector(7 downto 0);
-    c_ready  : in  std_logic;
-    borrow   : out std_logic;        -- select for the CPM-layer port muxes
-
-Mini-FSM: IDLE -> (admit: ph_req ∧ parked ∧ prim_idle ∧ idle) -> check
-`ph_addr(27)='1'` (page >= 8192) => ERR pulse, zero bus activity; else
-REQ (drive addr/din/we|rd via borrow mux) -> HOLD (wait c_ready, stall-ok) ->
-DONE (capture dout on read; pulse ph_done) -> GAP (1-2 clks) -> IDLE.
-Abort on rst_n. `ph_req` released only when bridge sees done/err (bridge owns
-timeout; client may add a generous counter as defense-in-depth).
-
-New `sim/tb_mem_client.vhd` + `sim/run_mem_client.sh` + Makefile target
-`mem-client` (pattern-match `run_integ_*.sh`). Bench drives the seam + a mock
-SDRAM controller (random-ready backpressure, addr/data pattern oracle) and the
-parked/prim_idle gates. R-27 **minus BRAM legs** check list:
-1. parked read/write byte fidelity, randomized addrs (SDRAM window incl. odd
-   byte addresses) vs oracle -> ph_rdata / controller-captured data exact.
-2. **zero bus activity while Z80 runs**: parked='0' blocks every attempt;
-   c_we/c_rd/c_addr quiescent. (Hard assertion, the R-27 headline.)
-3. admission reject: prim_idle='0' -> ph_err, no wire activity.
-4. page-8192 (and addr[27]=1 generally) reject -> ph_err, zero activity.
-5. refresh-stall tolerance: ready stretched N cycles mid-transaction -> completes.
-6. back-to-back ops: GAP honored; no merged/glued transactions; AR semantics stay
-   (each op gets its own req).
-7. abort-on-reset mid-HOLD: port released, no ph_done after reset, re-admit ok.
-8. mutual-exclusion assertions: never (primary we/rd asserted) AND (client
-   we/rd asserted); borrow only toggles when both sides idle.
-9. err/done pulse widths = 1 clk_sys; ph_rdata valid only with done.
-Mutation-test the bench (e.g. kill the parked gate -> check 2 dies; kill window
-check -> check 4 dies) — same discipline as R-37 Part E.
-
-### 3.4 Step 2 — fabric integration (CPM layer borrow)
-
-- `MicrocomputerZ80CPM.vhd`: new entity seam ports **with defaults**
-  (`ph_req/we <= '0'`, addr/data zero, `ph_done/err/rdata` outs) so every
-  existing instantiation/wrapper compiles untouched; instantiate
-  `ssp_mem_client`; drive `parked`/`prim_idle` from existing nets (busack/busrq
-  + `sdram_state`); the ONLY other change: 2:1 borrow select on the four output
-  drivers (sdram_addr/din/we/rd = borrow ? client : primary FSM regs) and
-  steering of dout/ready back to the client. Select cannot toggle mid-transaction
-  by construction (assert it).
-- `sim/MicrocomputerZ80CPM_sim.vhd`: sync after the entity change
-  (`sim/check_sync.sh` must pass).
-- `MrZ80.sv`: wire `ssp_top` <-> CPM seam pins (same place Z80 nets connect).
-- Re-run ALL existing GHDL lanes unmodified-in-intent: sync, tramp, integ-park,
-  integ-mux, integ-core, cycle-golden -> all green BEFORE touching the bridge.
-
-### 3.5 Step 3 — bridge physical branch (Verilator side)
-
-- `ssp/rtl/ssp_bridge.v`: R37 branch `if (!park_act || (md_phys && !kick_isio))
-  eng_err` -> route: `MD=1 ∧ !IS_IO` kick emits ph_req/ph_we/ph_addr(AR[27:0])/
-  ph_wdata; SEQ_BUSY held until ph_done; ph_err or stall-timeout -> ENGINE_ERR;
-  read result -> MEM_DATA; new `ENG_STAT.LAST_OP` codes (propose 4'd8=PH_RD,
-  4'd9=PH_WR — confirm no CSV collision, document in CSV field text). I/O
-  exemption unchanged.
-- `ssp/rtl/ssp_top.v`: pass-through seam pins.
-- CSV (`ssp/regs/ssp_regs.csv`): MD description "rejects MEMORY kicks" ->
-  "routes MEMORY kicks to parked physical client (M3)"; MEM_CTL/ENG_STAT text +
-  `make -C sim regmap` + regmap-check.
-- `sim/ssp/p1a_sim_top.v` + `tb_p1a_main.cpp`: mock client (instant-response
-  default, `+PHDELAY=n` stretch, oracle pattern on physical addr e.g.
-  addr^addr[15:8]-ish — define and reuse, page-8192 -> err; surface counters on
-  the `[p1a] done:` line: `ph=N(aa,dd)` like io_wr).
-- New **Part G** in `sim/ssp/p1a_smoke.sh` (Part F is M4's): `PHY` then physical `E aaaaaaaa N` /
-  `D` vs mock oracle, page-8192 `E 08000000` -> `?`, stall case via +PHDELAY,
-  error reporting; I/O + MAP still work in PHYSICAL (already true since R37).
-
-### 3.6 Step 4 — FW + ROM
-
-- `ssp/fw/apps/monitor.fs`: retire `PHYSICAL E/D PENDING M3` refusal
-  (`m-phystest`); with MD=1, `E`/`D` parse up to 8 hex digits (drop the `$FFFF`
-  mask mode-conditionally; AR keeps 28 bits), examine lines print 8-digit phys
-  (word `m-h7` exists), row wrap at 2^28 not 2^16, page-8192 pre-check -> `?`
-  (defensive; RTL also rejects). Update `PHY` msg text + help string. `MAP` can
-  cross-check one physical read per frame (optional flourish — keep cheap).
-- OQ-24 (explicit PE/PD verbs) stays OPEN — modal surface only; owner letter
-  lands at the ODT pass, no RTL impact either way.
-- Regenerate factory ROM: `make -C sim fw-rom` (recommit `ssp/fw/forth_rom.mif`
-  — recommit-on-FW-change rule).
-
-### 3.7 Step 5 — regression, docs, commit
-
-Full sweep: regmap-check, lint-ssp, p1a, dict-p1a, smoke-p1a (A-G), tramp-p1a,
-uart-fifo, GHDL sync + tramp + integ-park + integ-mux + integ-core +
-cycle-golden + mem-client. Docs: `SSP_DESIGN.md` §9.2 rewritten to what actually landed
-(P1 minus BRAM leg), §17 entry **R40**, this file (§1 milestone table; §4 backlog). Open owner items to keep visible: OQ-24 letters, WDG_PARK
-expiry semantics, OQ-10/OQ-18.
-
-### 3.8 Key references
-
-- `doc/SSP_DESIGN.md`: D-15/D-15-P (decision table), §9.1 (parked-only ops),
-  §9.2 (physical path, R35-rev tag), R-27 (acceptance), R37/R38 log entries.
-- `doc/SSP_STATUS.md` §4 (backlog context for M3).
-- R37 precedents to reuse: m-wait ENG_STAT error check in `monitor.fs`;
-  Part E structure in `p1a_smoke.sh`; dbg counters pattern in `p1a_sim_top.v`
-  (widen 8-bit signals explicitly for Verilator -Wall: `{24'd0, sig}`).
+- BRAM page (phys 08000000+) is not reachable physically (owner ruling R35);
+  reach it logically.
+- Parked physical access only; no background reads (`ssp_sd` is P2).
+- `E`/`D` ranges that cross 7FFFFFF stop with `RD ERR`/`WR ERR` (the client's
+  reject), not a pre-check.
+- A sovereignty loss (RV reset, WDG_RUN) mid-op lets the in-flight SDRAM
+  transaction finish while the Z80 is released; the op is reported as an error.
+  Accepted: it needs a fault during a ~1 us window.
 
 ---
 
@@ -288,7 +174,7 @@ expiry semantics, OQ-10/OQ-18.
 
 Owner priorities from P1a first light (R35), with status:
 
-- **(a)** Physical 28-bit examine/deposit → M3 (§3).
+- **(a)** Physical 28-bit examine/deposit → **done** (M3, R40): SDRAM window only.
 - **(b)** Z80 I/O port commands → **done** (M1, R37).
 - **(c)** MMU inspection → **done**: `MAP` reads the `$B0..$BF` engine path,
   permanent per R38 (direct frame taps and `MAP_CHANGED` shelved; regmap

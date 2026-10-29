@@ -111,6 +111,17 @@ module ssp_bridge #(
     output reg         eng_m1_n,       // engine cycles are never M1 (D-26)
     output reg         eng_mrd_t1,     // speculative-read trigger, T1 reads
 
+    // ---------------- parked physical memory client (M3, R40) ---------------
+    // request level to ssp_mem_client at the CPM core: held until ph_done;
+    // the client rejects not-parked / page >= 8192 / admission timeout.
+    output reg         ph_req,
+    output reg         ph_we,
+    output reg  [27:0] ph_addr,
+    output reg  [7:0]  ph_wdata,
+    input  wire        ph_done,           // 1-clk: finished (or rejected)
+    input  wire        ph_err,            // with ph_done: failed
+    input  wire [7:0]  ph_rdata,
+
     // ---------------- console UART ------------------------------------------
     input  wire [15:0] baud_increment, // O9B table value (to uart direct)
     output wire        uart_en,
@@ -251,7 +262,7 @@ module ssp_bridge #(
     wire park_req   = (hold_fw | panel_stop) & ssp_active & rv_ctrl_ok
                       & ~step_busy;
     wire seq_busy;
-    wire busrq_keep = (park_req | step_busy | (eng_own & ssp_active))
+    wire busrq_keep = (park_req | step_busy | ((eng_own | ph_req) & ssp_active))
                       & rv_ctrl_ok;
 
     // ------------------------------------------------ watchdogs (D-13) -----
@@ -431,13 +442,14 @@ module ssp_bridge #(
     reg  [7:0]  q_wdata;
     reg  [1:0]  st;                     // 0 IDLE, 1 T1, 2 T2, 3 T3
     reg  [7:0]  rd_cap;
-    reg  [3:0]  eng_stat_last_op;      // 1 rd 2 wr 3 io-rd 4 io-wr
+    reg  [3:0]  eng_stat_last_op;      // 1 rd 2 wr 3 io-rd 4 io-wr 8 ph-rd 9 ph-wr (M3)
+    reg  [21:0] ph_to;                 // bridge-side watchdog on a physical op
     reg         eng_err;               // sticky until ENG_STAT read
     reg  [27:0] ar_r;
     reg  [7:0]  dr_r, pr_r;
     reg         md_phys;
 
-    assign seq_busy = q_valid | (st != 2'd0);
+    assign seq_busy = q_valid | (st != 2'd0) | ph_req;
     wire kick     = wr_fire && (widx == `SSP_RIDX_MEM_CTL) && w[0];
     wire kick_rnw        = mem_wdata[1];
     wire kick_isio       = mem_wdata[2];
@@ -450,7 +462,8 @@ module ssp_bridge #(
     // linters flag the self-determined concat against the 28-bit LHS.
     // verilator lint_off WIDTHEXPAND
     wire [27:0] io_saddr  = { {16{1'b0}}, pr_r };       // PR = 8-bit port
-    wire [27:0] mem_saddr = { {12{1'b0}}, ar_r[15:0] };  // AR LOG16 mode
+    wire [27:0] mem_saddr = md_phys ? ar_r                // AR PHYS28 mode (M3)
+                                    : { {12{1'b0}}, ar_r[15:0] };  // AR LOG16 mode
     wire [27:0] sh_addr   = kick_isio ? io_saddr : mem_saddr;
     // verilator lint_on WIDTHEXPAND
     wire [27:0] kick_addr = kick_use_shared ? sh_addr : mem_addr_r;
@@ -468,22 +481,49 @@ module ssp_bridge #(
             eng_mreq_n <= 1'b1; eng_iorq_n <= 1'b1; eng_rd_n <= 1'b1;
             eng_wr_n <= 1'b1; eng_m1_n <= 1'b1; eng_mrd_t1 <= 1'b0;
             rd_cap <= 8'h00; eng_stat_last_op <= 4'd0; eng_err <= 1'b0;
+            ph_req <= 1'b0; ph_we <= 1'b0; ph_addr <= 28'd0; ph_wdata <= 8'd0;
+            ph_to <= 22'd0;
         end else begin
             // completion flag: read clears (CSV ENG_STAT), errors set below
             if (rd_fire && (widx == `SSP_RIDX_ENG_STAT)) eng_err <= 1'b0;
             // enqueue (one-deep macro queue; parked-only per 9.1).
-            // MD=physical rejects MEMORY kicks -- physical memory needs
-            // ssp_mem_client (P1b-M3, R-27).  I/O kicks are exempt: ports
-            // are never MMU-translated, so the addressing mode is moot (R37).
+            // MD=physical routes MEMORY kicks to the parked physical client
+            // (ssp_mem_client at the CPM core, M3/R40): one outstanding op,
+            // SEQ_BUSY until ph_done, ph_err (or the watchdog) -> ENGINE_ERR.
+            // I/O kicks are exempt: ports are never MMU-translated, so the
+            // addressing mode is moot (R37).  The client itself rejects
+            // page >= 8192 and a Z80 that is not parked.
             if (kick) begin
-                if (!park_act || (md_phys && !kick_isio)) eng_err <= 1'b1;
-                else if (q_valid || (st != 2'd0)) eng_err <= 1'b1;
-                else begin
+                if (!park_act) eng_err <= 1'b1;
+                else if (seq_busy) eng_err <= 1'b1;
+                else if (md_phys && !kick_isio) begin
+                    ph_req   <= 1'b1;
+                    ph_we    <= ~kick_rnw;
+                    ph_addr  <= kick_addr;
+                    ph_wdata <= kick_wdat;
+                    ph_to    <= 22'd0;
+                end else begin
                     q_valid <= 1'b1;
                     q_rnw   <= kick_rnw;
                     q_isio  <= kick_isio;
                     q_addr  <= kick_addr[15:0];
                     q_wdata <= kick_wdat;
+                end
+            end
+
+            // physical op completion (M3): ph_done is the client's 1-clk pulse
+            if (ph_req) begin
+                ph_to <= ph_to + 22'd1;
+                if (ph_done) begin
+                    ph_req <= 1'b0;
+                    if (ph_err) eng_err <= 1'b1;
+                    else begin
+                        if (!ph_we) rd_cap <= ph_rdata;
+                        eng_stat_last_op <= ph_we ? 4'd9 : 4'd8;
+                    end
+                end else if (ph_to == {22{1'b1}}) begin      // client never answered
+                    ph_req  <= 1'b0;
+                    eng_err <= 1'b1;
                 end
             end
 
@@ -530,7 +570,8 @@ module ssp_bridge #(
     // M1_n never asserted by the engine (cycles are never opcode fetches).
 
     wire mem_data_out_is_rdcap = (eng_stat_last_op == 4'd1)
-                              || (eng_stat_last_op == 4'd3);
+                              || (eng_stat_last_op == 4'd3)
+                              || (eng_stat_last_op == 4'd8);
     wire [7:0] mem_data_out = mem_data_out_is_rdcap ? rd_cap : mem_data_w;
 
     // ------------------------------------------------ IRQ ----------------

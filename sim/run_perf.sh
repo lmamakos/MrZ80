@@ -49,7 +49,7 @@ FILES=(
     Components/FRONTPANEL/FrontPanel_Subsystem.vhd
     Components/TIMER/BenchTimer.vhd
     ssp/rtl/z80_bus_mux.vhd
-    ssp/rtl/ssp_tramp.vhd
+    ssp/rtl/ssp_tramp.vhd ssp/rtl/ssp_mem_client.vhd
     sim/MicrocomputerZ80CPM_sim.vhd
     sim/sdram_cdc_fake.vhd
     sim/tb_sdram_perf.vhd

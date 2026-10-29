@@ -111,10 +111,10 @@ package ssp_regs_pkg is
     constant C_SSP_MEM_DATA       : natural := 536871036;  -- 0x2000007C RCW | read = captured byte (latched at strobe release); write = data-out
     constant C_SSP_MEM_DATA_DATA         : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_MD             : natural := 536871040;  -- 0x20000080 RCW | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 rejects MEMORY kicks (ENGINE_ERR) until the P1b-M3 physical path; I/O kicks unaffected (ports are unmapped)
+    constant C_SSP_MD             : natural := 536871040;  -- 0x20000080 RCW | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 routes MEMORY kicks to the parked physical client (ssp_mem_client, M3/R40): 28-bit address, SDRAM window only (page >= 8192 = phys bit 27 -> ENGINE_ERR), bypasses the MMU and z80_bus_mux; I/O kicks unaffected (ports are unmapped)
     constant C_SSP_MD_PHYS         : natural range 0 to 31 := 0;  -- field 0:0
 
-    constant C_SSP_AR             : natural := 536871044;  -- 0x20000084 RCW | shared address register (logical ops use low 16)
+    constant C_SSP_AR             : natural := 536871044;  -- 0x20000084 RCW | shared address register (logical ops use low 16; MD=1 uses all 28)
     constant C_SSP_AR_ADDR         : natural range 0 to 31 := 27;  -- field 27:0
 
     constant C_SSP_DR             : natural := 536871048;  -- 0x20000088 RCW | shared data register
@@ -123,7 +123,7 @@ package ssp_regs_pkg is
     constant C_SSP_PR             : natural := 536871052;  -- 0x2000008C RCW | shared I/O port register
     constant C_SSP_PR_PORT         : natural range 0 to 31 := 7;  -- field 7:0
 
-    constant C_SSP_ENG_STAT       : natural := 536871056;  -- 0x20000090 R | panel engine state; read clears completion
+    constant C_SSP_ENG_STAT       : natural := 536871056;  -- 0x20000090 R | panel engine state; read clears completion; LAST_OP 1=mem rd 2=mem wr 3=io rd 4=io wr 8=physical rd 9=physical wr (M3); ENGINE_ERR sticky until read: bad state, busy, physical reject/timeout
     constant C_SSP_ENG_STAT_LAST_OP      : natural range 0 to 31 := 3;  -- field 3:0
     constant C_SSP_ENG_STAT_AUTO_INC     : natural range 0 to 31 := 4;  -- field 4:4
     constant C_SSP_ENG_STAT_ENGINE_ERR   : natural range 0 to 31 := 5;  -- field 5:5

@@ -11,6 +11,7 @@
 //            +RVRST       OSD RV-reset hatch exercise: pulse rv_rst_n low
 //                         for ~1 ms at +RVRST_AT cycles (default 3_000_000)
 //            +NOGUEST     hold the guest in reset (SSP-alone debug)
+//            +PHDELAY=n   M3: stretch every physical-client op by n clocks
 //
 // Console pins are electrical: snac_rxd is serialized at the real O9B
 // 115200 rate (increment 2416 @ 50 MHz); snac_txd is deserialized at bit
@@ -29,7 +30,11 @@ module ssp_p1a_top (
     output wire [31:0] dbg_freeze_acc,       // park grants the guest CPU accepted
     output wire [31:0] dbg_io_wr_count,     // engine I/O writes seen by the BFM
     output wire [31:0] dbg_io_wr_port,
-    output wire [31:0] dbg_io_wr_data
+    output wire [31:0] dbg_io_wr_data,
+    output wire [31:0] dbg_ph_count,        // M3: physical ops completed ok
+    output wire [31:0] dbg_ph_errs,         // M3: physical ops answered with ph_err
+    output wire [31:0] dbg_ph_addr,         // last ok physical op
+    output wire [31:0] dbg_ph_data
 );
 
     import "DPI-C" function void tb_putc(int c);
@@ -115,6 +120,66 @@ module ssp_p1a_top (
     // undriven (0) line whenever the monitor does not own the console.
     assign guest_txd = 1'b1;
 
+    // ---- M3: behavioural twin of ssp_mem_client + the SDRAM behind it --------
+    // (the real client is verified in sim/tb_mem_client.vhd and, with the real
+    // fabric and CDC model, sim/tb_integ_core.vhd; this lane proves the bridge
+    // routing and the monitor).  A request level held until a 1-clk ph_done;
+    // not parked or addr[27] (page >= 8192) -> done+err and no memory access.
+    // Memory is sparse; unwritten bytes read as a pattern chosen to differ
+    // from the BFM's logical image (addr[7:0]^addr[15:8]), so a read that
+    // wrongly took the logical path is visible.
+    wire        ph_req, ph_we;
+    wire [27:0] ph_addr;
+    wire [7:0]  ph_wdata;
+    reg         ph_done, ph_err;
+    reg  [7:0]  ph_rdata;
+    logic [7:0] phmem [int];
+    function automatic [7:0] ph_pat(input [27:0] a);
+        ph_pat = a[7:0] ^ a[15:8] ^ a[23:16] ^ 8'hA5;
+    endfunction
+    int         phdelay;
+    initial begin
+        phdelay = 0;
+        if ($value$plusargs("PHDELAY=%d", phdelay)) ;
+    end
+    reg         ph_busy, ph_armed;
+    int         ph_wait;
+    reg [31:0]  ph_ok_cnt, ph_err_cnt, ph_last_addr, ph_last_data;
+    always @(posedge clk) begin
+        ph_done <= 1'b0;  ph_err <= 1'b0;
+        if (!rst_n) begin
+            ph_busy <= 1'b0;  ph_armed <= 1'b0;
+            ph_ok_cnt <= 32'd0;  ph_err_cnt <= 32'd0;
+            ph_last_addr <= 32'd0;  ph_last_data <= 32'd0;
+        end else if (!ph_req) begin
+            ph_busy <= 1'b0;  ph_armed <= 1'b1;
+        end else if (ph_armed && !ph_busy) begin
+            ph_busy <= 1'b1;  ph_armed <= 1'b0;  ph_wait <= phdelay;
+        end else if (ph_busy) begin
+            if (ph_wait != 0) ph_wait <= ph_wait - 1;
+            else begin
+                ph_busy <= 1'b0;
+                ph_done <= 1'b1;
+                if (z_busack_n || ph_addr[27]) begin
+                    ph_err <= 1'b1;  ph_err_cnt <= ph_err_cnt + 32'd1;
+                end else begin
+                    if (ph_we) phmem[int'(ph_addr)] = ph_wdata;
+                    else       ph_rdata <= phmem.exists(int'(ph_addr)) ?
+                                           phmem[int'(ph_addr)] : ph_pat(ph_addr);
+                    ph_ok_cnt <= ph_ok_cnt + 32'd1;
+                    ph_last_addr <= {4'd0, ph_addr};
+                    ph_last_data <= ph_we ? {24'd0, ph_wdata}
+                                          : {24'd0, phmem.exists(int'(ph_addr)) ?
+                                                    phmem[int'(ph_addr)] : ph_pat(ph_addr)};
+                end
+            end
+        end
+    end
+    assign dbg_ph_count = ph_ok_cnt;
+    assign dbg_ph_errs  = ph_err_cnt;
+    assign dbg_ph_addr  = ph_last_addr;
+    assign dbg_ph_data  = ph_last_data;
+
     // R39: a 1M-clock (20 ms) step watchdog instead of 20M, so the timeout path
     // runs in a short simulation (a real step is ~30 clocks)
     ssp_top #(.STEP_TIMEOUT_T(25'd1_000_000)) u_dut (
@@ -136,6 +201,8 @@ module ssp_p1a_top (
         .eng_mreq_n (eng_mreq_n), .eng_iorq_n (eng_iorq_n),
         .eng_rd_n (eng_rd_n), .eng_wr_n (eng_wr_n),
         .eng_m1_n (eng_m1_n), .eng_mrd_t1 (eng_mrd_t1),
+        .ph_req (ph_req), .ph_we (ph_we), .ph_addr (ph_addr), .ph_wdata (ph_wdata),
+        .ph_done (ph_done), .ph_err (ph_err), .ph_rdata (ph_rdata),
         .rv_rst_n (rv_rst_n),
         .snac_rxd (snac_rxd), .snac_txd (snac_txd),
         .z80_rxd (guest_rxd), .z80_txd (guest_txd),

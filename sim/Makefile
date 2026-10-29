@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp seam-check p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp seam-check p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -130,6 +130,10 @@ tramp-p1a: p1a
 # R-40: every SSP park lands on an instruction boundary (GHDL, real T80s)
 integ-park:
 	$(ROOT)/sim/run_integ_park.sh
+
+# M3 (R40): parked physical memory client unit bench (GHDL)
+mem-client:
+	$(ROOT)/sim/run_mem_client.sh
 
 # R-42 (SDRAM/BRAM/MMU half): engine through the real CPM fabric (GHDL)
 integ-core:

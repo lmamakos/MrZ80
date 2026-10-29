@@ -1006,6 +1006,10 @@ wire [7:0]  ssp_cpu_din;
 wire [2:0]  ssp_mc, ssp_ts;
 wire [211:0] ssp_t80_reg;
 wire        ssp_irq, ssp_rv_alive;
+// M3 (R40): parked physical memory client seam (ssp_mem_client lives in the core)
+wire        ssp_ph_req, ssp_ph_we, ssp_ph_done, ssp_ph_err;
+wire [27:0] ssp_ph_addr;
+wire [7:0]  ssp_ph_wdata, ssp_ph_rdata;
 
 MicrocomputerZ80CPM MicrocomputerZ80CPM
 (
@@ -1092,6 +1096,13 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
     .ssp_ts             (ssp_ts),
     .ssp_alt            (ssp_alt),
     .ssp_would_boundary (ssp_would_boundary),
+    .ssp_ph_req         (ssp_ph_req),
+    .ssp_ph_we          (ssp_ph_we),
+    .ssp_ph_addr        (ssp_ph_addr),
+    .ssp_ph_wdata       (ssp_ph_wdata),
+    .ssp_ph_done        (ssp_ph_done),
+    .ssp_ph_err         (ssp_ph_err),
+    .ssp_ph_rdata       (ssp_ph_rdata),
     .ssp_t80_reg        (ssp_t80_reg)
 );
 
@@ -1151,6 +1162,14 @@ ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif")) ssp_top
     .eng_wr_n       (ssp_eng_wr_n),
     .eng_m1_n       (ssp_eng_m1_n),
     .eng_mrd_t1     (ssp_eng_mrd_t1),
+
+    .ph_req         (ssp_ph_req),
+    .ph_we          (ssp_ph_we),
+    .ph_addr        (ssp_ph_addr),
+    .ph_wdata       (ssp_ph_wdata),
+    .ph_done        (ssp_ph_done),
+    .ph_err         (ssp_ph_err),
+    .ph_rdata       (ssp_ph_rdata),
 
     .rv_rst_n       (ssp_rv_rst_n),
 

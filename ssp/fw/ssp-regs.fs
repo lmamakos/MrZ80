@@ -104,10 +104,10 @@ $0FFFFFFF constant SSP_MEM_ADDR_ADDR ( field 27:0 )
 $2000007C constant SSP_MEM_DATA ( RCW | read = captured byte (latched at strobe release); write = data-out )
 $000000FF constant SSP_MEM_DATA_DATA ( field 7:0 )
 
-$20000080 constant SSP_MD ( RCW | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 rejects MEMORY kicks (ENGINE_ERR) until the P1b-M3 physical path; I/O kicks unaffected (ports are unmapped) )
+$20000080 constant SSP_MD ( RCW | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 routes MEMORY kicks to the parked physical client (ssp_mem_client, M3/R40): 28-bit address, SDRAM window only (page >= 8192 = phys bit 27 -> ENGINE_ERR), bypasses the MMU and z80_bus_mux; I/O kicks unaffected (ports are unmapped) )
 $00000001 constant SSP_MD_PHYS ( field 0:0 )
 
-$20000084 constant SSP_AR ( RCW | shared address register (logical ops use low 16) )
+$20000084 constant SSP_AR ( RCW | shared address register (logical ops use low 16; MD=1 uses all 28) )
 $0FFFFFFF constant SSP_AR_ADDR ( field 27:0 )
 
 $20000088 constant SSP_DR ( RCW | shared data register )
@@ -116,7 +116,7 @@ $000000FF constant SSP_DR_DATA ( field 7:0 )
 $2000008C constant SSP_PR ( RCW | shared I/O port register )
 $000000FF constant SSP_PR_PORT ( field 7:0 )
 
-$20000090 constant SSP_ENG_STAT ( R | panel engine state; read clears completion )
+$20000090 constant SSP_ENG_STAT ( R | panel engine state; read clears completion; LAST_OP 1=mem rd 2=mem wr 3=io rd 4=io wr 8=physical rd 9=physical wr (M3); ENGINE_ERR sticky until read: bad state, busy, physical reject/timeout )
 $0000000F constant SSP_ENG_STAT_LAST_OP ( field 3:0 )
 $00000010 constant SSP_ENG_STAT_AUTO_INC ( field 4:4 )
 $00000020 constant SSP_ENG_STAT_ENGINE_ERR ( field 5:5 )

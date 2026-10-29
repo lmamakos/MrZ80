@@ -31,7 +31,7 @@ for f in sim/sim_compat_pkg.vhd \
          Components/FRONTPANEL/FP_RAM_Store.vhd \
          Components/FRONTPANEL/FrontPanel_Subsystem.vhd \
          Components/TIMER/BenchTimer.vhd \
-         "$MUX" ssp/rtl/ssp_tramp.vhd \
+         "$MUX" ssp/rtl/ssp_tramp.vhd ssp/rtl/ssp_mem_client.vhd \
          sim/MicrocomputerZ80CPM_sim.vhd sim/sdram_cdc_fake.vhd \
          sim/tb_integ_core.vhd; do
     ghdl -a "${GHDL_FLAGS[@]}" "$f"

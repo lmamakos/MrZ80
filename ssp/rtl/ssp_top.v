@@ -105,6 +105,14 @@ module ssp_top #(
     output wire        eng_wr_n,
     output wire        eng_m1_n,
     output wire        eng_mrd_t1,
+    // parked physical memory client seam (M3, R40; to ssp_mem_client at the CPM)
+    output wire        ph_req,
+    output wire        ph_we,
+    output wire [27:0] ph_addr,
+    output wire [7:0]  ph_wdata,
+    input  wire        ph_done,
+    input  wire        ph_err,
+    input  wire [7:0]  ph_rdata,
 
     // ---- RV host control (R25 sovereignty hatch) -------------------------
     input  wire        rv_rst_n,     // OSD "Reset SSP" (integration holds a
@@ -247,6 +255,8 @@ module ssp_top #(
         .eng_mreq_n (eng_mreq_n), .eng_iorq_n (eng_iorq_n),
         .eng_rd_n (eng_rd_n), .eng_wr_n (eng_wr_n),
         .eng_m1_n (eng_m1_n), .eng_mrd_t1 (eng_mrd_t1),
+        .ph_req (ph_req), .ph_we (ph_we), .ph_addr (ph_addr), .ph_wdata (ph_wdata),
+        .ph_done (ph_done), .ph_err (ph_err), .ph_rdata (ph_rdata),
         .baud_increment (baud_increment),
         .uart_en (uart_en), .uart_rx_clr (uart_rx_clr),
         .uart_tx_clr (uart_tx_clr), .uart_tx_wdata (uart_tx_wdata),

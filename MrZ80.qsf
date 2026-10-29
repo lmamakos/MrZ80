@@ -353,6 +353,7 @@ set_global_assignment -name VHDL_FILE ssp/rtl/ssp_sdp_ram.vhd
 set_global_assignment -name VHDL_FILE ssp/rtl/ssp_regs_pkg.vhd
 set_global_assignment -name VHDL_FILE ssp/rtl/z80_bus_mux.vhd
 set_global_assignment -name VHDL_FILE ssp/rtl/ssp_tramp.vhd
+set_global_assignment -name VHDL_FILE ssp/rtl/ssp_mem_client.vhd
 set_global_assignment -name VHDL_FILE MicrocomputerZ80CPM.vhd
 # set_global_assignment -name VHDL_FILE MicrocomputerZ80Basic.vhd
 set_global_assignment -name SIGNALTAP_FILE "output_files/status13-stp1.stp"

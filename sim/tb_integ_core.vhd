@@ -135,6 +135,16 @@ architecture sim of tb_integ_core is
     signal done_flag : std_logic := '0';
     signal int_hold  : std_logic := '0';   -- R39: ssp_int_hold into the core
 
+    -- M3 (R40): parked physical memory client seam
+    signal ph_req    : std_logic := '0';
+    signal ph_we     : std_logic := '0';
+    signal ph_addr   : std_logic_vector(27 downto 0) := (others => '0');
+    signal ph_wdata  : std_logic_vector(7 downto 0) := (others => '0');
+    signal ph_done, ph_err : std_logic;
+    signal ph_rdata  : std_logic_vector(7 downto 0);
+    signal ph_borrow : std_logic;
+    signal n_borrow_run : natural := 0;    -- clk with borrow high while the Z80 runs
+
 begin
 
     clk_sys <= not clk_sys after 10 ns when not stop_sim else '0';
@@ -174,7 +184,10 @@ begin
             ssp_eng_mrd_t1 => e_mrd_t1,
             ssp_cpu_cen => s_cen, ssp_cpu_din => s_din, ssp_cpu_wait_n => s_wait_n,
             ssp_busack_n => s_busack_n, ssp_halt_n => s_halt_n, ssp_m1_n => s_m1_n,
-            ssp_int_hold => int_hold);
+            ssp_int_hold => int_hold,
+            ssp_ph_req => ph_req, ssp_ph_we => ph_we, ssp_ph_addr => ph_addr,
+            ssp_ph_wdata => ph_wdata, ssp_ph_done => ph_done, ssp_ph_err => ph_err,
+            ssp_ph_rdata => ph_rdata);
 
     cdc : entity work.sdram_cdc_fake(sim)
         port map (clk_sys => clk_sys, clk_ram => clk_ram,
@@ -200,6 +213,17 @@ begin
     t_m1_n   <= << signal .tb_integ_core.dut.t80_m1_n   : std_logic >>;
     t_mrd_t1 <= << signal .tb_integ_core.dut.t80_mrd_t1 : std_logic >>;
     wsel     <= << signal .tb_integ_core.dut.bus_mux.sel_eng : std_logic >>;
+    ph_borrow <= << signal .tb_integ_core.dut.ph_borrow : std_logic >>;
+
+    -- R-27: the physical client never drives the SDRAM port while the Z80 runs
+    process (clk_sys)
+    begin
+        if rising_edge(clk_sys) then
+            if run_chk and s_busack_n = '1' and ph_borrow = '1' then
+                n_borrow_run <= n_borrow_run + 1;
+            end if;
+        end if;
+    end process;
     p_bram_addr <= << signal .tb_integ_core.dut.bram_address : std_logic_vector(15 downto 0) >>;
     p_bram_data <= << signal .tb_integ_core.dut.bram_data    : std_logic_vector(7 downto 0)  >>;
     p_bram_wren <= << signal .tb_integ_core.dut.bram_wren    : std_logic >>;
@@ -334,6 +358,8 @@ begin
         variable sw : std_logic_vector(0 to 255) := (others => '0');   -- SDRAM C800+ad written
         variable bval, sval : std_logic_vector(0 to 2047) := (others => '0');
         variable rb : std_logic_vector(7 downto 0);
+        variable nph_w, nph_r, nph_rej : natural := 0;
+        variable ph_dn, ph_er : boolean;
 
         procedure clks(n : natural) is
         begin for i in 1 to n loop wait until rising_edge(clk_sys); end loop; end procedure;
@@ -369,13 +395,34 @@ begin
             rdback := e_rdcap;
         end procedure;
 
+        -- M3: one physical op through ssp_mem_client (request level held to done)
+        procedure ph_op(we : std_logic; a : std_logic_vector(27 downto 0);
+                        d : std_logic_vector(7 downto 0);
+                        okd : out boolean; er : out boolean;
+                        rdat : out std_logic_vector(7 downto 0)) is
+            variable t : natural := 0;
+        begin
+            ph_we <= we; ph_addr <= a; ph_wdata <= d; ph_req <= '1';
+            okd := false; er := false; rdat := x"00";
+            loop
+                wait until rising_edge(clk_sys);
+                t := t + 1;
+                if ph_done = '1' then
+                    okd := true; er := (ph_err = '1'); rdat := ph_rdata; exit;
+                end if;
+                exit when t > 20000;
+            end loop;
+            ph_req <= '0';
+            clks(4);
+        end procedure;
+
         procedure engine_burst is
             variable n, k, ad : natural;
             variable a16 : std_logic_vector(15 downto 0);
         begin
             rnd(3, n);
             for i in 0 to n loop
-                rnd(6, k);
+                rnd(10, k);
                 rnd(255, ad);
                 ops := ops + 1;
                 case k is
@@ -418,6 +465,28 @@ begin
                         check(rb = x"20", "engine I/O read of MMU frame 0 high byte");
                         eng_cycle(2, x"00B3", x"00", rb);      -- frame 3 low = 00 (guest set it)
                         check(rb = x"00", "engine I/O read of MMU frame 3 low byte");
+                    when 7 =>                          -- PHYSICAL write 0800+ad == logical C800+ad (frame 3 -> page 0)
+                        ph_op('1', std_logic_vector(to_unsigned(16#0800# + ad, 28)), pat(ad, 7), ph_dn, ph_er, rb);
+                        check(ph_dn and not ph_er, "physical write completed without error");
+                        sw(ad) := '1';
+                        nph_w := nph_w + 1;
+                    when 8 =>                          -- PHYSICAL read back == what the engine/physical writes put there
+                        ph_op('0', std_logic_vector(to_unsigned(16#0800# + ad, 28)), x"00", ph_dn, ph_er, rb);
+                        check(ph_dn and not ph_er, "physical read completed without error");
+                        if sw(ad) = '1' then
+                            check(rb = pat(ad, 7), "physical read returns what was written (logical or physical), ad=" & integer'image(ad));
+                        end if;
+                        nph_r := nph_r + 1;
+                    when 9 =>                          -- physical read of untouched SDRAM: the ramp
+                        ph_op('0', std_logic_vector(to_unsigned(16#0C00# + ad, 28)), x"00", ph_dn, ph_er, rb);
+                        check(ph_dn and not ph_er and rb = std_logic_vector(to_unsigned(ad, 8)),
+                              "physical read of untouched SDRAM returns the ramp byte");
+                        nph_r := nph_r + 1;
+                    when 10 =>                         -- block-RAM page (phys 0800_0000+): rejected, memory untouched
+                        ph_op('1', std_logic_vector(to_unsigned(16#8002100# + ad, 28)), x"EE", ph_dn, ph_er, rb);
+                        check(ph_dn and ph_er, "physical write to the block-RAM page rejected");
+                        check(bram.rd(16#2100# + ad) /= x"EE", "rejected physical write did not reach block RAM");
+                        nph_rej := nph_rej + 1;
                     when others =>                     -- MMU direct-access port write -> BRAM 2100+ad
                         ndirect := ndirect + 1;
                         eng_cycle(3, x"00B8", std_logic_vector(to_unsigned(ad, 8)), rb);
@@ -480,6 +549,15 @@ begin
                integer'image(nsdr_w) & " SDRAM wr, " & integer'image(nsdr_rd) & " SDRAM rd, " &
                integer'image(nmmu) & " MMU reg reads, " & integer'image(ndirect) & " direct-port writes";
         check(nbursts >= 20, "a meaningful number of parks");
+        report "  physical client: " & integer'image(nph_w) & " writes, " & integer'image(nph_r) &
+               " reads, " & integer'image(nph_rej) & " rejects";
+        check(nph_w > 5 and nph_r > 10 and nph_rej > 3, "physical op classes exercised");
+        check(n_borrow_run = 0, "the SDRAM port was never borrowed while the Z80 ran (" &
+              integer'image(n_borrow_run) & " clk)");
+        -- not parked: refused, no activity (the guest has halted; BUSRQ is released)
+        ph_op('1', x"0000900", x"12", ph_dn, ph_er, rb);
+        check(ph_dn and ph_er, "physical op refused while not parked");
+        check(ph_borrow = '0', "no borrow while not parked");
         check(nsdr_w > 5 and nsdr_rd > 5 and nbram_w > 5 and ndirect > 2 and nmmu > 2,
               "every engine op class was exercised");
 

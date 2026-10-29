@@ -165,6 +165,16 @@ entity MicrocomputerZ80CPM is
 		ssp_ts			: out std_logic_vector(2 downto 0);
 		ssp_alt			: out std_logic;
 		ssp_would_boundary	: out std_logic;
+		-- M3 (R40): parked PHYSICAL memory client (ssp_mem_client). A request
+		-- level from the bridge; borrows the SDRAM client port below while the
+		-- Z80 is parked and the primary SDRAM FSM is idle.  Defaults = idle.
+		ssp_ph_req		: in  std_logic := '0';
+		ssp_ph_we		: in  std_logic := '0';
+		ssp_ph_addr		: in  std_logic_vector(27 downto 0) := (others => '0');
+		ssp_ph_wdata	: in  std_logic_vector(7 downto 0) := (others => '0');
+		ssp_ph_done		: out std_logic;
+		ssp_ph_err		: out std_logic;
+		ssp_ph_rdata	: out std_logic_vector(7 downto 0);
 		ssp_t80_reg		: out std_logic_vector(211 downto 0)
 		);
 end MicrocomputerZ80CPM;
@@ -352,6 +362,15 @@ architecture struct of MicrocomputerZ80CPM is
 	-- ~2.24x clk_sys, so 3 clk_sys cycles low guarantees >=2 clk_ram edges
 	-- see the strobe low. See S_GAP below.
 	signal sdram_gap_cnt			: unsigned(1 downto 0) := (others => '0');
+
+	-- M3 (R40): parked physical memory client borrows the SDRAM client port.
+	signal ph_c_addr				: std_logic_vector(26 downto 0);
+	signal ph_c_din					: std_logic_vector(7 downto 0);
+	signal ph_c_we					: std_logic;
+	signal ph_c_rd					: std_logic;
+	signal ph_borrow				: std_logic;
+	signal ph_parked				: std_logic;
+	signal ph_prim_idle				: std_logic;
 
 	-- Combined wait_n into the t80s core: AND of MMU's wait request and
 	-- the SDRAM FSM's stall.
@@ -1209,10 +1228,46 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
 --
 -- SDRAM is phys_addr(27) = '0'; the block RAM page (bit 27 set) never
 -- reaches the SDRAM controller, so the low 27 bits are the SDRAM address.
-sdram_addr <= sdram_addr_r;
-sdram_din  <= sdram_din_r;
-sdram_we   <= sdram_we_reg;
-sdram_rd   <= sdram_rd_reg;
+-- M3 (R40): while the parked physical client (ssp_mem_client) holds a
+-- transaction, `ph_borrow` hands the four request drivers to it.  The select
+-- only changes while both sides' request levels are low (the client raises its
+-- level in the same clk as borrow and drops borrow only after its dead time;
+-- the primary FSM cannot start: the Z80 is parked and the client is admitted
+-- only with sdram_state = S_IDLE), so the CDC in MrZ80.sv sees clean levels.
+-- sdram_dout / sdram_ready are broadcast: the primary FSM ignores ready in
+-- S_IDLE.  With the SSP idle (ph_req low) borrow is constantly 0 and the port
+-- is the primary FSM's, exactly as before.
+sdram_addr <= ph_c_addr when ph_borrow = '1' else sdram_addr_r;
+sdram_din  <= ph_c_din  when ph_borrow = '1' else sdram_din_r;
+sdram_we   <= ph_c_we   when ph_borrow = '1' else sdram_we_reg;
+sdram_rd   <= ph_c_rd   when ph_borrow = '1' else sdram_rd_reg;
+
+ph_prim_idle <= '1' when sdram_state = S_IDLE else '0';
+-- parked: BusAck given, the request still asserted, and the cycle engine not
+-- holding the bus (the bridge serialises physical ops against engine cycles)
+ph_parked    <= '1' when n_BUSAK = '0' and ssp_busrq_n = '0' and ssp_eng_own = '0' else '0';
+
+mem_client : entity work.ssp_mem_client
+port map (
+	clk       => clk,
+	rst_n     => reset_n_internal,
+	ph_req    => ssp_ph_req,
+	ph_we     => ssp_ph_we,
+	ph_addr   => ssp_ph_addr,
+	ph_wdata  => ssp_ph_wdata,
+	ph_done   => ssp_ph_done,
+	ph_err    => ssp_ph_err,
+	ph_rdata  => ssp_ph_rdata,
+	parked    => ph_parked,
+	prim_idle => ph_prim_idle,
+	c_addr    => ph_c_addr,
+	c_din     => ph_c_din,
+	c_we      => ph_c_we,
+	c_rd      => ph_c_rd,
+	c_dout    => sdram_dout,
+	c_ready   => sdram_ready,
+	borrow    => ph_borrow
+);
 
 -- A CPU bus cycle (strobe asserted) to SDRAM is in progress.
 sdram_cpu_acc <= '1' when mmu_req_mem_out = '1' and phys_in_sdram = '1' and

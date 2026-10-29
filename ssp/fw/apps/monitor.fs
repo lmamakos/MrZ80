@@ -40,7 +40,8 @@ SSP_CTRL_ESC_BREAK_EN
 16  buffer: m-row
 0 variable m-len
 0 variable m-pos
-0 variable m-next                           \ default address for E / D
+0 variable m-next                           \ default address for E / D (logical)
+0 variable m-nextp                          \ ... and for physical E / D (separate: 16 vs 28 bits)
 0 variable m-state                          \ 0 stay, 1 Z80 resumed, 2 to Forth
 0 variable m-a
 0 variable m-n
@@ -84,7 +85,7 @@ SSP_CTRL_ESC_BREAK_EN
 : gc@ ( addr -- b f )
   SSP_MEM_ADDR !
   SSP_MEM_CTL_START SSP_MEM_CTL_RNW or SSP_MEM_CTL !
-  m-wait 0= if drop false exit then
+  m-wait 0= if 0 false exit then            \ keep the ( b f ) contract on error (M3)
   SSP_MEM_DATA @ $FF and true ;
 : gc! ( b addr -- f )
   SSP_MEM_ADDR !  SSP_MEM_DATA !
@@ -190,15 +191,35 @@ SSP_CTRL_ESC_BREAK_EN
   m-bad @ if m-q exit then ;
 
 \ ---- PHY / LOG : addressing mode (MD, D-22) --------------------------------------
-\ PHY selects the physical (28-bit) view for E/D.  Until M3 lands
-\ ssp_mem_client the bridge rejects memory kicks while MD=1, so the monitor
-\ refuses E/D honestly instead of showing stale data.  Port I/O is unaffected
-\ by the mode (ports are unmapped, R37); G stays logical (the Z80's own
-\ address bus is what it is).  Switch back with LOG.
+\ PHY selects the physical (28-bit) view for E/D: the bridge routes the memory
+\ kicks to ssp_mem_client (M3, R40), which borrows the SDRAM port while the Z80
+\ is parked -- no MMU, no bus mux.  SDRAM window only: phys 0000000..7FFFFFF
+\ (pages 0..8191); the block-RAM page (>= 8000000) is rejected with ?.  Port
+\ I/O is unaffected by the mode (ports are unmapped, R37); G stays logical
+\ (the Z80's own address bus is what it is); S shows its bytes logically.
+\ Switch back with LOG.
+\
+\ UX NOTE (OQ-24, open): the command surface may become modal (PHY/LOG, as
+\ here) or explicit per-command verbs.  Everything that depends on "this E/D
+\ is physical" goes through m-pa (set at command entry from MD today) and the
+\ helpers m-pa? m-amask m-a. m-arg-a m-next@ m-next!, so a verb UX only
+\ changes where m-pa and MD come from -- the RTL path is the same.
 : m-phys? ( -- f )  SSP_MD @ 1 and ;
-: m-phy ( -- )  1 SSP_MD ! ." PHYSICAL (E/D PENDING M3)" cr ;
+: m-phy ( -- )  1 SSP_MD ! ." PHYSICAL (SDRAM, 28-BIT)" cr ;
 : m-log ( -- )  0 SSP_MD ! ." LOGICAL" cr ;
-: m-phystest ( -- f )  m-phys? dup if ." PHYSICAL E/D PENDING M3" cr then ;
+0 variable m-pa                               \ 1: the current E/D is physical
+: m-pa? ( -- f )  m-pa @ ;
+: m-amask ( -- u )  m-pa? if $0FFFFFFF else $FFFF then ;
+: m-a. ( u -- )  m-pa? if m-h7 else m-h4 then ;
+: m-next@ ( -- u )  m-pa? if m-nextp @ else m-next @ then ;
+: m-next! ( u -- )  m-pa? if m-nextp ! else m-next ! then ;
+\ address argument for E / D: logical wraps at 16 bits (as always); a physical
+\ address must lie in the SDRAM window (0..7FFFFFF), else it is an argument error
+: m-arg-a ( dflt -- u )
+  m-arg
+  m-pa? if
+    dup $07FFFFFF u> if drop 0 1 m-bad ! then
+  else $FFFF and then ;
 
 \ ---- S : single-step (STEP assist, R39) ----------------------------------------
 \ Hardware one-shot in the bridge (spec 7.2c): release the Z80, re-park at
@@ -250,21 +271,23 @@ SSP_CTRL_ESC_BREAK_EN
     1-
   repeat
   drop ;
+: m-step-lg ( n -- )   \ the Z80's own bytes are LOGICAL whatever MD says
+  SSP_MD @  swap  0 SSP_MD !  m-step-n  SSP_MD ! ;
 : m-step ( -- )
   0 m-bad !
   1 m-arg $FFFF and  m-end
   m-bad @ over 0= or if drop m-q exit then   \ S 0 / junk => ?
   m-need-park 0= if drop exit then
-  m-step-n ;
+  m-step-lg ;
 : m-repeat ( -- )   \ bare CR: repeat the last S, if one is latched
   m-stepn @ 0= if exit then
   m-need-park 0= if exit then
-  m-stepn @ m-step-n ;
+  m-stepn @ m-step-lg ;
 
 \ ---- E : examine ---------------------------------------------------------------
 : m-rd-row ( addr k -- f )
-  0 do dup i + $FFFF and gc@
-    0= if nip nip false exit then
+  0 do dup i + m-amask and gc@
+    0= if 2drop unloop false exit then         \ ( addr b ): drop both; unloop before exit
     m-row i + c!
   loop
   drop true ;
@@ -275,26 +298,25 @@ SSP_CTRL_ESC_BREAK_EN
   space
   r> 0 do m-row i + c@ m-ascii loop ;
 : m-examine ( -- )
-  0 m-bad !
-  m-next @ m-arg $FFFF and m-a !
+  0 m-bad !  m-phys? m-pa !
+  m-next@ m-arg-a m-a !
   $80 m-arg $FFFF and m-n !  m-end
   m-bad @ if m-q exit then
-  m-phystest if exit then
   m-need-park 0= if exit then
   begin m-n @ while
     m-n @ 16 min m-k !
-    m-a @ m-h4 ." : "
-    m-a @ m-k @ m-rd-row 0= if ." RD ERR" cr m-a @ m-next ! exit then
+    m-a @ m-a. ." : "
+    m-a @ m-k @ m-rd-row 0= if ." RD ERR" cr m-a @ m-next! exit then
     m-k @ m-pr-row cr
-    m-k @ m-a +!  m-a @ $FFFF and m-a !
+    m-k @ m-a +!  m-a @ m-amask and m-a !
     m-k @ negate m-n +!
   repeat
-  m-a @ m-next ! ;
+  m-a @ m-next! ;
 
 \ ---- D : deposit ----------------------------------------------------------------
 \ one prompt; true when the session is over
 : m-dep1 ( -- f )
-  m-a @ m-h4 ." : " m-a @ gc@ if m-h2 else 45 emit 45 emit then space
+  m-a @ m-a. ." : " m-a @ gc@ if m-h2 else 45 emit 45 emit then space
   m-line-in cr m-spaces
   m-getc 0= if 1 m-a +! false exit then           \ bare CR: leave, advance
   m-getc 46 = if true exit then                   \ .  ends
@@ -303,13 +325,12 @@ SSP_CTRL_ESC_BREAK_EN
   m-a @ gc! 0= if ." WR ERR" cr true exit then
   1 m-a +! false ;
 : m-deposit ( -- )
-  0 m-bad !
-  m-next @ m-arg $FFFF and m-a !  m-end
+  0 m-bad !  m-phys? m-pa !
+  m-next@ m-arg-a m-a !  m-end
   m-bad @ if m-q exit then
-  m-phystest if exit then
   m-need-park 0= if exit then
-  begin m-dep1  m-a @ $FFFF and m-a !  until
-  m-a @ m-next ! ;
+  begin m-dep1  m-a @ m-amask and m-a !  until
+  m-a @ m-next! ;
 
 \ ---- R : registers ----------------------------------------------------------------
 : m-regs ( -- )
@@ -364,7 +385,7 @@ SSP_CTRL_ESC_BREAK_EN
   ." O AAAA DD    OUTPUT: WRITE Z80 I/O PORT" cr
   ." MAP          MMU FRAMES: LOGICAL -> PHYSICAL" cr
   ." S [N]        SINGLE-STEP N (INT HELD OFF; CR=REPEAT, KEY=BREAK)" cr
-  ." PHY / LOG    ADDRESS MODE (PHYSICAL E/D PENDING M3)" cr
+  ." PHY / LOG    E/D ADDRESS MODE: PHYSICAL (SDRAM) / LOGICAL" cr
   ." F             FORTH" cr ;
 : m-ch ( c -- f )  m-getc 32 or = dup if m-adv then ;   \ exact letter, CI
 : m-tail-hy ( -- f )  104 m-ch if 121 m-ch exit else false then ;
@@ -401,4 +422,4 @@ SSP_CTRL_ESC_BREAK_EN
     begin m-console? 0= until                 \ Z80 has the console again
   again ;
 
-: init ( -- )  0 m-next !  mon ;
+: init ( -- )  0 m-next !  0 m-nextp !  mon ;

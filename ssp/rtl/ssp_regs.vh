@@ -261,14 +261,14 @@
 `define SSP_HI_MEM_DATA_DATA       7          // field high index
 `define SSP_LO_MEM_DATA_DATA       0          // field low index
 
-`define SSP_MD               32'h20000080  // RCW reset 32'h00000000 | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 rejects MEMORY kicks (ENGINE_ERR) until the P1b-M3 physical path; I/O kicks unaffected (ports are unmapped)
+`define SSP_MD               32'h20000080  // RCW reset 32'h00000000 | addressing mode 0=logical16 / 1=physical28; tracks S31; PHY/LOG write; MD=1 routes MEMORY kicks to the parked physical client (ssp_mem_client, M3/R40): 28-bit address, SDRAM window only (page >= 8192 = phys bit 27 -> ENGINE_ERR), bypasses the MMU and z80_bus_mux; I/O kicks unaffected (ports are unmapped)
 `define SSP_RIDX_MD           10'h020      // word index (offset/4)
 `define SSP_MD_RESET 32'h00000000          // reset value
 `define SSP_MD_RESET_1 1'h0     // reset, 1-bit sized
 `define SSP_MD_PHYS           32'h00000001  // 0:0
 `define SSP_BIT_MD_PHYS       0         // bit index
 
-`define SSP_AR               32'h20000084  // RCW reset 32'h00000000 | shared address register (logical ops use low 16)
+`define SSP_AR               32'h20000084  // RCW reset 32'h00000000 | shared address register (logical ops use low 16; MD=1 uses all 28)
 `define SSP_RIDX_AR           10'h021      // word index (offset/4)
 `define SSP_AR_RESET 32'h00000000          // reset value
 `define SSP_AR_RESET_28 28'h0     // reset, 28-bit sized
@@ -292,7 +292,7 @@
 `define SSP_HI_PR_PORT       7          // field high index
 `define SSP_LO_PR_PORT       0          // field low index
 
-`define SSP_ENG_STAT         32'h20000090  // R reset 32'h00000000 | panel engine state; read clears completion
+`define SSP_ENG_STAT         32'h20000090  // R reset 32'h00000000 | panel engine state; read clears completion; LAST_OP 1=mem rd 2=mem wr 3=io rd 4=io wr 8=physical rd 9=physical wr (M3); ENGINE_ERR sticky until read: bad state, busy, physical reject/timeout
 `define SSP_RIDX_ENG_STAT     10'h024      // word index (offset/4)
 `define SSP_ENG_STAT_RESET 32'h00000000          // reset value
 `define SSP_ENG_STAT_RESET_6 6'h0     // reset, 6-bit sized

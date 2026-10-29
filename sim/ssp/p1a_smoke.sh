@@ -36,7 +36,7 @@ fi
 
 fail=0
 # PARTS=F runs only Part F (default: all parts)
-want() { [[ "${PARTS:-ABCDEF}" == *$1* ]]; }
+want() { [[ "${PARTS:-ABCDEFG}" == *$1* ]]; }
 runmodel() { # $1 = tag, rest = plusargs; stdin = operator input
   local tag=$1; shift
   # caller plusargs first: the harness takes the FIRST occurrence of a key
@@ -210,7 +210,7 @@ if want E; then
 # I/O WRITE capture holds the last (port,data).  MMU mapping ports read through
 # the engine too, so the MAP pages are (B0+n)^0x0F low / (B4+n)^0x0F high ->
 # pages 3BBF/3ABE/39BD/38BC, phys = page<<14.  PHY sets MD (D-22): E/D refuse
-# with a PENDING note until M3 lands ssp_mem_client; I/O + G are unaffected.
+# physical E/D go to the M3 client (Part G); I/O + G are unaffected.
 TAG=E
 {
   printf '\x1d'
@@ -221,8 +221,7 @@ TAG=E
   printf 'O FF\r'                                 # missing data -> ?
   printf 'MAP\r'
   printf 'PHY\r'
-  printf 'E 100 4\r'                             # refused: physical pending M3
-  printf 'D 100\r'                              # refused likewise
+  printf 'E 100 4\r'                             # PHYSICAL read of 0000100 (M3 path)
   printf 'I 0081\r'                             # I/O works even in PHYSICAL (R37)
   printf 'O 00CC 3C\r'                          # ... reads and writes alike
   printf 'PPX\rLO\r'                            # near-miss verbs -> ? ?
@@ -240,10 +239,8 @@ n_qE=$(grep -ac '^?$' "$WORK/E.norm.log")
   || { echo "  FAIL: expected 4 '?' replies, got $n_qE"; fail=1; }
 check "MAP F0 frame + physical base"             '^F0  page 3BBF  phys EEFC000$'
 check "MAP F3 frame + physical base"             '^F3  page 38BC  phys E2F0000$'
-check "PHY mode message"                         '^PHYSICAL \(E/D PENDING M3\)$'
-n_rej=$(grep -ac '^PHYSICAL E/D PENDING M3$' "$WORK/E.norm.log")
-[ "$n_rej" -eq 2 ] && echo "  ok: E and D both refused in physical mode" \
-  || { echo "  FAIL: expected 2 physical refusals, got $n_rej"; fail=1; }
+check "PHY mode message"                         '^PHYSICAL \(SDRAM, 28-BIT\)$'
+check "E in PHYSICAL mode reads through the physical client (mock pattern, 7-digit address)" '^0000100: A4 A5 A6 A7 '
 check "port read works even in PHYSICAL mode"    '^I 0081 = 8E$'
 check "port write works even in PHYSICAL mode"   '^O 00CC = 3C$'
 check "LOG mode message"                         '^LOGICAL$'
@@ -434,6 +431,101 @@ nt=$(grep -ac 'p1a-step.*timeout' "$WORK/F3.events.log")
 ns=$(grep -ac 'p1a-step.*regrant' "$WORK/F3.events.log")
 [ "$ns" -eq 2 ] && echo "  ok: the first S and the post-recovery S re-parked (2 regrants)" \
   || { echo "  FAIL: regrants=$ns (want 2)"; fail=1; }
+fi
+
+if want G; then
+# ======================= Part G: physical E / D (M3, R40) ==========================
+# MD=1 routes memory kicks to the parked physical client (the lane's mock: sparse
+# memory, unwritten byte = a^a>>8^a>>16^A5, page >= 8192 answered done+err).  SDRAM
+# window only: E/D 08000000 and up are rejected ? by the monitor, a range that runs
+# off the top of the window stops with RD ERR / WR ERR from the client's reject.
+TAG=G
+{
+  printf '\x1d'
+  printf 'PHY\r'
+  printf 'E 100 4\r'                                 # pattern read
+  printf 'D 1000\r11\r22\r.\r'                      # physical deposit
+  printf 'E 1000 4\r'                               # 11 22 + pattern
+  printf 'E\r'                                      # bare E continues (physical default)
+  printf 'E 7FFFFF0 20\r'                           # runs off the top: RD ERR on row 2
+  printf 'E 08000000\r'                             # the block-RAM page: ?
+  printf 'E 0FFFFFFF\r'                             # ?
+  printf 'E 10000000\r'                             # >= 2^28: ?
+  printf 'D 08000000\r'                             # ?
+  printf 'D 7FFFFFF\r5A\r77\r'                       # last byte ok, then off the end: WR ERR (ends the D)
+  printf 'E 7FFFFFF 1\r'                            # the 5A is there
+  printf 'LOG\r'
+  printf 'E 1000 4\r'                               # logical: the BFM image, not 11 22
+  printf 'PHY\r'
+  printf 'E 1000 2\r'                               # physical state persisted
+  printf 'I 0080\r'                                 # port I/O still fine
+  printf 'S\r'                                      # step bytes are the Z80's LOGICAL ones
+} | runmodel G +OM=1 +LINEWAIT=2 +QUIET=150000 +PHDELAY=${G_PHDELAY:-0}
+echo "--- Part G console ---"; cat "$WORK/G.norm.log"
+rowph() { python3 - "$@" <<'PYEOF'
+import sys
+addr, n = int(sys.argv[1], 16), int(sys.argv[2], 16)
+over = {}
+for kv in sys.argv[3:]:
+    a, v = kv.split("="); over[int(a, 16)] = int(v, 16)
+pat = lambda a: ((a & 255) ^ ((a >> 8) & 255) ^ ((a >> 16) & 255) ^ 0xA5)
+b = [over.get(a, pat(a)) for a in range(addr, addr + n)]
+asc = "".join(chr(x) if 32 <= x <= 126 else "." for x in b)
+print("%07X: %s" % (addr, " ".join("%02X" % x for x in b)), end="")
+print(" " * (3 * (16 - n)) + "  " + asc)
+PYEOF
+}
+check "physical E: 4 pattern bytes at 0000100"          "^$(rx "$(rowph 100 4)") *\$"
+check "physical D shows the pattern byte it replaces"   '^0001000: [0-9A-F]{2} 11 *$'
+check "physical D: next address"                        '^0001001: [0-9A-F]{2} 22 *$'
+check "physical E reads back the deposit (11 22)"       "^$(rx "$(rowph 1000 4 1000=11 1001=22)") *\$"
+check "bare E continues at the next physical address"   "^$(rx "$(rowph 1004 10 1000=11 1001=22)") *\$"
+check "E 7FFFFF0 20: first row (last 16 bytes of the window)" "^$(rx "$(rowph 7FFFFF0 10)") *\$"
+n_rd=$(grep -ac '^8000000: RD ERR$' "$WORK/G.norm.log")
+[ "$n_rd" -eq 1 ] && echo "  ok: reading past the window top stops with RD ERR (client reject)" \
+  || { echo "  FAIL: expected 1 RD ERR, got $n_rd"; fail=1; }
+n_qG=$(grep -ac '^?$' "$WORK/G.norm.log")
+[ "$n_qG" -eq 4 ] && echo "  ok: 4 '?' (E 08000000, E 0FFFFFFF, E 10000000, D 08000000)" \
+  || { echo "  FAIL: expected 4 '?', got $n_qG"; fail=1; }
+check "D at the last window byte, then off the end"     '^7FFFFFF: [0-9A-F]{2} 5A *$'
+check "...the next prompt reads -- (client reject)"     '^8000000: -- 77 *$'
+n_wr=$(grep -ac '^WR ERR$' "$WORK/G.norm.log")
+[ "$n_wr" -eq 1 ] && echo "  ok: writing past the window top: WR ERR" || { echo "  FAIL: expected 1 WR ERR, got $n_wr"; fail=1; }
+check "the last window byte holds the 5A"               '^7FFFFFF: 5A *'
+check "LOG: logical E shows the BFM image, not the physical bytes" '^1000: 10 11 12 13 '
+check "physical state persists across LOG/PHY"          "^$(rx "$(rowph 1000 2 1000=11 1001=22)") *\$"
+check "port I/O works in PHYSICAL"                      '^I 0080 = 8F$'
+check "S in PHYSICAL mode shows the Z80's logical bytes (JP \$0100 at the park)" '^0100: C3 00 01 '
+absent "no unknown words"                               'not found'
+gl=$(grep -aoE 'ph=[0-9]+\([0-9a-f]+,[0-9a-f]+\) phe=[0-9]+' "$WORK/G.info.log" | tail -1)
+echo "--- Part G: $gl"
+case "$gl" in *phe=3) echo "  ok: exactly 3 client rejects (E row 2, D read, D write at 8000000)";;
+  *) echo "  FAIL: expected phe=3, got '$gl'"; fail=1;; esac
+if grep -aq 'p1a-ERR' "$WORK/G.events.log"; then echo "  FAIL: BUSRQ released during an engine cycle (Part G)"; fail=1; fi
+
+# ---- G2: a stalled client (refresh-like, 20000 clk per op) still completes
+TAG=G2
+{
+  printf '\x1d'
+  printf 'PHY\r'
+  printf 'D 2000\r33\r.\r'
+  printf 'E 2000 2\r'
+} | runmodel G2 +OM=1 +LINEWAIT=2 +QUIET=150000 +PHDELAY=20000
+check "stalled physical D/E completes (the deposit reads back)" '^0002000: 33 '
+absent "no ERR on a 20000-clk stall"                  'ERR'
+
+# ---- G3: a client that never answers within the bridge watchdog (2^22 clk)
+# -> ENGINE_ERR -> RD ERR / --; the monitor stays alive and LOG/E still work
+TAG=G3
+{
+  printf '\x1d'
+  printf 'PHY\r'
+  printf 'E 2000 1\r'
+  printf 'LOG\r'
+  printf 'E 100 2\r'
+} | runmodel G3 +OM=1 +LINEWAIT=2 +QUIET=150000 +PHDELAY=4400000 +IDLE=12000000
+check "bridge watchdog: RD ERR when the client never answers" '^0002000: RD ERR$'
+check "monitor alive after the watchdog: logical E works"      '^0100: C3 00 '
 fi
 
 [ $fail -eq 0 ] && echo "p1a_smoke: PASS" || echo "p1a_smoke: FAIL"

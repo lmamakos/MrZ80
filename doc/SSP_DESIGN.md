@@ -1106,13 +1106,41 @@ commands update `AR` explicitly (both surfaces leave `AR` coherent, R-15).
 
 ### 9.2 Physical (28-bit)
 - **P1 — parked client (D-15-P):** `ssp_mem_client` drives the SDRAM client
-  interface (`sdram_addr/din/we/rd` + DQM via `addr[0]`) and the BRAM mux,
-  gated on: parked ∧ primary-client-idle ∧ no contention. Full R/W reach
-  incl. BRAM page 8192. MMU bypassed (physical, by definition) and untouched
-  (P-D). `MD`=physical makes `AR` 28-bit for both surfaces.
-  **[R35 revision: the BRAM-mux leg is deferred (owner ruling); P1 lands the SDRAM
-  physical window only — physical ops to page 8192 rejected `?` by FW; BRAM remains
-  reachable logically. BRAM leg joins the later client work.]**
+  interface (`sdram_addr/din/we/rd`; the byte lane is `addr[0]` at the
+  controller layer, inherited from the primary path) gated on: parked ∧
+  primary-client-idle ∧ the bridge's one-outstanding-op serialisation. MMU
+  bypassed (physical, by definition) and untouched (P-D); `z80_bus_mux` is
+  not involved. `MD`=physical makes `AR` 28-bit for both surfaces.
+  **[R35 revision, landed R40: the BRAM-mux leg is deferred (owner ruling);
+  P1 is the SDRAM physical window only (pages 0..8191, phys 0000000..7FFFFFF)
+  -- phys[27]=1 (page 8192, the block RAM) is rejected: by the monitor with
+  `?` for a typed start address, and by the client itself (done+err, no wire
+  activity) for anything else, e.g. a range running off the top (`RD ERR`/
+  `WR ERR`). BRAM remains reachable logically. The BRAM leg joins later
+  client work.]**
+  *As landed (R40).* `ssp/rtl/ssp_mem_client.vhd` sits in the CPM core
+  (`MicrocomputerZ80CPM`, ports `ssp_ph_*`, all defaulted idle) and a 2:1 select
+  (`ph_borrow`) on the four SDRAM request drivers hands the port to it for one
+  transaction. Seam: a request *level* from the bridge (`ph_req/we/addr/wdata`),
+  answered by a 1-clk `ph_done` (+ `ph_err` on reject/failure) and `ph_rdata`;
+  a request is admitted only after `ph_req` was seen low since the last one.
+  `parked` = BusAck ∧ BUSRQ still asserted ∧ engine not owning the bus;
+  `prim_idle` = primary SDRAM FSM in `S_IDLE`. Not parked is an immediate
+  error (zero wire activity while the Z80 runs -- the R-27 headline); a busy
+  primary FSM (a posted write issued just before the grant) is waited for, up
+  to `ADMIT_TO`, then error. The request level rises with `c_addr/c_din` and is
+  held until the completion pulse (stall-tolerant), then falls and stays low
+  for a 3-clk gap (no merging in the MrZ80.sv request synchroniser); `borrow`
+  rises with the level and falls after the gap. Failure modes all end in
+  done+err: no completion within `OP_TO`; the park dropping mid-op (the
+  in-flight transaction cannot be recalled, so it finishes and is reported);
+  reset aborts at once. The bridge adds its own 2^22-clk watchdog
+  (`ENGINE_ERR`), holds BUSRQ through the op like an engine cycle, and counts
+  it in `SEQ_BUSY`. `ENG_STAT.LAST_OP` gains 8 = physical read, 9 = physical
+  write. Monitor surface (UX still open, OQ-24): modal `PHY`/`LOG` today; all
+  mode-dependent behaviour is behind `m-pa`/`m-amask`/`m-a.`/`m-arg-a`/
+  `m-next@`/`m-next!` in `monitor.fs`, so a per-command-verb surface would only
+  change where `m-pa` and `MD` come from.
 - **P2 — background window (D-15-B):** `ssp_sd` client on the vid port,
   **reads only**; verified arbitration priority (refresh>cpu>vid) keeps the
   Z80 whole; acceptance = sim assertion suite showing vid traffic behaves
@@ -1373,7 +1401,7 @@ New:
 | R-24 | WDG_RUN (≤4 ms transient auto-release) / WDG_PARK (FW-hold-only release + console demote) / engine-park unaffected | `tb_bridge_wdg` |
 | R-25 | console mux default passthrough with RV in reset (P-B); `CONN_ROUTE` switch-over; fail-safe on `wdg_park` | `tb_ssp_mux` |
 | R-26 | vid-port reads benign to primary path (refresh-class latency envelope, zero corruption; Z80 whole during background sweeps) — **P2 gate** (session R3 criterion) | `tb_ssp_sd` |
-| R-27 | `ssp_mem_client`: parked R/W vs BRAM page + SDRAM incl. odd-byte DQM; zero access while Z80 runs | `tb_mem_client` |
+| R-27 | `ssp_mem_client`: parked R/W vs SDRAM window incl. odd byte addresses (BRAM leg deferred, R35/R40: page 8192 rejected); zero access while Z80 runs | `tb_mem_client`, `tb_integ_core` (real fabric + CDC model), smoke Part G |
 | R-28 | **panel engine standalone with RV held in reset**: full LOAD-AR/EXAM/DEP/PORT/STEP/RUN/STOP/RESET ritual functional | `tb_fp_engine` |
 | R-29 | MROM mount → monitor-only reset (Z80 unaffected) + new image boots; MPKG auto-eval; factory restore on full reconfig | `tb_dl_path` |
 | R-30 | mailbox: Z80 write→IRQ+mirror; Z80 read never stalls; FW `MB` roundtrip | `tb_mbx` |
@@ -2431,3 +2459,50 @@ outcomes go here, everything about "now and next" goes there.
   dict-p1a, smoke-p1a A-F, tramp-p1a, uart-fifo, GHDL tramp, integ-park,
   integ-mux, integ-core, cycle-golden, engine-golden. Factory ROM regenerated.
   **Status: complete in simulation; hardware check pending (owner rebuild).**
+
+R40 **P1b-M3: parked physical memory client (`ssp_mem_client`) lands (2026-10-29;
+owner: leave the monitor UX -- modal PHY/LOG vs per-command verbs -- open).**
+Design as in §9.2 "as landed". Decisions: (i) **client in the CPM core, bridge
+seam a request level** (not a pulse): the bridge already serialises one op, a
+level held to `ph_done` needs no extra handshake state, and the client's
+"seen low since last op" rule makes a stuck-high level harmless; (ii) **not
+parked = immediate error, primary busy = wait then error** (a posted write from
+the instruction before the grant legitimately finishes after BusAck);
+(iii) **SDRAM window only**, page >= 8192 rejected twice (monitor `?`, client
+done+err); (iv) the borrow select flips only while both request levels are low;
+sdram_dout/ready are broadcast (the primary FSM ignores ready in `S_IDLE`);
+(v) `z80_bus_mux` untouched -- `integ-mux` and `cycle-golden` re-run unmodified.
+**Verification.** `tb_mem_client` (new, 38851 checks): mock controller enforcing
+hold-until-ready, stable request, >= 3-clk request gap, data-before-ready;
+primary-FSM stand-in behind the same 2:1 mux; byte fidelity incl. odd/top
+addresses, not-parked with the primary busy (zero client activity), primary busy
+at admission (wait, then run; stuck -> timeout), window rejects, 900-clk stalls,
+dead controller (`OP_TO`), back-to-back and held-high level (no replay), reset
+mid-op, park lost mid-op, mutual exclusion and borrow-edge assertions.
+`tb_integ_core` (+ physical ops through the REAL CPM fabric and the MrZ80.sv CDC
+model): 77 writes / 177 reads / 86 rejects aliased against the engine's logical
+SDRAM window (logical C800+ad == phys 0800+ad), BRAM untouched by a rejected
+write, borrow never high while the Z80 runs. p1a lane: a mock client (sparse
+memory, pattern `a^a>>8^a>>16^A5`, `+PHDELAY`) behind the real bridge; smoke
+Part G: physical E/D, deposit/readback, bare-E continue, off-the-top `RD ERR`/
+`WR ERR`, `?` for 08000000/0FFFFFFF/10000000, LOG/PHY persistence, I/O in
+PHYSICAL, `S` showing the Z80's logical bytes in PHYSICAL, 20000-clk stall,
+bridge-watchdog `RD ERR`. **Mutations:** client -- parked gate, window check,
+prim_idle gate, armed rule, early borrow drop, rdata, reset drop, lost-park
+flag, op timeout, admission timeout, odd address: all CAUGHT; GAP removed
+SURVIVES, understood (the armed rule already spaces requests >= 3 clk under
+this protocol; GAP is defence in depth). Fabric -- parked forced true, borrow
+mux removed (we, addr): CAUGHT. Bridge -- route to engine, 16-bit address,
+rd_cap not captured, ph_err ignored, watchdog removed, direction inverted: all
+CAUGHT. **Latent firmware bugs found by the first failing physical read** (never
+reachable while logical reads cannot fail): `gc@` dropped from the caller's stack
+on error instead of leaving `( b f )`, and `m-rd-row` did `exit` inside a `do`
+loop without `unloop` (and `nip nip` over-dropped) -- the monitor rebooted.
+Fixed. `ssp_bridge.v` physical branch; `MD`/`AR`/`ENG_STAT` CSV text updated.
+**Quartus:** `tools/build.sh synth` (Analysis & Synthesis on tycho) succeeds
+with the client in the core (`emu|MicrocomputerZ80CPM|ssp_mem_client:mem_client`
+elaborated, no unconnected-port or inferred-latch findings on it; the critical
+warnings listed are the pre-existing power-up-level ones). Place & route and
+timing not run.
+**Status: complete in simulation and synthesis; hardware check pending (owner
+rebuild: `tools/build.sh`, `make install`).**
