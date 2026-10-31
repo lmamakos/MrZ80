@@ -15,6 +15,11 @@ rebuilt around two goals:
    signal is observable, so drive **256 addressable RGB LEDs** with the state of
    the whole machine.
 
+Alongside the Z80 sits an embedded RISC-V **System Support Processor (SSP)**
+running Forth, which provides a PDP-11/ODT-style debug monitor: park the Z80 at
+an instruction boundary from the serial console, examine and deposit memory
+(logical or physical), view registers, single-step, and restart at any address.
+
 The core boots CP/M 2.2/3.0 today; RomWBW bring-up is ongoing.
 
 ## Credits & origin
@@ -126,6 +131,42 @@ guide, register map and profile-file format are in
 [`Components/FRONTPANEL/README.md`](Components/FRONTPANEL/README.md); the
 CPU-side signal source is in [`doc/t80_reg_debug_vector.md`](doc/t80_reg_debug_vector.md);
 the wish-list it grew from is in `Components/FRONTPANEL/FEATURE.md`.
+
+## SSP debug monitor
+
+The **System Support Processor** is a small RV32 soft CPU (FemtoRV32) running
+Mecrisp-Quintus Forth inside the FPGA. It never changes what the Z80 does while
+you aren't using it: with the OSD **SSP Monitor** item Off it is electrically
+absent, and it claims no Z80 I/O ports. Turn **SSP Monitor** and **SSP Serial
+Escape** On, and while any software runs, typing the escape character
+(**`^]`**) on the serial console parks the Z80 at an instruction boundary and
+brings up a `.` prompt:
+
+```
+MRZ80 SSP MONITOR  ? = HELP
+.R
+PC=00E9 SP=FFFE AF=0044 BC=0000 DE=0000 HL=00C3
+```
+
+| Command | Function |
+|---------|----------|
+| `E [aaaa [n]]` / `D [aaaa]` | Examine (hex + ASCII) / deposit memory |
+| `R` | Registers, including the shadow bank, I, R, IM and IFF |
+| `G [aaaa]` | Resume the Z80, or restart it at `aaaa` |
+| `S [n]` | Single-step `n` instructions, one line each (interrupts held off) |
+| `I aaaa` / `O aaaa dd` | Read / write a Z80 I/O port |
+| `MAP` | The four MMU frames and the physical pages they map |
+| `PHY` / `LOG` | Examine/deposit by **28-bit physical** SDRAM address (`0000000`–`7FFFFFF`, bypassing the MMU) or by the Z80's logical address |
+| `F` | Leave to the raw Forth the monitor is written in |
+
+Physical access covers the SDRAM only; the block-RAM page at `0x8000000` is
+reached through the logical view. The OSD also has **Reset SSP** to restart the
+monitor processor without touching the Z80. A hardware watchdog keeps a hung
+monitor from holding the Z80. The monitor firmware is a Forth ROM image built
+in `ssp/fw/` and baked into the core; its register interface is generated from
+`ssp/regs/ssp_regs.csv`. See [`doc/OVERVIEW.md`](doc/OVERVIEW.md) §6 for a
+tour, [`doc/SSP_DESIGN.md`](doc/SSP_DESIGN.md) for the design and
+[`doc/SSP_STATUS.md`](doc/SSP_STATUS.md) for current status.
 
 ## CamelFORTH
 
@@ -290,6 +331,16 @@ CPU selection any more — the core is Z-80 only.)
 * **Front Panel Profile** (`Software`, `0`..`7`) — overrides which profile the
   LEDs display, live, without affecting software's view.
 
+### SSP monitor
+
+* **SSP Monitor** (Off/On) — enables the support processor and its monitor
+  console. Off = the subsystem is indistinguishable from absent.
+* **SSP Serial Escape** (Off/On) — with this On, the escape byte (`^]` by
+  default) on the selected serial port parks the Z80 and enters the monitor.
+  With it Off, every byte value passes through to the Z80 untouched.
+* **Reset SSP** — restarts the monitor processor (~1 ms reset pulse) without
+  resetting the Z80.
+
 ### Communication settings
 
 * **Baud Rate** — 115200 / 38400 / 19200 / 9600 / 4800 / 2400.
@@ -329,8 +380,10 @@ in `HARDWARE.md` for SD-card board options.
 
 | Where | Contents |
 |-------|----------|
-| `README.md` (this file) | Project overview, features, booting, OSD, build |
-| [`HARDWARE.md`](HARDWARE.md) | Memory map, full I/O port map, boot/reset behaviour, SD-card board options, custom instructions |
+| `README.md` (this file) | Project overview, features, booting, SSP monitor, OSD, build |
+| [`doc/OVERVIEW.md`](doc/OVERVIEW.md) | End-user technical tour: RomWBW/CP/M environment, OSD workflow, blinkenlights, CamelFORTH diagnostics, SSP monitor |
+| [`HARDWARE.md`](HARDWARE.md) | Memory map, full I/O port map, boot/reset behaviour, SD-card board options, SSP monitor summary, custom instructions |
+| [`doc/SSP_DESIGN.md`](doc/SSP_DESIGN.md) / [`doc/SSP_STATUS.md`](doc/SSP_STATUS.md) | SSP architecture and decisions / live milestone status (start with `SSP_STATUS.md`) |
 | [`HISTORY.md`](HISTORY.md) | Development history and design rationale |
 | [`REQUIREMENTS.md`](REQUIREMENTS.md) | Requirements and the RomWBW roadmap |
 | [`Components/FRONTPANEL/README.md`](Components/FRONTPANEL/README.md) | Front-panel subsystem user guide / datasheet |

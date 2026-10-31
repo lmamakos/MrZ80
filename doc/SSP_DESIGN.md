@@ -2458,7 +2458,8 @@ outcomes go here, everything about "now and next" goes there.
 - Full regression green: regmap-check, sync, seam-check, lint-ssp, p1a,
   dict-p1a, smoke-p1a A-F, tramp-p1a, uart-fifo, GHDL tramp, integ-park,
   integ-mux, integ-core, cycle-golden, engine-golden. Factory ROM regenerated.
-  **Status: complete in simulation; hardware check pending (owner rebuild).**
+  **Status: complete in simulation. [2026-10-31: owner reports `S` working on
+  hardware.]**
 
 R40 **P1b-M3: parked physical memory client (`ssp_mem_client`) lands (2026-10-29;
 owner: leave the monitor UX -- modal PHY/LOG vs per-command verbs -- open).**
@@ -2504,5 +2505,5 @@ with the client in the core (`emu|MicrocomputerZ80CPM|ssp_mem_client:mem_client`
 elaborated, no unconnected-port or inferred-latch findings on it; the critical
 warnings listed are the pre-existing power-up-level ones). Place & route and
 timing not run.
-**Status: complete in simulation and synthesis; hardware check pending (owner
-rebuild: `tools/build.sh`, `make install`).**
+**Status: complete in simulation and synthesis. [2026-10-31: owner reports
+physical `E`/`D` working on hardware.]**

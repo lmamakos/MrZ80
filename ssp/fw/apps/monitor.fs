@@ -20,10 +20,16 @@
 \   S [n]         single-step n instructions (default 1) with boundary
 \                 re-park; INT is held off for the whole sequence (R39);
 \                 bare CR repeats the last S; any key breaks a trace
+\   I aaaa        read a Z80 I/O port;  O aaaa dd  write one (R37)
+\   MAP           the four MMU frames: logical -> physical page (R37)
+\   PHY / LOG     E/D address mode: PHYSICAL (28-bit, SDRAM window only, via
+\                 ssp_mem_client, R40) or LOGICAL (default; Z80 view via the MMU)
 \   F             leave to the Forth REPL (`mon` re-enters)
 \   ? / H         help
-\ Numbers are hex, 1..8 digits, any case.  Memory is the Z80's LOGICAL
-\ space through the D-30 sequencer, so E/D/R need the Z80 parked.
+\ Numbers are hex, 1..8 digits, any case.  E/D use the Z80's LOGICAL space
+\ through the D-30 sequencer unless PHY is selected (then up to 7 digits, phys
+\ 0000000..7FFFFFF; the block-RAM page is rejected with ?).  Everything but
+\ F/? needs the Z80 parked.
 
 \ ---- bits composed into CTRL values (ssp-regs.fs masks) ----------------------
 SSP_CTRL_ESC_BREAK_EN SSP_CTRL_CONSOLE_OWN or SSP_CTRL_Z_BUSRQ_N or

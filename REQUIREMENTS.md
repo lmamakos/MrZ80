@@ -88,12 +88,15 @@ performance/feature item (see item 4).
 **Traceability (2026-10).** The front-panel examine/deposit port
 requirement of this item is subsumed by the debug-monitor design in
 `doc/SSP_DESIGN.md` (v1.0-draft; the subsystem is now **SSP — System Support Processor**, renamed from the inherited "ODT" label at R13): the RISC-V support CPU
-(VexRiscv + Mecrisp-Quintus Forth) drives a cycle-accurate `ssp_bridge`
-mastering engine, a parked physical-memory client (`ssp_mem_client`,
-borrowing the existing SDRAM/BRAM wiring without disturbing guest state),
-and a hardware front-panel engine — delivering independent logical and
-physical examine/deposit without a dedicated new port in the arbiter
-sketched below.
+(FemtoRV32 + Mecrisp-Quintus Forth, selected at R23) drives a cycle-accurate
+`ssp_bridge` mastering engine, a parked physical-memory client
+(`ssp_mem_client`, borrowing the existing SDRAM client wiring without
+disturbing Z80 state), and a hardware front-panel engine — delivering
+independent logical and physical examine/deposit without a dedicated new
+port in the arbiter sketched below.  **Status (R40):** logical and physical
+(SDRAM window, `0000000`–`7FFFFFF`) examine/deposit work from the monitor
+(`E`/`D`, `PHY`/`LOG`) on hardware; physical access to the block-RAM page is
+deferred, and the front-panel engine is P2.
 
 **Rework decisions (2026-10, round R9; full record
 `doc/SDRAM_REWORK_PLAN.md`).** The arbiter/cache architecture below is

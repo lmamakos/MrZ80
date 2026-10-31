@@ -1,8 +1,9 @@
 # SSP_STATUS — state, plans and hand-off for the System Support Processor
 
-Updated: **2026-10-29 (round R40, uncommitted)** · Branch `r24-p1b`, R39 committed
-locally (`30aed3a`, not pushed); R40 (M3) in the tree · Phase **P1b**; M4 and M3
-done in simulation, both await the owner's hardware check.
+Updated: **2026-10-31** · Branch `r24-p1b`: R39 (`30aed3a`) and R40 (`96d3b8d`)
+committed locally, not pushed · Phase **P1b**; M4 (single-step) and M3 (physical
+memory) done in simulation and **reported working on hardware** (owner,
+2026-10-31).
 
 ## 0. How to use the SSP documents
 
@@ -36,14 +37,17 @@ Planning documents are not kept outside `doc/`.
 | R36 | Terminology pass ("Z80" not "guest", "RV RAM" not "DTCM") |
 | P1b M1 (R37) | Done: monitor `I`/`O`/`MAP`/`PHY`/`LOG` + colour stubs; port I/O independent of address mode; smoke Part E |
 | P1b M2 | **Shelved R38**: direct MMU frame taps + `MAP_CHANGED` IRQ (regmap slots reserved, read 0) |
-| P1b M4 single-step (R39) | Done in simulation (details: `SSP_DESIGN.md` §17 R39); needs the owner's hardware check (§2) |
-| P1b M3 physical memory client (R40) | Done in simulation (details: `SSP_DESIGN.md` §9.2 "as landed", §17 R40); Quartus synth OK; full compile + hardware check pending (§3) |
+| P1b M4 single-step (R39) | **Done**, owner-checked on hardware (details: `SSP_DESIGN.md` §17 R39) |
+| P1b M3 physical memory client (R40) | **Done**, owner-checked on hardware (details: `SSP_DESIGN.md` §9.2 "as landed", §17 R40) |
 
 ### 1.2 What is on hardware
 
-The board was last flashed for P1a first light (R35). M1 (R37) and everything
-after it need an owner rebuild: `tools/build.sh`, then `make install`. The
-committed factory ROM (`ssp/fw/forth_rom.mif`) is current through R39.
+The owner rebuilt and flashed through R40 and reports the M1 (`I`/`O`/`MAP`/
+`PHY`/`LOG`), M4 (`S`) and M3 (physical `E`/`D`) commands working
+(2026-10-31). The committed factory ROM (`ssp/fw/forth_rom.mif`) matches
+(current through R40). Not exercisable on hardware yet: real INT sources
+(none exist; the step-time INT mask is proven in simulation only) and the
+Quartus place-and-route/timing numbers were not reviewed in this log.
 
 ### 1.3 Repository and build facts
 
@@ -80,20 +84,18 @@ committed factory ROM (`ssp/fw/forth_rom.mif`) is current through R39.
 
 ---
 
-## 2. M4 single-step (R39): done, awaiting hardware
+## 2. M4 single-step (R39): done
 
 Spec `SSP_DESIGN.md` §7.2c; results, review findings and mutation outcomes in
 §17 R39. Owner rulings: M4 before M3; INT masked for the whole step sequence;
 on timeout keep the request asserted and report `STEP ERR`; `S` / `S n` /
 bare-CR repeat, `T` reserved.
 
-### 2.1 Owner action: hardware check
+### 2.1 Hardware check: passed
 
-Rebuild (`tools/build.sh`, then `make install`) and try: escape, `D` a few
-NOPs plus a `JP`, `G aaaa`, escape, then `S`, `S 10`, bare CR, a key during
-`S 100`. Expect one line per step (`PC: b b b b AF BC DE HL SP`), `HALTED` on
-a HALT, `STEP ERR` only if the Z80 never reaches a boundary. Not exercised in
-simulation: real INT sources (none exist yet), real clock-tick masking.
+Owner-checked 2026-10-31 (escape, deposit a loop, `G aaaa`, escape, `S`,
+`S n`, bare CR repeat, key break). Real clock-tick INT masking cannot be
+exercised until an INT source exists.
 
 ### 2.2 Verification tooling added (reuse for later milestones)
 
@@ -127,7 +129,7 @@ simulation: real INT sources (none exist yet), real clock-tick masking.
 
 ---
 
-## 3. M3 physical memory client (R40): done, awaiting hardware
+## 3. M3 physical memory client (R40): done
 
 Spec `SSP_DESIGN.md` §9.2 ("as landed (R40)"), results and mutation outcomes in
 §17 R40. SDRAM window only (phys 0000000..7FFFFFF); the block-RAM page is
@@ -137,15 +139,11 @@ FW isolates the choice behind `m-pa`/`m-amask`/`m-a.`/`m-arg-a`/`m-next@`/
 `m-next!` (`monitor.fs`, PHY/LOG section); a verb UX changes only where `m-pa`
 and `MD` come from. RTL needs no change either way.
 
-### 3.1 Owner action: synthesis and hardware check
+### 3.1 Hardware check: passed
 
-`tools/build.sh` (full compile: Analysis & Synthesis already passed at R40,
-place & route and timing not yet run), then `make install`. On the board: escape,
-`PHY`, `E 0 20` (physical SDRAM contents), `D`/`E` round trip at some address
-(e.g. `D 1000`, `E 1000 4`), `E 08000000` -> `?`, `LOG` and compare against the
-Z80's logical view through `MAP` (a frame's phys base + offset must show the
-same bytes logically and physically). While the Z80 runs (before the escape)
-nothing changes: the client is silent unless parked.
+Owner-checked 2026-10-31 (`PHY`, physical `E`/`D` round trips, `?` for the
+block-RAM page, cross-check against `MAP`). Quartus Analysis & Synthesis passed
+at R40.
 
 ### 3.2 What was added (reuse)
 

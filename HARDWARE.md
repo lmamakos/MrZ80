@@ -619,6 +619,30 @@ shift accordingly.
 | `0xA7`| R/W | Active profile number (low 3 bits, 0 at reset). Selects the profile whose map/colours `0xA3`/`0xA5` access and that drives the LEDs (latched per refresh frame). The OSD item "Front Panel Profile" can override the displayed profile without affecting this register. See `Components/FRONTPANEL/README.md`. |
 
 
+## System Support Processor (SSP) monitor
+
+An embedded RISC-V core (FemtoRV32) running Mecrisp-Quintus Forth gives the
+machine a debug console.  It claims **no Z80 I/O ports** today: it reaches the
+Z80 side only through the CPU's bus-request path (parking the T80 on an
+instruction boundary) and, for physical memory, by borrowing the SDRAM client
+wiring while the Z80 is parked.  With the OSD **SSP Monitor** item off it is
+electrically transparent.  Reserved for later: `0xD0`-`0xD3` (mailbox) and
+`0xFC`-`0xFF` sense switches (panel phase P2).
+
+* **Entry:** the escape character (`^]` by default; OSD **SSP Serial Escape**
+  on) typed on the active serial port parks the Z80 and hands the console to
+  the monitor.  `G` hands it back.
+* **Commands:** `E`/`D` examine/deposit, `R` registers, `G [aaaa]` go/continue,
+  `I`/`O` Z80 I/O ports, `MAP` MMU frames, `S [n]` single-step (interrupts held
+  off during the sequence), `PHY`/`LOG` address mode, `F` raw Forth, `?` help.
+* **Addressing:** logical (the Z80's MMU-translated 64 KB view, the default) or,
+  after `PHY`, **physical**: up to 7 hex digits covering the SDRAM window
+  `0x0000000`-`0x7FFFFFF`, bypassing the MMU.  The block-RAM page (physical
+  `0x8000000`) is not reachable in physical mode (rejected with `?`); use the
+  logical view for it.  Physical access works only while the Z80 is parked.
+* **Reference:** user tour `doc/OVERVIEW.md` §6; design `doc/SSP_DESIGN.md`;
+  live state `doc/SSP_STATUS.md`; register map `doc/SSP_REGS.md`.
+
 ## Custom CPU instructions
 
 The T80 Z-80 core (`Components/Z80/T80_MCode.vhd`, `T80.vhd`) implements

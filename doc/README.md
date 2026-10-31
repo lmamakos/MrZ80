@@ -17,6 +17,11 @@ from the core.
 The System Support Processor (SSP) is documented in two files with separate
 jobs (update rules in `SSP_STATUS.md` §0):
 
+`OVERVIEW.md` -- end-user technical tour of the whole machine (CP/M peripheral
+environment, OSD, blinkenlights, CamelFORTH, the SSP monitor and its commands,
+status and roadmap). The "sizzle" document: update its §6/§7 when monitor
+commands land or hardware status changes.
+
 `SSP_STATUS.md` -- **start here.** The living state/plan/hand-off document:
 current state and milestones, the active milestone's plan and verification
 checklist, the next milestone's plan, backlog, owner questions, hazards and
