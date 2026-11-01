@@ -809,6 +809,15 @@ mplus1: pop de          ; restore saved IP
         ld c,a
         next
 
+;C NOT      x1 -- x2             logical NOT
+    head nNOT,3,'NOT',docode
+    	ld a,b
+	or c           ;was ToS zero?
+	ld bc,0        ;set ToS zero
+	jr nz,xNOT1    ;return with 0 if non-zero
+	dec bc         ;else -1
+xNOT1:	next	       ;return with ToS either -1 or 0
+
 ;C INVERT   x1 -- x2            bitwise inversion
     head INVERT,6,'INVERT',docode
         ld a,b
