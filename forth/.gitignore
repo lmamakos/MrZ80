@@ -10,3 +10,6 @@ zout
 *.rel
 *.sym
 *~
+
+# generated from the shared disassembler source (forth/disasm)
+blocks/[34][0-9]-disasm.fth

@@ -20,6 +20,13 @@ The second, `io-multi.azm` is alternatively used in the "bare-metal"
 version which runs directly on the hardware.
 
 
+## Shared Z-80 disassembler
+
+`DISASM` (blocks 30-49) is generated from `disasm/z80dis.fth`, the same source
+the SSP monitor's `U` command uses. Do not edit the generated block files; see
+`disasm/README.md`.
+
+
 ## Some notes, tools and snippets used for standalone environment
 
 The FPGA core that implements the Z-80 system has an MMU (as
