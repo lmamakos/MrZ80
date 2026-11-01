@@ -41,7 +41,7 @@ table (§2), requirements ↔ benches (§13), open questions (§14), phasing
 `ssp/regs/ssp_regs.csv` (do not hand-edit).
 
 `SSP_PANEL_UX.md` -- front-panel user-experience spec (v0.2; deep-dive
-2026-10-23 + MMU-switch addendum): lamp zones/chrome/colours, paged state
+2026-10-23 + MMU-switch addendum + R44 OSD-entry note): lamp zones/chrome/colours, paged state
 blocks with per-page remap, BP-ARM/FREEZE/START-AT-A modifiers, MMU
 EXAM/DEPOSIT map switch (§4A), PANEL_LOCK sovereignty ladder,
 encoder hold-cursor + double-press-zero, `*` commentary protocol,

@@ -487,7 +487,9 @@ dictionary window with room to grow.
 * **Transparency by default.** Without the OSD's **SSP Serial Escape**
   (`OM`), no byte value on the wire has special meaning — WordStar `^K`
   sequences and binary uploads are safe. Only an enabled, single configurable
-  escape character (`ESC_CHAR`, default `^]`) triggers a hand-over.
+  escape character (`ESC_CHAR`, default `^]`) triggers a hand-over; with `OM`
+  off, the only way in left is deliberately picking **Enter SSP Monitor** in
+  the OSD.
 * **Interrupts held during stepping** so a 50 Hz clock tick can't hijack your
   trace; pending sources stay visible.
 * **Roadmap:** breakpoints with stop-before-execute (the hardware injects a

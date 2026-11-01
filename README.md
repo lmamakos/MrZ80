@@ -17,7 +17,8 @@ rebuilt around two goals:
 
 Alongside the Z80 sits an embedded RISC-V **System Support Processor (SSP)**
 running Forth, which provides a PDP-11/ODT-style debug monitor: park the Z80 at
-an instruction boundary from the serial console, examine and deposit memory
+an instruction boundary from the serial console — or, since R44, from the
+monitor's own screen and keyboard — examine and deposit memory
 (logical or physical), view registers, single-step, and restart at any address.
 
 The core boots CP/M 2.2/3.0 today; RomWBW bring-up is ongoing.

@@ -179,8 +179,8 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 |---------------|-------|-----------------------------------------------------------------------------------------------------------|
 | `0x38`        | 1     | Unmapped. Formerly the ROM-disable trigger; the boot ROM has been removed, so writes are ignored.        |
 | `0x70`-`0x71` | 2     | DS12887 real-time clock (`n_rtcCS`, `Components/RTC/ds12887.vhd`). AT-style index/data pair: `0x70` = register index, `0x71` = selected register. See below. |
-| `0x80`-`0x81` | 2     | SBCTextDisplayRGB (`n_interface1CS`). VGA/PS-2 text display.                                              |
-| `0x82`-`0x83` | 2     | bufferedUART (`n_interface2CS`). Serial console.                                                          |
+| `0x80`-`0x81` | 2     | SBCTextDisplayRGB (`n_interface1CS`). VGA/PS-2 text display, 6850 ACIA programming model. RomWBW video console (ACIA unit 1). See Serial-like devices below. |
+| `0x82`-`0x83` | 2     | bufferedUART (`n_interface2CS`). Serial console, 6850 ACIA programming model. RomWBW boot console (ACIA unit 0). See Serial-like devices below. |
 | `0x88`-`0x8F` | 8     | SPI SD card controller (`n_sdCardCS`, `sd_controller.vhd`). Talks only to the physical SD socket. Register offset via `cpuAddress(2 downto 0)`. See SD storage below. |
 | `0x90`-`0x97` | 8     | HPS image block device (`n_blockDevCS`, `Components/SDCARD/hps_blockdev.vhd`). Same register layout as the SD controller plus image-size registers; storage is an image file on the MiSTer Linux side, mounted from the OSD. See SD storage below. |
 | `0xA0`-`0xA7` | 8     | Front-panel subsystem control window (`n_fpSubsysCS`). See Front-panel I/O register map below.            |
@@ -436,10 +436,14 @@ with display attributes, cursor positioning, etc.
 | Signal | Description                              |
 |--------|------------------------------------------|
 | nInt   | active low Interrupt - interrupt pending if interrupts enabled. |
-| nCTS   | active low CTS signal, tied low (active) |
-| nDCD   | active low DCD signal, tied low (active) |
+| nCTS   | reads 0 (clear to send — always ready; there is no handshake) |
+| nDCD   | reads 0 (data carrier present — always ready) |
 | TXDONE | Ready to send more characters to display |
 | RXRDY  | Input character from keyboard ready      |
+
+While the device is in 6850 **master reset** (control write `03`: bits 1:0 =
+`11`) the whole status reads `0x00` and display writes are ignored, until the
+next control write.
 
 ##### Keyboard Input
 
@@ -505,7 +509,7 @@ and it is easy to damage those I/O pins.
 | Port       | Function                                                |
 |------------|---------------------------------------------------------|
 | `82`       | Read: Status Register, Write: Control register          |
-| `83`       | Read: Keyboard input character, Write: Display terminal emulator |
+| `83`       | Read: received character, Write: character to transmit  |
 
 ##### Status register 
 |  7   |  6 |  5  |  4  |  3  |  2  |  1  |  0  |
@@ -517,10 +521,15 @@ and it is easy to damage those I/O pins.
 | Signal | Description                              |
 |--------|------------------------------------------|
 | nInt   | active low Interrupt - interrupt pending if interrupts enabled. |
-| nCTS   | active low CTS signal, tied low (active) |
-| nDCD   | active low DCD signal, tied low (active) |
-| TXDONE | Ready to send more characters to display |
-| RXRDY  | Input character from keyboard ready      |
+| nCTS   | active low CTS signal, tied low (always clear to send) |
+| nDCD   | active low DCD signal, tied low (carrier always present) |
+| TXDONE | Transmit holding register empty — ready for the next character |
+| RXRDY  | Received character ready                 |
+
+The same 6850 **master reset** applies (control write `03` -> status `0x00`
+until the next control write). Note that a master reset also resets the
+transmitter state machine, so a character in flight or queued at that moment may
+be truncated or lost — as on a real 6850.
 
 ### MMU I/O register window detail
 16 consecutive ports, decoded relative to `io_cs` on the low 4 address bits, `0xB0` - `0xBF`:

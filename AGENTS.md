@@ -248,6 +248,14 @@ The System Support Processor work is documented in two files in `doc/`:
 
 Keep milestone plans in `SSP_STATUS.md`, not in separate plan files.
 
+Console surfaces (R44): the serial port (`$82`/`$83`) and the video terminal
++ keyboard (`$80`/`$81`) both follow the 6850 master-reset semantics RomWBW's
+ACIA driver detects; the SSP monitor can sit on its own video terminal
+(`ssp/rtl/ssp_vdu.vhd`), entered by OSD **Enter SSP Monitor** with **SSP
+Console** picking Serial/Video. Regression lanes: `make -C sim terminal`
+(real terminal RTL + `ssp_vdu` + ACIA master reset, GHDL) and
+`make -C sim vdu` (console routing on the p1a lane).
+
 ## What not to commit
 
 Do **not** track intermediate files that are ephemeral or can easily be

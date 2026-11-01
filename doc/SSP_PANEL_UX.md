@@ -3,7 +3,8 @@
 Status: **DRAFT v0.2** — v0.1 = first pass of the panel-UX deep-dive
 (OQ-16b/OQ-12), owner session of 2026-10-23, recorded as round **R8** in
 `SSP_DESIGN.md` §17; **v0.2** = round **R10** addendum — the MMU
-map switch (§4A). Renamed from `ODT_PANEL_UX.md` at R13 (subsystem is now
+map switch (§4A); **R44 note (2026-11-01):** T3 lamp wording and the §6
+entry-path note (OSD **Enter SSP Monitor** / **SSP Console**, D-19 built). Renamed from `ODT_PANEL_UX.md` at R13 (subsystem is now
 **SSP — System Support Processor**; naming map in `SSP_DESIGN.md` "Naming").
 Implements the panel-side surface of design v1.0-draft §§11/6. Notation/tags as in the design doc; `[proposed]` marks items
 still open to board-freeze adjustment.
@@ -46,7 +47,7 @@ status never move). Content zones A/B/D are remapped per page (§3).
 | T0 | RUN | green |
 | T1 | HALT (parked) | red |
 | T2 | MON active (OSD OK ∧ S32) | white |
-| T3 | CONSOLE_OWN (monitor holds SNAC) | pale white |
+| T3 | CONSOLE_OWN (monitor holds the console — serial or, since R44, its own video terminal) | pale white |
 | T4 | PANEL_LOCK held (FW) | amber |
 | T5 | FW alive | cyan, slow blink (WDG kick heartbeat) |
 | T6 | WDG dead (FW presumed dead) | violet, solid |
@@ -171,7 +172,12 @@ Ladder, strongest first:
    *Terminology (R15):* this panel **ESCAPE toggle** *disables* the
    monitor. It is unrelated to the **serial escape character** (`ESC_CHAR`,
    default `^]`, honoured only while OSD `OM` is On — design D-14), which
-   *enters* the monitor from a terminal.
+   *enters* the monitor from a terminal. Since **R44** the OSD item
+   **Enter SSP Monitor** (bit 21, trigger) enters the monitor the same way
+   without `OM`; OSD **SSP Console** (bit 24) then picks serial or the
+   monitor's own video terminal (D-19). All three remain below `OK`-off on
+   the ladder: `OK`-off still forces `console_own` 0 and returns the screen
+   and keyboard to the guest.
 2. **PANEL_LOCK (`CTRL.bit9`, FW-set)** — gates only resumption-type
    actions: `RUN`(up) and START-AT-A are **rejected** while held (red-HALT
    flash + `lock_rejected` log/event). STOP, EXAM/DEP/PORT (which transient
