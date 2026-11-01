@@ -1234,6 +1234,7 @@ end generate GEN_NO_ATTRAM;
 						end if;
 						cursorHorizRestore <= cursorHoriz;
 						cursorVertRestore <= cursorVert;
+						cursorHoriz <= 0;	-- clear the whole new bottom line, not just from the cursor
 						dispState<=clearLine;
 					end if;
 				elsif dispCharWRData=12 then

@@ -12,6 +12,15 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+package behav_ram_pkg is
+    type ram2k_t is array (0 to 2047) of std_logic_vector(7 downto 0);
+end package behav_ram_pkg;
+
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use work.behav_ram_pkg.all;
+
 entity DisplayRam2K is
     port (
         address_a : in  std_logic_vector(10 downto 0);
@@ -27,8 +36,7 @@ entity DisplayRam2K is
 end entity DisplayRam2K;
 
 architecture behav of DisplayRam2K is
-    type ram_t is array (0 to 2047) of std_logic_vector(7 downto 0);
-    signal ram : ram_t := (others => (others => '0'));
+    signal ram : ram2k_t := (others => (others => '0'));
     signal ra, rb : integer range 0 to 2047 := 0;
 begin
     process (clock)

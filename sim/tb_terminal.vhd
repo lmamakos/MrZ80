@@ -12,10 +12,13 @@
 --   E  kbEnable: with the SSP screen shown the Z80's terminal keeps no keys and
 --      ssp_vdu delivers them on its byte port; its tx port writes its screen
 --   F  the serial ACIA (bufferedUART) honours a master reset the same way
+--   G  scrolling: LF on the bottom row with the cursor mid-line (as Mecrisp's
+--      LF CR does) must blank the whole new bottom line
 
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use work.behav_ram_pkg.all;
 
 entity tb_terminal is
 end entity tb_terminal;
@@ -75,6 +78,8 @@ begin
     stim : process
         alias z80_cursor is << signal .tb_terminal.z80term.cursorHoriz : integer range 0 to 79 >>;
         alias vdu_cursor is << signal .tb_terminal.vdu.term.cursorHoriz : integer range 0 to 79 >>;
+        alias z80_start is << signal .tb_terminal.z80term.startAddr : integer range 0 to 2000 >>;
+        alias z80_ram is << signal .tb_terminal.z80term.GEN_2KRAM.dispCharRam.ram : ram2k_t >>;
 
         procedure check(ok : boolean; msg : string) is
         begin
@@ -109,6 +114,14 @@ begin
             d := dataOut;                   -- sampled late in the strobe
             n_rd <= '1';
             for i in 1 to 5 loop wait until rising_edge(clk); end loop;
+        end procedure;
+
+        procedure z80_put(str : string; settle : natural) is
+        begin
+            for i in str'range loop
+                cpu_wr('1', std_logic_vector(to_unsigned(character'pos(str(i)), 8)));
+                for j in 1 to settle loop wait until rising_edge(clk); end loop;
+            end loop;
         end procedure;
 
         procedure status(d : out std_logic_vector(7 downto 0)) is
@@ -172,6 +185,7 @@ begin
 
         variable st, d : std_logic_vector(7 downto 0);
         variable c0 : integer;
+        variable zrow : integer;
         constant ESC : character := character'val(27);
         constant RIGHT_SEQ : string(1 to 3) := ESC & "[C";
         constant SSP_STR   : string(1 to 3) := "SSP";
@@ -301,6 +315,22 @@ begin
         u_n_rd <= '0'; wait until rising_edge(clk); u_n_rd <= '1';
         wait until rising_edge(clk);
         check((u_dout and x"0E") = x"02", "F: ACIA detect: (status AND 0E) = 02 after clearing the reset, got " & to_hstring(u_dout));
+
+        -- G: scroll with the cursor mid-line (LF, then CR, as Mecrisp's CR) ----
+        z80_put(ESC & "[2J", 6000);
+        z80_put(ESC & "[H", 50);
+        z80_put("AB", 50);                            -- stale candidates, row 0 cols 0..1
+        z80_put(ESC & "[25;1H", 50);
+        z80_put("> ", 50);                            -- cursor at col 2 of the bottom row
+        z80_put((1 => character'val(10)), 600);       -- scroll
+        z80_put((1 => character'val(13)), 50);
+        zrow := z80_start + 24 * 80;
+        if zrow >= 2000 then zrow := zrow - 2000; end if;
+        for i in 0 to 79 loop
+            check(z80_ram(zrow + i) = x"20",
+                  "G: new bottom line col " & integer'image(i) & " blank, got " & to_hstring(z80_ram(zrow + i)));
+        end loop;
+        check(z80_cursor = 0, "G: CR after the scroll leaves the cursor in column 0");
 
         wait for 1 us;
         if fails = 0 then
