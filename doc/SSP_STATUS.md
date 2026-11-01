@@ -89,9 +89,6 @@ block-RAM bits, 13,318 ALMs; no negative slack; clk_sys setup slack 2.5 ns
   mount; there is no way to save the ROM back to the SD card (MiSTer core
   uploads are core-specific in Main). A mounted image built against an older
   register map is not detected (no image header, owner ruling R43).
-- **`sim/MicrocomputerZ80CPM_sim.vhd` has drifted** from the real file since the
-  75 Hz LED refresh commit (`0859f42`), so `make -C sim sync` fails; the sim copy
-  needs the same edit (not SSP work).
 - `U` shows branch targets as their low 16 bits (logical); under `PHY` that is
   the low 16 bits of the physical address, not a Z-80 address (the core is
   address-space agnostic; documented in `forth/disasm/README.md`).
