@@ -140,7 +140,9 @@ you aren't using it: with the OSD **SSP Monitor** item Off it is electrically
 absent, and it claims no Z80 I/O ports. Turn **SSP Monitor** and **SSP Serial
 Escape** On, and while any software runs, typing the escape character
 (**`^]`**) on the serial console parks the Z80 at an instruction boundary and
-brings up a `.` prompt:
+brings up a `.` prompt. The OSD item **Enter SSP Monitor** does the same
+without the escape byte, on the serial port or, with **SSP Console** = Video,
+on the monitor's own screen and the keyboard:
 
 ```
 MRZ80 SSP MONITOR  ? = HELP
@@ -341,6 +343,12 @@ CPU selection any more — the core is Z-80 only.)
 * **SSP Serial Escape** (Off/On) — with this On, the escape byte (`^]` by
   default) on the selected serial port parks the Z80 and enters the monitor.
   With it Off, every byte value passes through to the Z80 untouched.
+* **SSP Console** (Serial/Video) — where **Enter SSP Monitor** puts the
+  monitor: the serial port, or the monitor's own screen on HDMI/VGA with the
+  keyboard (it replaces the Z80's screen until `G`; the Z80's terminal is left
+  untouched).
+* **Enter SSP Monitor** — parks the Z80 and enters the monitor, without needing
+  **SSP Serial Escape**. Closes the OSD.
 * **SSP Monitor ROM** (`.MRZ`, `FC6`) — replaces the monitor's 128 KB ROM with
   a new image (kernel + monitor dictionary) and restarts the monitor on it,
   without resetting the Z80. Remembered and auto-loaded at core start; with no

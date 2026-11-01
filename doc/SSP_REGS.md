@@ -60,7 +60,7 @@ W1C, RCW (shared FW/engine, G-3).
 | 0x0B8 | `WDG_STAT` | R | `00000000` | RUN_EXPIRED_L 0:0; PARK_DEAD_L 1:1; PARK_TIMER 2:2 | watchdog status (sec 6.9) |
 | 0x0C0 | `IRQ_EN` | RW | `00000000` | BP0 0:0; BP1 1:1; BP2 2:2; BP3 3:3; TRAP 4:4; RX 5:5; ESC 6:6; MBX 7:7; FP_DONE 8:8; MAP_CHANGED 9:9; SD_DONE 10:10; WDG_PARK 11:11 | gates optional IRQ line only (D-27) |
 | 0x0C4 | `IRQ_PENDING` | W1C | `00000000` | BP0 0:0; BP1 1:1; BP2 2:2; BP3 3:3; TRAP 4:4; RX 5:5; ESC 6:6; MBX 7:7; FP_DONE 8:8; MAP_CHANGED 9:9; SD_DONE 10:10; WDG_PARK 11:11 | sticky event bits; v1 FW polls (D-27); write-1 clears; MAP_CHANGED producer shelved (R38) |
-| 0x0C8 | `CONN_ROUTE` | RW | `00000001` | OUT_SNAC 0:0; OUT_HDMI 1:1; IN_SNAC 2:2; IN_KBD 3:3 | console routing policy (D-19); HW fail-safe defaults on reset/wdg_park |
+| 0x0C8 | `CONN_ROUTE` | RW | `00000005` | OUT_SNAC 0:0; OUT_HDMI 1:1; IN_SNAC 2:2; IN_KBD 3:3 | console routing (D-19, live R44): OUT_SNAC = monitor TX on the serial pin; OUT_HDMI = monitor TX to the SSP video terminal (shown while the monitor owns the console); IN_SNAC/IN_KBD = RX FIFO fed from the serial pin / the SSP terminal keyboard. Reset = serial (5). Hardware sets it at console entry: serial escape -> 5, OSD Enter SSP Monitor -> 5 (OSD SSP Console = Serial) or A (= Video); FW may change it |
 | 0x0D0 | `MBX0` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D0 |
 | 0x0D4 | `MBX1` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D1 |
 | 0x0D8 | `MBX2` | RW | `00000000` | DATA 7:0 | Z80 mailbox mirror $D2 |

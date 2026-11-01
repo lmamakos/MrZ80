@@ -428,10 +428,10 @@
 `define SSP_IRQ_PENDING_WDG_PARK       32'h00000800  // 11:11
 `define SSP_BIT_IRQ_PENDING_WDG_PARK   11         // bit index
 
-`define SSP_CONN_ROUTE       32'h200000C8  // RW reset 32'h00000001 | console routing policy (D-19); HW fail-safe defaults on reset/wdg_park
+`define SSP_CONN_ROUTE       32'h200000C8  // RW reset 32'h00000005 | console routing (D-19, live R44): OUT_SNAC = monitor TX on the serial pin; OUT_HDMI = monitor TX to the SSP video terminal (shown while the monitor owns the console); IN_SNAC/IN_KBD = RX FIFO fed from the serial pin / the SSP terminal keyboard. Reset = serial (5). Hardware sets it at console entry: serial escape -> 5, OSD Enter SSP Monitor -> 5 (OSD SSP Console = Serial) or A (= Video); FW may change it
 `define SSP_RIDX_CONN_ROUTE   10'h032      // word index (offset/4)
-`define SSP_CONN_ROUTE_RESET 32'h00000001          // reset value
-`define SSP_CONN_ROUTE_RESET_4 4'h1     // reset, 4-bit sized
+`define SSP_CONN_ROUTE_RESET 32'h00000005          // reset value
+`define SSP_CONN_ROUTE_RESET_4 4'h5     // reset, 4-bit sized
 `define SSP_CONN_ROUTE_OUT_SNAC       32'h00000001  // 0:0
 `define SSP_BIT_CONN_ROUTE_OUT_SNAC   0         // bit index
 `define SSP_CONN_ROUTE_OUT_HDMI       32'h00000002  // 1:1

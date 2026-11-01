@@ -182,7 +182,7 @@ package ssp_regs_pkg is
     constant C_SSP_IRQ_PENDING_SD_DONE      : natural range 0 to 31 := 10;  -- field 10:10
     constant C_SSP_IRQ_PENDING_WDG_PARK     : natural range 0 to 31 := 11;  -- field 11:11
 
-    constant C_SSP_CONN_ROUTE     : natural := 536871112;  -- 0x200000C8 RW | console routing policy (D-19); HW fail-safe defaults on reset/wdg_park
+    constant C_SSP_CONN_ROUTE     : natural := 536871112;  -- 0x200000C8 RW | console routing (D-19, live R44): OUT_SNAC = monitor TX on the serial pin; OUT_HDMI = monitor TX to the SSP video terminal (shown while the monitor owns the console); IN_SNAC/IN_KBD = RX FIFO fed from the serial pin / the SSP terminal keyboard. Reset = serial (5). Hardware sets it at console entry: serial escape -> 5, OSD Enter SSP Monitor -> 5 (OSD SSP Console = Serial) or A (= Video); FW may change it
     constant C_SSP_CONN_ROUTE_OUT_SNAC     : natural range 0 to 31 := 0;  -- field 0:0
     constant C_SSP_CONN_ROUTE_OUT_HDMI     : natural range 0 to 31 := 1;  -- field 1:1
     constant C_SSP_CONN_ROUTE_IN_SNAC      : natural range 0 to 31 := 2;  -- field 2:2

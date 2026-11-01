@@ -12,6 +12,18 @@
 --
 -- Grant Searle
 -- eMail address available on my main web page link above.
+--
+-- MrZ80 changes (R44):
+--  * The CPU register interface is clocked by clk: n_rd/n_wr are sampled and
+--    acted on at the end of the strobe (was: the strobes used as clocks).
+--  * 6850 master reset: a control write with bits 1:0 = 11 holds the status
+--    at 0 (no RDRF, no TDRE) and empties the keyboard buffer until the next
+--    control write, as a real 6850 does (RomWBW's ACIA driver detects that).
+--  * Keyboard: 16-entry buffer that drops keys when full (was: 8, wrapped);
+--    ESC sends 1B (was 03); arrows/Home/End/Ins/PgUp/PgDn and F1-F12 send
+--    VT100/xterm sequences (were keypad digits / FNkeys only).
+--  * kbEnable (keys decoded but not kept while 0), txReady and kbAvail: the
+--    SSP's own terminal instance shares the keyboard with this one.
 
 library ieee;
 	use ieee.std_logic_1164.all;
@@ -73,7 +85,12 @@ entity SBCTextDisplayRGB is
  
 		-- FN keys passed out as general signals (momentary and toggled versions)
 		FNkeys	: out std_logic_vector(12 downto 0);
-		FNtoggledKeys	: out std_logic_vector(12 downto 0)
+		FNtoggledKeys	: out std_logic_vector(12 downto 0);
+
+		-- R44: keyboard routing and a status view (status bits 1 and 0)
+		kbEnable	: in  std_logic := '1';	-- 0 = keys are decoded but not kept
+		txReady	: out std_logic;			-- display can take a byte
+		kbAvail	: out std_logic			-- a key is waiting
  );
 end SBCTextDisplayRGB;
 
@@ -152,8 +169,27 @@ constant CHARS_PER_SCREEN : integer := HORIZ_CHARS*VERT_CHARS;
 	signal	statusReg : std_logic_vector(7 downto 0) := (others => '0'); 
 	signal	controlReg : std_logic_vector(7 downto 0) := "00000000";
 	 
-	type		kbBuffArray is array (0 to 7) of std_logic_vector(6 downto 0);
+	type		kbBuffArray is array (0 to 15) of std_logic_vector(6 downto 0);
 	signal	kbBuffer : kbBuffArray;
+	-- R44: registers, not an inferred RAM (written on the falling edge, read on
+	-- the rising edge: Quartus would build a dual-clock RAM with undefined
+	-- read-during-write)
+	attribute ramstyle : string;
+	attribute ramstyle of kbBuffer : signal is "logic";
+	signal	kbNextIn: integer range 0 to 15 :=0;
+	signal	kbFull: std_logic;
+	signal	masterReset: std_logic;
+
+	-- CPU interface sampled on clk (R44)
+	signal	n_wr_q, n_rd_q: std_logic := '1';
+	signal	wrData: std_logic_vector(7 downto 0) := (others => '0');
+	signal	wrSel, rdSel: std_logic := '0';
+
+	-- multi-byte key sequences (R44): queued, pushed one per idle clock
+	type		kbSeqArray is array (0 to 4) of std_logic_vector(6 downto 0);
+	signal	kbSeq : kbSeqArray;
+	signal	kbSeqLen: integer range 0 to 5 :=0;
+	signal	kbSeqIdx: integer range 0 to 5 :=0;
 
 	signal	kbInPointer: integer range 0 to 15 :=0;
 	signal	kbReadPointer: integer range 0 to 15 :=0;
@@ -259,6 +295,15 @@ constant CHARS_PER_SCREEN : integer := HORIZ_CHARS*VERT_CHARS;
 	-- "0000000","0000000","0000000","0010111"
 	-- );
 
+	-- R44: escape sequences for navigation and function keys
+	function ch(c : character) return std_logic_vector is
+	begin
+		return std_logic_vector(to_unsigned(character'pos(c), 7));
+	end function;
+	signal	kbSeqNew : kbSeqArray;
+	signal	kbSeqNewLen: integer range 0 to 5;
+	signal	kbFnNew: integer range 0 to 12;
+
 	constant kbUnshifted : kbDataArray :=
 	(
 	--  0         1         2         3         4         5         6         7         8         9         A         B         C         D         E         F
@@ -269,7 +314,7 @@ constant CHARS_PER_SCREEN : integer := HORIZ_CHARS*VERT_CHARS;
 	"0000000","0101100","1101011","1101001","1101111","0110000","0111001","0000000","0000000","0101110","0101111","1101100","0111011","1110000","0101101","0000000", -- 4
 	"0000000","0000000","0100111","0000000","1011011","0111101","0000000","0000000","0000000","0000000","0001101","1011101","0000000","1011100","0000000","0000000", -- 5 -- Added \ at 0x5C
 	"0000000","0000000","0000000","0000000","0000000","0000000","0001000","0000000","0000000","0110001","0000000","0110100","0110111","0000000","0000000","0000000", -- 6
-	"0110000","0101110","0110010","0110101","0110110","0111000","0000011","0000000","0011011","0101011","0110011","0101101","0101010","0111001","0000000","0000000", -- 7
+	"0110000","0101110","0110010","0110101","0110110","0111000","0011011","0000000","0011011","0101011","0110011","0101101","0101010","0111001","0000000","0000000", -- 7 -- R44: ESC (76) = 1B
 	"0000000","0000000","0000000","0010111"
 	);
 
@@ -283,7 +328,7 @@ constant CHARS_PER_SCREEN : integer := HORIZ_CHARS*VERT_CHARS;
 	"0000000","0111100","1001011","1001001","1001111","0101001","0101000","0000000","0000000","0111110","0111111","1001100","0111010","1010000","1011111","0000000", -- 4
 	"0000000","0000000","0100010","0000000","1111011","0101011","0000000","0000000","0000000","0000000","0001101","1111101","0000000","1111100","0000000","0000000", -- 5 -- " on Shift-' and | at 0x7C
 	"0000000","0000000","0000000","0000000","0000000","0000000","0001000","0000000","0000000","0110001","0000000","0110100","0110111","0000000","0000000","0000000", -- 6
-	"0110000","0101110","0110010","0110101","0110110","0111000","0001100","0000000","0011011","0101011","0110011","0101101","0101010","0111001","0000000","0000000", -- 7
+	"0110000","0101110","0110010","0110101","0110110","0111000","0011011","0000000","0011011","0101011","0110011","0101101","0101010","0111001","0000000","0000000", -- 7 -- R44: ESC (76) = 1B
 	"0000000","0000000","0000000","0010111"
 	);
 begin
@@ -397,6 +442,69 @@ end generate GEN_NO_ATTRAM;
 
 	FNkeys <= FNkeysSig;
 	FNtoggledKeys <= FNtoggledKeysSig;	
+
+	-- R44: keys that send a sequence, decided from the scan code (and an E0
+	-- prefix for the navigation block).  kbFnNew = function key number (by
+	-- scan code: F4 and F5 have no entry in the tables).  Arrows, Home, End,
+	-- Ins, PgUp and PgDn send VT100/xterm sequences, F1-F4 ESC O P..S, F5-F12
+	-- ESC [ nn ~.  Delete (E0 71) keeps sending 7F.
+	process(ps2Byte, ps2PreviousByte)
+		procedure seq3(c : character) is
+		begin
+			kbSeqNew(2) <= ch(c); kbSeqNewLen <= 3;
+		end procedure;
+		procedure seq4(c : character) is
+		begin
+			kbSeqNew(2) <= ch(c); kbSeqNew(3) <= ch('~'); kbSeqNewLen <= 4;
+		end procedure;
+		procedure seq5(c1, c2 : character) is
+		begin
+			kbSeqNew(2) <= ch(c1); kbSeqNew(3) <= ch(c2); kbSeqNew(4) <= ch('~');
+			kbSeqNewLen <= 5;
+		end procedure;
+		procedure ss3(c : character) is
+		begin
+			kbSeqNew(1) <= ch('O'); kbSeqNew(2) <= ch(c); kbSeqNewLen <= 3;
+		end procedure;
+	begin
+		kbSeqNew(0) <= "0011011";		-- ESC
+		kbSeqNew(1) <= ch('[');
+		kbSeqNew(2) <= (others => '0');
+		kbSeqNew(3) <= (others => '0');
+		kbSeqNew(4) <= (others => '0');
+		kbSeqNewLen <= 0;
+		kbFnNew <= 0;
+		if ps2PreviousByte = x"E0" then
+			case ps2Byte is
+				when x"75" => seq3('A');		-- up
+				when x"72" => seq3('B');		-- down
+				when x"74" => seq3('C');		-- right
+				when x"6B" => seq3('D');		-- left
+				when x"6C" => seq3('H');		-- home
+				when x"69" => seq3('F');		-- end
+				when x"70" => seq4('2');		-- insert
+				when x"7D" => seq4('5');		-- page up
+				when x"7A" => seq4('6');		-- page down
+				when others => null;
+			end case;
+		else
+			case ps2Byte is
+				when x"05" => kbFnNew <= 1;  ss3('P');
+				when x"06" => kbFnNew <= 2;  ss3('Q');
+				when x"04" => kbFnNew <= 3;  ss3('R');
+				when x"0C" => kbFnNew <= 4;  ss3('S');
+				when x"03" => kbFnNew <= 5;  seq5('1', '5');
+				when x"0B" => kbFnNew <= 6;  seq5('1', '7');
+				when x"83" => kbFnNew <= 7;  seq5('1', '8');
+				when x"0A" => kbFnNew <= 8;  seq5('1', '9');
+				when x"01" => kbFnNew <= 9;  seq5('2', '0');
+				when x"09" => kbFnNew <= 10; seq5('2', '1');
+				when x"78" => kbFnNew <= 11; seq5('2', '3');
+				when x"07" => kbFnNew <= 12; seq5('2', '4');
+				when others => null;
+			end case;
+		end if;
+	end process;
 
 	charAddr <= dispCharData & charScanLine(VERT_PIXEL_SCANLINES+1 downto VERT_PIXEL_SCANLINES-1);
 
@@ -547,8 +655,8 @@ end generate GEN_NO_ATTRAM;
 						end if;
 						video <= charData(7-to_integer(unsigned(pixelCount))); -- Monochrome video out
 					end if;
-					if pixelCount = 7 then
-						charHoriz <= charHoriz+1;
+					if pixelCount = 7 and charHoriz < HORIZ_CHAR_MAX then
+						charHoriz <= charHoriz+1;	-- R44: saturate (was 80 at line end)
 					end if;
 					pixelCount <= pixelCount+1;
 				else
@@ -584,12 +692,16 @@ end generate GEN_NO_ATTRAM;
 	end process;	
 
 	
-	-- minimal 6850 compatibility
-	statusReg(0) <= '0' when kbInPointer=kbReadPointer else '1';
-	statusReg(1) <= '1' when dispByteWritten=dispByteSent else '0';
+	-- minimal 6850 compatibility (R44: master reset holds the status at 0)
+	masterReset <= '1' when controlReg(1 downto 0) = "11" else '0';
+	statusReg(0) <= '1' when kbInPointer/=kbReadPointer and masterReset='0' else '0';
+	statusReg(1) <= '1' when dispByteWritten=dispByteSent and masterReset='0' else '0';
 	statusReg(2) <= '0'; --n_dcd;
 	statusReg(3) <= '0'; --n_cts;
+	statusReg(6 downto 4) <= "000";
 	statusReg(7) <= not(n_int_internal);
+	txReady <= '1' when dispByteWritten=dispByteSent else '0';
+	kbAvail <= '1' when kbInPointer/=kbReadPointer else '0';
 	  
 	-- interrupt mask
 	n_int <= n_int_internal;
@@ -598,37 +710,55 @@ end generate GEN_NO_ATTRAM;
 				else '1';
 
 	kbBuffCount <= 0 + kbInPointer - kbReadPointer when kbInPointer >= kbReadPointer
-		else 8 + kbInPointer - kbReadPointer;
-	n_rts <= '1' when kbBuffCount > 4 else '0';	
+		else 16 + kbInPointer - kbReadPointer;
+	n_rts <= '1' when kbBuffCount > 8 else '0';
+	kbNextIn <= 0 when kbInPointer = 15 else kbInPointer + 1;
+	kbFull <= '1' when kbNextIn = kbReadPointer else '0';
 
-	process( n_rd )
+	-- CPU interface (R44): sampled on clk.  A write takes effect at the end of
+	-- the strobe with the data and register select seen while it was low; a
+	-- read of the data register pops the key at the end of the strobe.  The
+	-- read data is registered every clock, so it is stable while n_rd is low.
+	process( clk )
 	begin
-		if falling_edge(n_rd) then -- Standard CPU - present data on leading edge of rd
-			if regSel='1' then
+		if rising_edge(clk) then
+			n_wr_q <= n_wr;
+			n_rd_q <= n_rd;
+			if n_wr = '0' then
+				wrData <= dataIn;
+				wrSel  <= regSel;
+			end if;
+			if n_rd = '0' then
+				rdSel <= regSel;
+			end if;
+			if regSel = '1' then
 				dataOut <= '0' & kbBuffer(kbReadPointer);
+			else
+				dataOut <= statusReg;
+			end if;
+
+			if n_wr_q = '0' and n_wr = '1' then
+				if wrSel = '1' then
+					if dispByteWritten=dispByteSent and masterReset = '0' then
+						dispByteWritten <= not dispByteWritten;
+						dispByteLatch <= wrData;
+					end if;
+				else
+					controlReg <= wrData;
+					if wrData(1 downto 0) = "11" then
+						kbReadPointer <= kbInPointer;	-- master reset empties the buffer
+					end if;
+				end if;
+			end if;
+
+			if n_rd_q = '0' and n_rd = '1' and rdSel = '1' and masterReset = '0' then
 				if kbInPointer /= kbReadPointer then
-					if kbReadPointer < 7 then
+					if kbReadPointer < 15 then
 						kbReadPointer <= kbReadPointer+1;
 					else
 						kbReadPointer <= 0;
 					end if;
 				end if;
-			else
-				dataOut <= statusReg;
-			end if;
-		end if;
-	end process;
-
-	process( n_wr )
-	begin
-		if rising_edge(n_wr) then -- Standard CPU - capture data on trailing edge of wr
-			if regSel='1' then
-				if dispByteWritten=dispByteSent then
-					dispByteWritten <= not dispByteWritten;
-					dispByteLatch <= dataIn;
-				end if;
-			else
-				controlReg <= dataIn;
 			end if;
 		end if;
 	end process;
@@ -706,13 +836,25 @@ end generate GEN_NO_ATTRAM;
 					end if;
 					ps2ClkCount<=ps2ClkCount+1;
 				else -- stop bit - use this time to store
-					-- F-keys
-					if ps2ConvertedByte>x"10" and ps2ConvertedByte<x"1D" then
+					-- F-keys (R44: by scan code; also send their sequence)
+					if kbFnNew /= 0 then
 						if ps2PreviousByte /= x"F0" then
-							FNtoggledKeysSig(to_integer(unsigned(ps2ConvertedByte))-16#10#) <= FNtoggledKeysSig(to_integer(unsigned(ps2ConvertedByte))-16#10#);
-							FNKeysSig(to_integer(unsigned(ps2ConvertedByte))-16#10#) <= '1';
+							FNtoggledKeysSig(kbFnNew) <= FNtoggledKeysSig(kbFnNew);
+							FNKeysSig(kbFnNew) <= '1';
+							if kbEnable = '1' and kbSeqNewLen <= 15 - kbBuffCount then
+								kbSeq <= kbSeqNew;
+								kbSeqLen <= kbSeqNewLen;
+								kbSeqIdx <= 0;
+							end if;
 						else
-							FNKeysSig(to_integer(unsigned(ps2ConvertedByte))-16#10#) <= '0';
+							FNKeysSig(kbFnNew) <= '0';
+						end if;
+					-- navigation block (E0 prefix): sequences (R44)
+					elsif kbSeqNewLen /= 0 then
+						if kbEnable = '1' and kbSeqNewLen <= 15 - kbBuffCount then
+							kbSeq <= kbSeqNew;
+							kbSeqLen <= kbSeqNewLen;
+							kbSeqIdx <= 0;
 						end if;
 					-- SHIFT
 					elsif ps2Byte = x"12" or ps2Byte=x"59" then
@@ -776,8 +918,9 @@ end generate GEN_NO_ATTRAM;
 							n_kbWR <= '0';
 							kbWriteTimer<=0;
 						end if;
-					-- ASCII CHARACTER
-					elsif (ps2PreviousByte /= x"F0") and (ps2ConvertedByte /= x"00") then
+					-- ASCII CHARACTER (R44: kept only while enabled and not full)
+					elsif (ps2PreviousByte /= x"F0") and (ps2ConvertedByte /= x"00")
+					      and kbEnable = '1' and kbFull = '0' then
 						if ps2PreviousByte = x"E0" and ps2Byte = x"71" then -- DELETE
 							kbBuffer(kbInPointer) <= "1111111"; -- 7F
 						elsif ps2Ctrl = '1' then
@@ -789,11 +932,7 @@ end generate GEN_NO_ATTRAM;
 						else
 							kbBuffer(kbInPointer) <= ps2ConvertedByte;
 						end if;
-						if kbInPointer < 7 then
-							kbInPointer <= kbInPointer+1;
-						else
-							kbInPointer <= 0;
-						end if;
+						kbInPointer <= kbNextIn;
 					end if;
 					ps2PreviousByte<=ps2Byte;
 					ps2ClkCount<=0;
@@ -825,6 +964,13 @@ end generate GEN_NO_ATTRAM;
 
 				end if;
 			else
+				-- R44: no keyboard clock edge: push the next byte of a queued
+				-- sequence (space for all of it was checked when it was queued)
+				if kbSeqIdx < kbSeqLen then
+					kbBuffer(kbInPointer) <= kbSeq(kbSeqIdx);
+					kbInPointer <= kbNextIn;
+					kbSeqIdx <= kbSeqIdx + 1;
+				end if;
 				-- COMMUNICATION ERROR
 				-- if no edge then increment the timer
 				-- if a large time has elapsed since the last pulse was read then

@@ -175,7 +175,7 @@ $00000200 constant SSP_IRQ_PENDING_MAP_CHANGED ( field 9:9 )
 $00000400 constant SSP_IRQ_PENDING_SD_DONE ( field 10:10 )
 $00000800 constant SSP_IRQ_PENDING_WDG_PARK ( field 11:11 )
 
-$200000C8 constant SSP_CONN_ROUTE ( RW | console routing policy (D-19); HW fail-safe defaults on reset/wdg_park )
+$200000C8 constant SSP_CONN_ROUTE ( RW | console routing (D-19, live R44): OUT_SNAC = monitor TX on the serial pin; OUT_HDMI = monitor TX to the SSP video terminal (shown while the monitor owns the console); IN_SNAC/IN_KBD = RX FIFO fed from the serial pin / the SSP terminal keyboard. Reset = serial (5). Hardware sets it at console entry: serial escape -> 5, OSD Enter SSP Monitor -> 5 (OSD SSP Console = Serial) or A (= Video); FW may change it )
 $00000001 constant SSP_CONN_ROUTE_OUT_SNAC ( field 0:0 )
 $00000002 constant SSP_CONN_ROUTE_OUT_HDMI ( field 1:1 )
 $00000004 constant SSP_CONN_ROUTE_IN_SNAC ( field 2:2 )

@@ -32,6 +32,14 @@
 //
 // TX: 1-deep holding (tx_ready = holding empty); monitor TX reaches the
 // SNAC pin through the top-level console mux when console_own.
+//
+// R44 console routing (CONN_ROUTE, D-19): a held byte goes to the serial
+// shifter (ser_out, or when the video path is off -- the pre-R44 behaviour),
+// to the SSP video terminal (vdu_out, byte-stream valid/ready), or to both
+// (it leaves the holding register when every enabled path can take it; video
+// alone is not paced by the baud rate).  The RX FIFO is fed from the serial
+// pin (in_ser) and/or the SSP terminal's keyboard (in_kbd, taken only while
+// the FIFO has room; serial wins a same-clock collision).
 
 `timescale 1 ns / 1 ps
 
@@ -61,6 +69,18 @@ module ssp_uart #(
     input  wire        relay_en,          // OM: RX->Z80 goes through relay
     input  wire        parked,            // Z80 bus-parked (bridge truth)
     input  wire        console_own,       // fw_console_ok
+
+    // ---------------- console routing (R44, CONN_ROUTE) --------------------
+    input  wire        ser_out,           // OUT_SNAC
+    input  wire        vdu_out,           // OUT_HDMI
+    input  wire        in_ser,            // IN_SNAC
+    input  wire        in_kbd,            // IN_KBD
+    output wire        vdu_tx_valid,      // byte for the SSP terminal
+    output wire [7:0]  vdu_tx_data,
+    input  wire        vdu_tx_ready,
+    input  wire        kbd_valid,         // key from the SSP terminal
+    input  wire [7:0]  kbd_byte,
+    output wire        kbd_take,
 
     // ---------------- serial lines -----------------------------------------
     input  wire        snac_rxd,          // raw SNAC RX pin (async)
@@ -152,6 +172,11 @@ module ssp_uart #(
     // bridge must instead capture this combinational head value.
     assign rx_rnext = fifo[rp[FIFO_LOG2-1:0]];
 
+    // R44: FIFO sources
+    wire ser_push = byte_done && rx_stop && console_own && in_ser && !rx_clr;
+    assign kbd_take = kbd_valid && console_own && in_kbd && !ser_push
+                      && !rx_clr && !fifo_full;
+
     // escape consumption (OQ-22a): match only while the Z80 runs
     wire esc_hit = byte_done && rx_stop && esc_eff && !parked
                    && (rx_byte == esc_char);
@@ -167,7 +192,7 @@ module ssp_uart #(
                 rp         <= wp;                 // flush
                 rx_overrun <= 1'b0;
             end
-            if (byte_done && rx_stop && console_own && !rx_clr) begin
+            if (ser_push) begin
                 if (!fifo_full) begin
                     fifo[wp[FIFO_LOG2-1:0]] <= rx_byte;
                     wp            <= wp + 1'b1;
@@ -175,6 +200,10 @@ module ssp_uart #(
                 end else begin
                     rx_overrun    <= 1'b1;      // byte lost
                 end
+            end else if (kbd_take) begin        // R44: a key (room checked)
+                fifo[wp[FIFO_LOG2-1:0]] <= kbd_byte;
+                wp            <= wp + 1'b1;
+                rx_push       <= 1'b1;
             end
             if (rx_pop && rx_avail && !rx_clr) begin
                 rx_rdata <= rx_rnext;      // same read port: one RAM copy
@@ -195,6 +224,13 @@ module ssp_uart #(
     assign tx_ready = !mon_hold_v;
     assign mon_txd  = mon_act ? mon_shift[0] : 1'b1;
 
+    // R44: where a held byte goes, and when it may leave
+    wire to_ser   = ser_out | !vdu_out;          // no video: serial as before
+    wire ser_free = !to_ser || !mon_act;
+    assign vdu_tx_valid = en && mon_hold_v && vdu_out && ser_free;
+    assign vdu_tx_data  = mon_hold;
+    wire   tx_go    = mon_hold_v && ser_free && (!vdu_out || vdu_tx_ready);
+
     always @(posedge clk) begin
         if (!rst_n) begin
             mon_hold_v <= 1'b0; mon_act <= 1'b0;
@@ -207,12 +243,14 @@ module ssp_uart #(
                 mon_hold   <= tx_wdata;
                 mon_hold_v <= 1'b1;
             end
-            if (!mon_act && mon_hold_v) begin
-                mon_shift  <= {1'b1, mon_hold, 1'b0};  // stop+d7..d0+start
-                mon_act    <= 1'b1;
+            if (tx_go) begin
                 mon_hold_v <= 1'b0;
-                mon_acc    <= 16'd0;
-                mon_tcnt   <= 8'd0;
+                if (to_ser) begin
+                    mon_shift  <= {1'b1, mon_hold, 1'b0};  // stop+d7..d0+start
+                    mon_act    <= 1'b1;
+                    mon_acc    <= 16'd0;
+                    mon_tcnt   <= 8'd0;
+                end
             end else if (mon_act && mon_tick) begin
                 mon_tcnt <= mon_tcnt + 8'd1;
                 if (mon_tcnt[3:0] == 4'd15)
@@ -251,7 +289,8 @@ module ssp_uart #(
         end else if (en) begin
             rel_acc <= rel_nsum[15:0];
             // push completed, non-escaped bytes toward the Z80
-            if (byte_done && rx_stop && relay_en && !console_own && !esc_hit) begin
+            // R44: relay unless the monitor is reading the serial port
+            if (byte_done && rx_stop && relay_en && !(console_own && in_ser) && !esc_hit) begin
                 if (!rel_hold_v) begin
                     rel_hold   <= rx_byte;
                     rel_hold_v <= 1'b1;

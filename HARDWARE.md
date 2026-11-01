@@ -406,7 +406,12 @@ on two consecutive runs.
 ### Serial-like devices
 
 There are two devices, occupying 4 total I/O ports between `0x80` and `0x83`.  Both of these
-emulate the programming interface of an 6850 ACIA device.
+emulate the programming interface of an 6850 ACIA device, including its
+**master reset**: writing a control byte with bits 1:0 = `11` makes the status
+read `0x00` (no RDRF, no TDRE) and discards buffered input (video terminal),
+until the next control write.  RomWBW's ACIA driver detects the devices this way
+(write `03`, expect status `00`; write `02`, expect TDRE with DCD and CTS low).
+Software that never writes the control register is unaffected.
 
 #### Video Terminal Display Device
 
@@ -437,6 +442,25 @@ with display attributes, cursor positioning, etc.
 | RXRDY  | Input character from keyboard ready      |
 
 ##### Keyboard Input
+
+Keys are kept in a 16-entry buffer; when it is full, further keys are dropped
+(older keys are never overwritten).  Besides the ASCII keys (Ctrl and Caps Lock
+apply; Caps Lock starts on):
+
+| Key | Sends |
+|---|---|
+| Esc | `1B` |
+| Delete | `7F` |
+| Up / Down / Right / Left | `ESC [ A` / `ESC [ B` / `ESC [ C` / `ESC [ D` |
+| Home / End | `ESC [ H` / `ESC [ F` |
+| Insert / Page Up / Page Down | `ESC [ 2 ~` / `ESC [ 5 ~` / `ESC [ 6 ~` |
+| F1–F4 | `ESC O P` … `ESC O S` |
+| F5–F12 | `ESC [ 15 ~`, `17`, `18`, `19`, `20`, `21`, `23`, `24 ~` |
+
+(Before R44 the Esc key sent `03` and the arrow block sent keypad digits.) The
+keypad keys always send digits (there is no Num Lock handling).  While the SSP
+monitor has its own screen up (see the SSP section), this terminal keeps no
+keys.
 
 This module processes PS/2 keyboard input events.  Of course, on the
 MiSTer there are no PS/2 keyboards connected to the hardware.  The
@@ -636,9 +660,15 @@ wiring while the Z80 is parked.  With the OSD **SSP Monitor** item off it is
 electrically transparent.  Reserved for later: `0xD0`-`0xD3` (mailbox) and
 `0xFC`-`0xFF` sense switches (panel phase P2).
 
+* **Entry from the OSD:** **Enter SSP Monitor** parks the Z80 and enters the
+  monitor without needing **SSP Serial Escape**; **SSP Console** chooses where:
+  *Serial*, or *Video* -- the monitor's own 80x25 terminal (green text), which
+  replaces the Z80's screen on HDMI/VGA and takes the keyboard until `G`
+  resumes the Z80.  The Z80's terminal is untouched (screen, cursor, unread
+  keys), and with the monitor on video the serial port stays the Z80's.
 * **Entry:** the escape character (`^]` by default; OSD **SSP Serial Escape**
-  on) typed on the active serial port parks the Z80 and hands the console to
-  the monitor.  `G` hands it back.
+  on) typed on the active serial port parks the Z80 and hands that serial
+  console to the monitor (whatever **SSP Console** says).  `G` hands it back.
 * **Commands:** `E`/`D` examine/deposit, `R` registers, `G [aaaa]` go/continue,
   `I`/`O` Z80 I/O ports, `MAP` MMU frames, `S [n]` single-step (interrupts held
   off during the sequence), `U [aaaa [n]]` unassemble, `PHY`/`LOG` address mode, `F` raw Forth, `?` help.

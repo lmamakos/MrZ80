@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu lint-ssp seam-check ssp-map p1a p1a-vcd dict-p1a smoke-p1a dl-path mrom-install tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu lint-ssp seam-check ssp-map p1a p1a-vcd dict-p1a smoke-p1a dl-path vdu terminal mrom-install tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -124,6 +124,15 @@ dict-p1a: p1a
 
 smoke-p1a: p1a
 	$(ROOT)/sim/ssp/p1a_smoke.sh
+
+# R44: SSP console on its own video terminal (OSD entry, routing, keyboard)
+vdu: p1a
+	$(ROOT)/sim/ssp/p1a_vdu.sh
+
+# R44: the video terminal itself + the SSP's instance (ssp_vdu) + the 6850
+# master reset of both ACIA-style devices (GHDL, real terminal RTL)
+terminal:
+	$(ROOT)/sim/run_terminal.sh
 
 # R43 (R-29): OSD ROM mount -- clear sweep, byte lanes, RV-only hold, monitor
 # restart on the mounted image, guest never reset

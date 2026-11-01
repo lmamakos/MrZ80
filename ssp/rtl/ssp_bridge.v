@@ -88,6 +88,8 @@ module ssp_bridge #(
                                         //   integration sticky-pulses ~1 ms)
     input  wire        rv_stalled,     // RV core waiting on bus/ALU (top)
     input  wire        rv_alive,       // RV seen fetching (top liveness)
+    input  wire        osd_enter,      // R44: 1-clk, OSD "Enter SSP Monitor"
+    input  wire        osd_vid,        // R44: OSD "SSP Console" = Video
 
     // ---------------- Z80 control outputs -------------------------------
     output wire        z_busrq_n,       // = FREEZE_req_n at T80s
@@ -140,6 +142,10 @@ module ssp_bridge #(
     output wire        uart_esc_eff,   // OM & CTRL.esc_break_en & ssp_active
     output wire        uart_relay_en,  // OM & ssp_active: RX via relay
     output wire        conn_out_snac, // CONN_ROUTE.out_snac (D-19, TX policy)
+    output wire        conn_out_hdmi, // R44: CONN_ROUTE.out_hdmi
+    output wire        conn_in_snac,  // R44: CONN_ROUTE.in_snac
+    output wire        conn_in_kbd,   // R44: CONN_ROUTE.in_kbd
+    output wire        vdu_show,      // R44: SSP terminal on screen + keys
 
     // ---------------- trampoline (G aaaa, D-02/D-39) ------------------------
     output wire        tramp_arm,      // CTRL.TRAMP_EN (effective) -> ssp_tramp
@@ -473,6 +479,14 @@ module ssp_bridge #(
     assign uart_relay_en = osd_esc_en & ssp_active;
     // D-19: monitor TX sink policy; HW fail-safe default = SNAC (reset 1).
     assign conn_out_snac = conn_route[0];
+    assign conn_out_hdmi = conn_route[1];
+    assign conn_in_snac  = conn_route[2];
+    assign conn_in_kbd   = conn_route[3];
+    // R44: the SSP screen is shown (and has the keyboard) only while the
+    // monitor owns the console with video output routed; console_own already
+    // folds in ssp_active and RV health, so a dead or reset monitor gives the
+    // screen back to the Z80.
+    assign vdu_show      = console_own & conn_route[1];
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -641,6 +655,10 @@ module ssp_bridge #(
     // Ordered AFTER the CTRL write decode below => a same-cycle CTRL write
     // loses to the escape (operator sovereignty, G-8 spirit).
     wire esc_take = uart_esc_evt & ssp_active & rv_ctrl_ok;
+    // R44: OSD "Enter SSP Monitor" = the same hand-over, independent of OM
+    // (an operator act in the menu, not a byte on the wire), with the console
+    // routed by the OSD "SSP Console" choice.  The serial escape routes serial.
+    wire osd_take = osd_enter & ssp_active & rv_ctrl_ok;
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -806,10 +824,12 @@ module ssp_bridge #(
 
             // Escape hand-over LAST: a same-cycle CTRL write loses to the
             // escape (operator sovereignty; D-14 hardware hand-over, R25).
-            if (esc_take) begin
-                esc_pending                      <= 1'b1;
+            if (esc_take || osd_take) begin
+                if (!park_act) esc_pending       <= 1'b1;
                 ctr[`SSP_BIT_CTRL_Z_BUSRQ_N]    <= 1'b1;
                 ctr[`SSP_BIT_CTRL_CONSOLE_OWN]  <= 1'b1;
+                conn_route <= (osd_take && osd_vid) ? 4'b1010    // video
+                                                    : 4'b0101;   // serial
             end
         end
     end

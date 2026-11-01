@@ -66,7 +66,7 @@ offset,name,access,reset,bits,fields,doc
 0B8,WDG_STAT,R,00000000,2:0,"RUN_EXPIRED_L=0; PARK_DEAD_L=1; PARK_TIMER=2","watchdog status (sec 6.9)"
 0C0,IRQ_EN,RW,00000000,11:0,"BP0=0; BP1=1; BP2=2; BP3=3; TRAP=4; RX=5; ESC=6; MBX=7; FP_DONE=8; MAP_CHANGED=9; SD_DONE=10; WDG_PARK=11","gates optional IRQ line only (D-27)"
 0C4,IRQ_PENDING,W1C,00000000,11:0,"BP0=0; BP1=1; BP2=2; BP3=3; TRAP=4; RX=5; ESC=6; MBX=7; FP_DONE=8; MAP_CHANGED=9; SD_DONE=10; WDG_PARK=11","sticky event bits; v1 FW polls (D-27); write-1 clears; MAP_CHANGED producer shelved (R38)"
-0C8,CONN_ROUTE,RW,00000001,3:0,"OUT_SNAC=0; OUT_HDMI=1; IN_SNAC=2; IN_KBD=3","console routing policy (D-19); HW fail-safe defaults on reset/wdg_park"
+0C8,CONN_ROUTE,RW,00000005,3:0,"OUT_SNAC=0; OUT_HDMI=1; IN_SNAC=2; IN_KBD=3","console routing (D-19, live R44): OUT_SNAC = monitor TX on the serial pin; OUT_HDMI = monitor TX to the SSP video terminal (shown while the monitor owns the console); IN_SNAC/IN_KBD = RX FIFO fed from the serial pin / the SSP terminal keyboard. Reset = serial (5). Hardware sets it at console entry: serial escape -> 5, OSD Enter SSP Monitor -> 5 (OSD SSP Console = Serial) or A (= Video); FW may change it"
 0D0,MBX0,RW,00000000,7:0,DATA=7:0,"Z80 mailbox mirror $D0"
 0D4,MBX1,RW,00000000,7:0,DATA=7:0,"Z80 mailbox mirror $D1"
 0D8,MBX2,RW,00000000,7:0,DATA=7:0,"Z80 mailbox mirror $D2"

@@ -11,6 +11,14 @@
 //            +MNT_LEN=n   bytes to stream (default 131072)
 //            +MNT_AT=n    cycle the download starts (default 2_000_000)
 //            +MNT_GAP=n   clocks between bytes (default 8)
+//            +OSDENTER_AT=n  R44: pulse OSD "Enter SSP Monitor" at cycle n
+//            +OSDVID=0/1  R44: OSD "SSP Console" (0 = Serial, 1 = Video)
+//            +VDU=file    R44: SSP video terminal model -- bytes written to it
+//                         go to this file (raw); its keyboard is fed from
+//            +KEYS=file   one hex byte per line, first key at +KEYS_AT=n
+//                         (default 4_000_000), then one per +KEYS_GAP=n
+//                         clocks (default 400_000) once the previous one
+//                         was taken; +KEYS_N=n bytes (default: the file)
 //            +OSD_OK=0/1  OSD OK policy (default 1)
 //            +OM=0/1      OSD Serial-Escape switch (default 0)
 //            +WAIT        enable engine mem-read wait injection
@@ -248,11 +256,78 @@ module ssp_p1a_top (
             $display("[p1a-ERR @%0d] guest reset asserted during a mount", tb_cycle);
     end
 
+    // ---- R44: OSD entry + SSP video terminal model ---------------------------
+    // The model takes every byte at once (ready high except one clock after
+    // each byte, so the valid/ready handshake is exercised), and offers keys
+    // like ssp_vdu does: rx_valid until rx_take.  Events: "[p1a-vdu @n] ...".
+    reg         osd_enter, osd_vid;
+    int         osd_at;
+    initial begin
+        int v;
+        osd_enter = 1'b0;  osd_vid = 1'b0;
+        if (!$value$plusargs("OSDENTER_AT=%d", osd_at)) osd_at = -1;
+        if ($value$plusargs("OSDVID=%d", v)) osd_vid = v[0];
+    end
+    always @(posedge clk) osd_enter <= rst_n && (tb_cycle == osd_at);
+
+    wire        vdu_show, vdu_tx_valid, vdu_rx_take;
+    wire [7:0]  vdu_tx_data;
+    reg         vdu_tx_ready;
+    reg         vdu_rx_valid;
+    reg  [7:0]  vdu_rx_data;
+    reg  [7:0]  keys [0:4095];
+    string      vdufile, keyfile;
+    int         vdu_fd, keys_n, keys_at, keys_gap, key_i, key_wait;
+    reg         show_q;
+    initial begin
+        vdu_tx_ready = 1'b1;  vdu_rx_valid = 1'b0;  vdu_rx_data = 8'd0;
+        key_i = 0;  show_q = 1'b0;
+        if (!$value$plusargs("VDU=%s", vdufile)) vdufile = "";
+        vdu_fd = (vdufile != "") ? $fopen(vdufile, "wb") : 0;
+        if (!$value$plusargs("KEYS=%s", keyfile)) keyfile = "";
+        if (!$value$plusargs("KEYS_N=%d", keys_n)) keys_n = -1;
+        if (!$value$plusargs("KEYS_AT=%d", keys_at)) keys_at = 4_000_000;
+        if (!$value$plusargs("KEYS_GAP=%d", keys_gap)) keys_gap = 400_000;
+        for (int i = 0; i < 4096; i++) keys[i] = 8'hxx;
+        if (keyfile != "") begin
+            $readmemh(keyfile, keys);
+            if (keys_n < 0) begin
+                keys_n = 0;
+                while (keys_n < 4096 && !$isunknown(keys[keys_n])) keys_n++;
+            end
+        end else keys_n = 0;
+        key_wait = 0;
+    end
+    always @(posedge clk) begin
+        vdu_tx_ready <= 1'b1;
+        if (vdu_tx_valid && vdu_tx_ready) begin
+            if (vdu_fd != 0) begin $fwrite(vdu_fd, "%c", vdu_tx_data); $fflush(vdu_fd); end
+            vdu_tx_ready <= 1'b0;
+        end
+        if (key_wait > 0) key_wait <= key_wait - 1;
+        if (vdu_rx_valid && vdu_rx_take) begin
+            vdu_rx_valid <= 1'b0;
+            key_wait     <= keys_gap;
+        end else if (!vdu_rx_valid && key_wait == 0 && key_i < keys_n
+                     && tb_cycle >= keys_at) begin
+            vdu_rx_valid <= 1'b1;
+            vdu_rx_data  <= keys[key_i];
+            key_i        <= key_i + 1;
+        end
+        show_q <= vdu_show;
+        if (rst_n && vdu_show != show_q)
+            $display("[p1a-vdu @%0d] show -> %b (parked=%b busrq_n=%b)", tb_cycle,
+                     vdu_show, parked_dbg, z_busrq_n);
+        if (rst_n && osd_enter)
+            $display("[p1a-vdu @%0d] OSD enter (video=%b)", tb_cycle, osd_vid);
+    end
+
     // R39: a 1M-clock (20 ms) step watchdog instead of 20M, so the timeout path
     // runs in a short simulation (a real step is ~30 clocks)
     ssp_top #(.STEP_TIMEOUT_T(25'd1_000_000)) u_dut (
         .clk (clk), .rst_n (rst_n),
         .osd_ok (osd_ok), .osd_esc_en (om),
+        .osd_enter (osd_enter), .osd_vid (osd_vid),
         .esc_disable (1'b0), .panel_stop (1'b0),
         .baud_increment (BAUD),
         .cpu_clk_en_raw (cpu_cen),
@@ -277,6 +352,10 @@ module ssp_p1a_top (
         .ssp_irq (ssp_irq), .rv_alive (rv_alive),
         .mnt_active (mnt_active), .mnt_wr (mnt_wr), .mnt_addr (mnt_addr),
         .mnt_data (mnt_data), .mnt_busy (mnt_busy),
+        .vdu_show (vdu_show), .vdu_tx_valid (vdu_tx_valid),
+        .vdu_tx_data (vdu_tx_data), .vdu_tx_ready (vdu_tx_ready),
+        .vdu_rx_valid (vdu_rx_valid), .vdu_rx_data (vdu_rx_data),
+        .vdu_rx_take (vdu_rx_take),
         .dbg_rom_illegal_writes (dbg_rom_illegal_writes),
         .dbg_bus_errs (dbg_bus_errs)
     );

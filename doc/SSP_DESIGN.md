@@ -187,10 +187,10 @@ $D0–$D3 as the seed of HBIOS cooperation.
 | D-13 | `[decided, revised v0.3]` **Two-tier watchdog** (session R2): **WDG_RUN** (`[new]` transient holds — WAIT asserts, trap stalls, sequencer busy — auto-release Z80, default **~4 ms**, parameterized) and **WDG_PARK** (~1–2 s, governs *FW-originated* parks only: expiry demotes a dead FW console — `console_own←0`, dead-flag lamp — but **never releases a hardware-held park**: classic STOP/BP park semantics stay human-paced and panel-recoverable). §6.9. | single 1.3 s auto-release (v0.2) |
 | D-14 | `[decided, session R4; revised R15]` **Serial escape = one specific character, recognized in hardware, only when OSD switch `OM` ("Serial Escape", status bit 22, default **Off**) is On.** Recognizer watches the SNAC RX stream; on match while the Z80 runs ⇒ park at instruction boundary (D-25, reason=escape), console handed to the SSP; the escape byte is **consumed**, never delivered to the Z80 (mechanism OQ-22). Character = `ESC_CHAR` register, hardware reset default **`0x1D` (`^]`)** — chosen because CP/M software (WordStar `^E` etc.) uses the low control codes. Effective enable = `OM ∧ CTRL.esc_break_en ∧ ssp_active` (FW may disable, never override the OSD). With `OM` Off the serial link is **fully transparent** — no byte value has special meaning; monitor entry is then via panel STOP/BP, or SSP FW when it already owns the link. Distinct from the panel **ESCAPE toggle** (frame bit 32 = monitor *disable*, G-8). | any-RX-byte break (R4 — rejected R15: line noise/answerback/type-ahead halt the Z80; no transparent mode); BREAK-condition detect; FW-poll escape |
 | D-15 | `[decided, revised v0.3]` Physical memory: **(P) parked client** `ssp_mem_client` borrows the *wiring* — drives the existing SDRAM client interface (`sdram_addr/din/we/rd` + native DQM) and BRAM mux only while Z80 parked *and* primary client FSM idle; MMU registers untouched (P-D). **(B) background** vid-port client (P2): **reads only** — natively read-only, verified lowest priority (cpu > vid, refresh > both); vid-*write* mod deferred, revisit gated on sim showing vid traffic benign to the primary path like refresh collisions (session R3). | ~~MMU direct-access ports $B8–$BC~~ **retracted**: auto-increment pointer is Z80-owned state (session R3) |
-| D-16 | `[decided, revised v0.3; R15]` OSD allocations: `OK`=bit 20 (`OL`=21 reserved); **`OM`=bit 22 "Serial Escape" Off/On (D-14, R15)**; download index **6 = `MROM` monitor ROM image**, index **7 = `MPKG` FORTH program pack**. MROM mount completion pulses **monitor-subsystem reset only** (RV+bridge+WDG re-arm; Z80 untouched, session R2). `OF` Reset-after-Mount semantics unchanged (Z80). **[rev R43]** MROM mount built: OSD `FC6,MRZ,SSP Monitor ROM` (MiSTer extensions are 3 characters, so the file type is `.MRZ`; `FC` = remembered and auto-loaded at core start). Index 7 stays reserved; `MPKG` is not built (deferred). | Z80-wide reset on mount |
+| D-16 | `[decided, revised v0.3; R15]` OSD allocations: `OK`=bit 20 (`OL`=21 reserved); **`OM`=bit 22 "Serial Escape" Off/On (D-14, R15)**; download index **6 = `MROM` monitor ROM image**, index **7 = `MPKG` FORTH program pack**. MROM mount completion pulses **monitor-subsystem reset only** (RV+bridge+WDG re-arm; Z80 untouched, session R2). `OF` Reset-after-Mount semantics unchanged (Z80). **[R44: bit 21 (`OL`) is now `RL` "Enter SSP Monitor" (trigger), bit 24 `OO` "SSP Console" Serial/Video (D-19).]** **[rev R43]** MROM mount built: OSD `FC6,MRZ,SSP Monitor ROM` (MiSTer extensions are 3 characters, so the file type is `.MRZ`; `FC` = remembered and auto-loaded at core start). Index 7 stays reserved; `MPKG` is not built (deferred). | Z80-wide reset on mount |
 | D-17 | `[decided, revised v0.3]` Lamp display philosophy (session R5): LEDs are a **flexibly-mapped signalling lamp array**, *not* a low-res graphics surface; no assumed correspondence with terminal text. Convention: monitor exports state words into the capture chain (§11.4); **profile 7 = monitor profile**; map_ram maps lamps to any chain bits (existing capture bits and/or monitor-exported bits); OSD profile-override engages profile 7 while monitor display active. Direct color/fb painting remains available for FW extensions. | dedicated monitor framebuffer; "text mirror" lamp pages |
 | D-18 | `[decided, new v0.3]` **Hardware panel engine** (`fp_engine`): classic panel operations execute in FPGA logic through the shared bridge primitives (sequencer, step assist, reset stretcher, bus muxes), maintaining live **AR/DR/MD/PR** functional registers that FW reads/writes too. Panel works with FW absent/hung (P-B strengthened). FW and panel are **peers on one engine**; the sequencer busy-handshake is the arbiter; panel wins simultaneous kicks; panel ops event FW (IRQ + last-op log). | FW panel server as sole executor (v0.2) |
-| D-19 | `[proposed, new v0.3]` Console routing is FW policy over HW muxes: `CONN_ROUTE` selects monitor output sink(s) {SNAC UART, HDMI terminal mirror} and input source {SNAC RX, PS2 kbd (P3)}; hardware default = serial on reset/WDG-death (P-B). | fixed serial-only routing (kept as fail-safe default semantics) |
+| D-19 | `[proposed, new v0.3]` Console routing is FW policy over HW muxes: `CONN_ROUTE` selects monitor output sink(s) {SNAC UART, HDMI terminal mirror} and input source {SNAC RX, PS2 kbd (P3)}; hardware default = serial on reset/WDG-death (P-B). **[decided R44, as built]** The "HDMI terminal" is a second, SSP-private `SBCTextDisplayRGB` (`ssp/rtl/ssp_vdu.vhd`): exclusive, not a mirror -- its RGB replaces the Z80 terminal's while `console_own & OUT_HDMI`, and it then keeps the keys (the Z80 terminal keeps none; both decode the PS/2 stream). Hardware sets `CONN_ROUTE` at console entry: serial escape -> serial (5); OSD **Enter SSP Monitor** (trigger, bit 21) -> serial or video (A) by OSD **SSP Console** (bit 24). `IN_SNAC` now gates the serial RX FIFO (reset value 1 -> 5). | fixed serial-only routing (kept as fail-safe default semantics); FW driving the Z80 terminal through engine I/O (clobbers the Z80 screen, ANSI state and keys; parked-only) |
 | D-20 | `[decided, session R1; revised R15]` Core facilities: **RV32IMC** (no A — single hart, state read via bridge regs); time base = **bridge MMIO 1 MHz counter `TICK_US`** (neither candidate has `mtime`; `rdcycle` usable for fine timing); events read from bridge `IRQ_PENDING` **by polling in v1** (D-27) — the IRQ line exists in RTL but v1 FW does not depend on it; no PLIC, no core-specific trap code. | IMAC; mcause/vectored; "1 MHz machine timer" CSR (does not exist on either core) |
 | D-25 | `[decided, new R15]` **Instruction-boundary parking.** The T80 grants BUSRQ at *any* M-cycle `T_Res` (`T80.vhd:~1033-1042`), so a raw BUSRQ can freeze mid-instruction (PC/temporaries half-advanced). The D-08 `T80s` mod additionally exports **`insn_end`** (last M-cycle of the instruction ∧ `T_Res`); the bridge passes park requests (FW hold, panel STOP, STEP INSN, escape, BP) to `BUSRQ_n` only aligned to `insn_end`. Rules: **prefixes are not boundaries** (no park between DD/FD/CB/ED and the opcode they modify); HALT state parks anywhere (PC = HALT+1); INT/NMI acknowledge completes before park; EI's one-instruction shadow honoured; block instructions park per iteration (PC re-points at the instruction). M-cycle/T-state step modes deliberately park off-boundary. `STATUS.at_boundary` tags every park; register snapshots are architectural only when set (`R` warns otherwise). **Breakpoints**: stop-*before*-execute via **self-loop injection** — on BP M1 match, the trampoline data mux feeds `18 FE` (`JR $`) in place of the opcode/displacement fetches, then park at its `insn_end` ⇒ PC = BP address, flags/regs untouched, only R +1 (already-accepted drift). Evaluation in sim (OQ-23). **[R25 amendment, documented R30]: the grant gate lives INSIDE the T80, not in the bridge.** The bridge no longer aligns requests to `insn_end`; it only asserts a level request on `BUSRQ_n`. The T80 (local ports `FREEZE_req_n`/`FREEZE_any`/`would_boundary` -- of these, `FREEZE_req_n` proved a dead port, R28 erratum: the request is `BUSRQ_n`) grants `BusAck` only at the branch whose next state is an M1, prefix-gated, with the XY-pair and mode-1 return cycles excluded by the FSM's own priority; `STATUS.AT_BOUNDARY` latches `would_boundary` at the grant. | raw BUSRQ park (v0.1–v1.0: unsafe); stop-after-BP-instruction (reports wrong PC) |
 | D-26 | `[decided, new R15]` **Single `z80_bus_mux`** at the T80 output boundary, one select, flips only with `BusAck` confirmed (P-A): address, data-out, `MREQ/IORQ/RD/WR`, **`MRD_T1`** (the SDRAM speculative-read trigger, `MicrocomputerZ80CPM.vhd:~1090`), **`M1_n`** (capture chain `:~764`), plus engine-side **sensing of `cpu_wait_n`** (MMU + SDRAM waits — the parked T80 no longer consumes them). The engine emits **cycle-faithful Z80 bus cycles** on `cpu_cen` (T1–T3 + Tw, `MRD_T1` timing as T80s), so every peripheral and the SDRAM client FSM see "a Z80"; Z80-path tests are reused for engine cycles. | per-signal ad-hoc muxes; engine-native (non-Z80) strobe timing |
@@ -950,7 +950,7 @@ illegal/misaligned access) as a "SSP FW crashed" chrome/WDG indicator.
 | 0xA0–0xAC | `SD_ADDR/SD_WDATA/SD_RDATA/SD_CTL` | RW/R | vid-port background window (P2; reads only — `SD_CTL.err` on write attempts until D-15-B revisit) |
 | 0xB0 | `WDG_RUN_KICK` · 0xB4 `WDG_PARK_KICK` · 0xB8 `WDG_STAT` | WO/WO/R | two-tier watchdog (§6.9); `WDG_STAT {run_expiredL, park_deadL, park_timer}` |
 | 0xC0 | `IRQ_EN` / 0xC4 `IRQ_PENDING` (W1C) | RW | `bp0..3, trap, rx, esc, mbx, fp_done, map_changed?, sd_done, wdg_park` — **sticky event register, polled by v1 FW** (D-27); `IRQ_EN` only gates the optional IRQ line |
-| 0xC8 | `CONN_ROUTE` | RW | `{out_snac=1 default, out_hdmi(P2), in_snac=1 default, in_kbd(P3)}` — FW policy, HW fail-safe defaults on reset/`wdg_park` (D-19) |
+| 0xC8 | `CONN_ROUTE` | RW | `{out_snac=1 default, out_hdmi(P2), in_snac=1 default, in_kbd(P3)}` — FW policy, HW fail-safe defaults on reset/`wdg_park` (D-19). **[R44: live; reset 5 (serial); set by hardware at console entry; `out_hdmi`/`in_kbd` = the SSP terminal, see D-19]** |
 | 0xD0–0xDC | `MBX0..3` | RW | Z80 mirror ($D0–$D3); Z80 write → IRQ `fp_done`-class new bit `mbx` |
 | 0xE0–0xEC | `MAP0..MAP3` | R | **MMU frame tap**: `{valid, page[13:0]}` ×4 — FW translation shadow, state-neutral (P-D) |
 | 0xF0 | `SSP_CTRL` | RW | `[shared]` chain-export control: `{enable, page}` — selects which 64-bit state block feeds `SSP_CHAIN[63:0]` (§11.4); panel engine writes `page` on encoder commit (D-23); WDG_PARK expiry forces `page←0` |
@@ -2668,3 +2668,65 @@ on-board `compiletoflash` surviving Reset SSP); the `MrZ80.sv` routing is
 covered statically (`seam-check`, `ssp-map`) but not simulated. **[R43 addendum, 2026-11-01: hardware check passed (owner) -- the OSD
 mount works, Reset SSP works, and words compiled into the ROM with
 `compiletoflash` survive the reset.]**
+
+R44 **The video terminal for RomWBW and for the SSP (2026-11-01).** *Owner:* give
+RomWBW a second console on the screen and keyboard, and make the SSP monitor
+usable there too, entered from the OSD. The evaluation corrected the premise:
+the Z80's terminal (`SBCTextDisplayRGB`) is a bus register device with no
+serial lines to seize, and its register logic was clocked by the CPU strobes.
+**Decisions (owner accepted the recommendations).** (i) **RomWBW: stock ACIA
+driver, two units** (unit 0 = serial `$82`, the boot console; unit 1 = screen +
+keyboard `$80`; `AUTOCON` moves the console with a key press); both devices
+now emulate the **6850 master reset** the driver's detection needs (control bits
+1:0 = 11 -> status 00, keyboard buffer emptied, until the next control write);
+`ACIAxCLK = 153600` makes the driver's baud check accept 9600 (the OSD sets the
+real rate). Changes in the RomWBW fork: `cfg_MRZ80.asm`, `Config/MRZ80_std.asm`,
+`AGENTS.md`. (ii) **SSP on video = a second, SSP-private terminal**
+(`ssp/rtl/ssp_vdu.vhd`), exclusive: its RGB replaces the Z80 terminal's while
+`console_own & CONN_ROUTE.OUT_HDMI`; both terminals decode the PS/2 stream and
+only the shown one keeps keys (`kbEnable`), so the Z80's screen, cursor, ANSI
+state and unread keys are untouched and no park is needed to show it. Both run
+identical, never-reset video counters from clk_sys, so only colour is switched.
+Rejected: firmware driving the Z80's terminal through engine I/O (clobbers its
+screen and keys, parked-only). (iii) **OSD**: `RL` "Enter SSP Monitor" (bit 21,
+trigger, closes the OSD) = the serial escape's hand-over without `OM`; `OO` "SSP
+Console" Serial/Video (bit 24). The bridge sets `CONN_ROUTE` at console entry --
+serial escape -> 5 (serial), OSD entry -> 5 or A (video) -- and `IN_SNAC` now
+gates the serial RX FIFO (reset 1 -> 5). `ssp_uart` routes a held TX byte to the
+serial shifter and/or the terminal (video alone is not baud-paced) and takes
+keys into the RX FIFO (`IN_KBD`). `ssp_top`: `z80_rxd` idles while the monitor
+reads the serial port (`console_own & IN_SNAC`), now also with `OM` off after an
+OSD entry; with the monitor on video the serial line stays the Z80's (raw, or
+relayed with `OM` on). (iv) **Terminal rework** (both instances): register
+interface sampled on clk (end-of-strobe semantics kept); keyboard buffer 8 ->
+16 entries, keys dropped when full (it used to wrap and lose 8); **Esc = 1B**
+(was 03, a Grant Searle-era break key -- `^C` still types 03); arrows/Home/End/
+Ins/PgUp/PgDn and F1-F12 send VT100/xterm sequences (arrows used to send keypad
+digits); function keys detected by scan code; `charHoriz` saturates at 79
+(GHDL range failure, invisible on screen); key buffer forced to registers (a
+dual-clock RAM inference with undefined read-during-write). (v) The SSP screen
+is bright green on black. **Verification.** New `make -C sim terminal`
+(`sim/tb_terminal.vhd`, the real terminal RTL under GHDL with behavioural RAM/ROM;
+the STD_LOGIC_UNSIGNED line is redirected to VHDL-2008 `numeric_std_unsigned`,
+which -- unlike `sim_compat_pkg` -- compares unequal-length vectors numerically,
+as the terminal needs): register interface, master reset with the driver's
+exact detection sequence, keys and sequences, full buffer, `kbEnable`, the
+`ssp_vdu` byte port both ways, and the serial ACIA's master reset -- 119
+checks. New `make -C sim vdu` (`sim/ssp/p1a_vdu.sh`, an OSD-entry and
+terminal-port model in `p1a_sim_top.v`): A video console with `OM` off (banner,
+`E` listing and key echo on the screen, nothing on serial, serial bytes still
+reach the Z80, `G` returns the screen); B OSD entry on serial with `OM` off
+(operator bytes kept from the Z80); C serial escape routes serial even with
+Video selected; D `OM` on + video: serial bytes relayed to the Z80. Mutants
+killed: 7 in the terminal (reset status, reset flush, full check, `kbEnable`,
+sequence drain, pop on status read, Esc = 03) and 7 in the SSP (OSD ignores
+Video, raw RX while owned, ungated serial FIFO, no OSD entry, show not gated by
+ownership, escape routing by the OSD option, relay blocked on video); two of them
+first survived and the tests were tightened. Regression: `smoke-p1a`,
+`dl-path`, `tramp-p1a`, `engine-golden`, `uart-fifo`, `integ-core`, `sync`,
+`seam-check`, `ssp-map`, `regmap-check`, `lint-ssp` green. Quartus: 14,191
+ALMs (34 %, +873 over R43 for the second terminal and routing), 345/553 M10K,
+49 % of block-RAM bits, no negative slack (clk_sys setup 2.200 ns). RomWBW
+`MRZ80_std.rom` builds with both ACIA units. **Not done:** hardware checks
+(screen switch and keyboard steering exist only in `MrZ80.sv`; the RomWBW ROM
+has not booted on the board yet).

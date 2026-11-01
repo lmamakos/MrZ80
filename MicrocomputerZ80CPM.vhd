@@ -175,7 +175,10 @@ entity MicrocomputerZ80CPM is
 		ssp_ph_done		: out std_logic;
 		ssp_ph_err		: out std_logic;
 		ssp_ph_rdata	: out std_logic_vector(7 downto 0);
-		ssp_t80_reg		: out std_logic_vector(211 downto 0)
+		ssp_t80_reg		: out std_logic_vector(211 downto 0);
+		-- R44: the SSP's own terminal is on screen and takes the keyboard;
+		-- this terminal then keeps no keys (they are still decoded)
+		ssp_vdu_own		: in  std_logic := '0'
 		);
 end MicrocomputerZ80CPM;
 
@@ -277,6 +280,7 @@ architecture struct of MicrocomputerZ80CPM is
 	
 	signal n_internalRam1CS			: std_logic :='1';
 	signal n_interface1CS			: std_logic :='1';
+	signal term_kb_enable			: std_logic;	-- R44: '0' while the SSP terminal has the keys
 	signal n_interface2CS			: std_logic :='1';
 	signal n_sdCardCS				: std_logic :='1';
 	signal n_blockDevCS				: std_logic :='1';   -- hps_blockdev at $90-$97
@@ -658,6 +662,8 @@ port map
 -- INPUT/OUTPUT DEVICES GO HERE	
 
 
+term_kb_enable <= not ssp_vdu_own;
+
 io1 : entity work.SBCTextDisplayRGB
 port map (
 	n_reset => N_RESET,
@@ -687,7 +693,8 @@ port map (
 	dataIn => cpuDataOut,
 	dataOut => interface1DataOut,
 	ps2Clk => ps2Clk,
-	ps2Data => ps2Data
+	ps2Data => ps2Data,
+	kbEnable => term_kb_enable
 );
 
 io2 : entity work.bufferedUART

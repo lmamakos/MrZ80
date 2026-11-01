@@ -84,8 +84,11 @@ signal rxdFiltered : std_logic := '1';
 
 begin
 	-- minimal 6850 compatibility
-	statusReg(0) <= '0' when rxInPointer=rxReadPointer else '1';
-	statusReg(1) <= '1' when txByteWritten=txByteSent else '0';
+	-- R44: while the control register holds a master reset (bits 1:0 = 11)
+	-- the status reads RDRF=0 and TDRE=0, as on a real 6850 (RomWBW's ACIA
+	-- driver detects the chip that way).  The next control write ends it.
+	statusReg(0) <= '0' when rxInPointer=rxReadPointer or controlReg(1 downto 0)="11" else '1';
+	statusReg(1) <= '1' when txByteWritten=txByteSent and controlReg(1 downto 0)/="11" else '0';
     statusReg(2) <= n_dcd;
     statusReg(3) <= n_cts;
     statusReg(7) <= not(n_int_internal);

@@ -50,7 +50,10 @@ entity SBCTextDisplayRGB is
         ps2Data       : in std_logic;
 
         FNkeys        : out std_logic_vector(12 downto 0);
-        FNtoggledKeys : out std_logic_vector(12 downto 0)
+        FNtoggledKeys : out std_logic_vector(12 downto 0);
+        kbEnable      : in  std_logic := '1';     -- R44
+        txReady       : out std_logic;
+        kbAvail       : out std_logic
     );
 end entity SBCTextDisplayRGB;
 
@@ -74,4 +77,6 @@ begin
     sync          <= '0';
     FNkeys        <= (others => '0');
     FNtoggledKeys <= (others => '0');
+    txReady       <= '1';
+    kbAvail       <= '0';
 end architecture sim;

@@ -153,8 +153,9 @@ The MrZ80 OSD menu, and what it means:
   tolerant.*
 * **Front Panel Profiles** (`.FPP`) and **Front Panel Profile** — load and
   live-select the blinkenlights maps (§4).
-* **SSP Monitor / SSP Serial Escape / Reset SSP** — enable and use the
-  embedded debug console (§6). **SSP Monitor ROM** (`.MRZ`) loads a new
+* **SSP Monitor / SSP Serial Escape / SSP Console / Enter SSP Monitor / Reset
+  SSP** — enable and use the embedded debug console (§6), on the serial port or
+  on its own screen with the keyboard. **SSP Monitor ROM** (`.MRZ`) loads a new
   monitor firmware image without touching the running Z80.
 * **Reset** — restarts the loaded image (SDRAM contents survive). A **hard**
   reset (the framework Reset) discards the loaded boot image; OSD Reset
@@ -168,7 +169,10 @@ connector with real handshake lines. Meanwhile the **VGA/HDMI 80×25 ANSI
 terminal** works independently — the MiSTer framework takes your USB keyboard,
 synthesizes PS/2 scan codes, and the core's terminal decoder turns them back
 into characters, so the machine has a "screen and keyboard" even though neither
-is physically attached to the core.
+is physically attached to the core. Under RomWBW both are consoles at once: the
+serial port is unit 0, the screen and keyboard unit 1, and a key pressed on
+either at the boot loader prompt takes the console there. The arrow, Home/End,
+Page and function keys send the usual VT100/xterm sequences.
 
 ### Booting, honestly
 
@@ -342,7 +346,10 @@ experience, *improved in every dimension the FPGA makes possible*.
    Turn on **SSP Serial Escape** if you want the keyboard hatch.
 2. While CP/M (or anything else) runs, type **`^]`** on the serial console.
    The escape is recognized **in hardware** in the RX stream and consumed —
-   the running software never sees the byte.
+   the running software never sees the byte. (Or pick **Enter SSP Monitor** in
+   the OSD; with **SSP Console** set to Video the monitor comes up on its own
+   green-on-black screen with the keyboard, the Z80's screen put aside
+   untouched until `G`.)
 3. The Z80 is parked **at an instruction boundary** — never mid-instruction:
    the CPU's own freeze logic grants the bus only where the next state is an
    M1 cycle, prefix-aware, honoring the EI shadow and completing interrupt
@@ -485,12 +492,11 @@ dictionary window with room to grow.
   trace; pending sources stay visible.
 * **Roadmap:** breakpoints with stop-before-execute (the hardware injects a
   self-loop at the matched opcode so `PC` is exactly the breakpoint), a
-  16-entry jump-history ring, T-state and machine-cycle stepping, an
-  HDMI+keyboard console, and integration with the switch panel and lamp pages
-  (profile 7 is reserved by design for the monitor's own lamps). A mailbox at
-  Z80 ports
-  `$D0`–`$D3` is reserved as the seed of HBIOS cooperation — the RomWBW world
-  talking to the Forth world deliberately, not just observingly.
+  16-entry jump-history ring, T-state and machine-cycle stepping, and
+  integration with the switch panel and lamp pages (profile 7 is reserved by
+  design for the monitor's own lamps). A mailbox at Z80 ports `$D0`–`$D3` is
+  reserved as the seed of HBIOS cooperation — the RomWBW world talking to the
+  Forth world deliberately, not just observingly.
 
 **Status today:** the full escape → park → examine/deposit → resume cycle has
 been proven on hardware, as has transparency with the SSP disabled. The later
@@ -523,13 +529,15 @@ follow it.
 | SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | `U` working on hardware (owner, 2026-11-01); `S` mnemonic verified in simulation |
 | SSP: breakpoints, T-state/machine-cycle stepping, BRAM-page physical access, panel integration | Roadmap |
 | SSP: monitor ROM (128 KB) loaded from the OSD, no FPGA rebuild; words compiled into it survive Reset SSP | Working on hardware (owner, 2026-11-01). Forth source packs from the OSD: not planned for now |
+| SSP on its own screen + keyboard; OSD "Enter SSP Monitor" | Working in simulation; hardware check pending |
+| RomWBW with two consoles (serial + screen/keyboard) via the stock ACIA driver | ROM builds; hardware check pending |
 | Legacy Grant Searle BASIC/monitor (`basmon`) | Still available as a bootable `.BIN` |
 
 ## 8. Room to grow
 
 Headroom *is* a feature. The latest fit report puts the entire machine — CPU,
 MMU, SDRAM controller, terminal, UARTs, front-panel engine, the whole
-SSP — at **13,318 of 41,910 ALMs: about 32% of the FPGA's logic elements**,
+SSP — at **14,191 of 41,910 ALMs: about 34% of the FPGA's logic elements**,
 with under half the block-RAM bits and a third of the DSPs in use. Less than
 half the fabric spoken for — barely a third — is not a finish line; it's real
 estate. Another serial port, new peripherals, whatever gets dreamed up next:

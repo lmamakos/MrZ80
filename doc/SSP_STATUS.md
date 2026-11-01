@@ -2,7 +2,8 @@
 
 Updated: **2026-11-01** · Branch `r24-p1b`, merged into `main` locally (not
 pushed) after R43: R39–R40, R41 (monitor `U`, shared Z-80 disassembler), R42
-(`S` shows the next instruction) and R43 (128 KiB MROM + OSD ROM mount) · Phase **P1b**; M4 (single-step) and M3 (physical
+(`S` shows the next instruction) and R43 (128 KiB MROM + OSD ROM mount); R44 (SSP
+video console, OSD entry, RomWBW second console) committed locally · Phase **P1b**; M4 (single-step) and M3 (physical
 memory) done in simulation and **reported working on hardware** (owner,
 2026-10-31); R43 owner-checked on hardware (2026-11-01).
 
@@ -43,6 +44,7 @@ Planning documents are not kept outside `doc/`.
 | R41 monitor `U` (unassemble) | **Done**, owner-checked on hardware (2026-11-01). Shared source with CamelFORTH: `forth/disasm/` (§17 R41) |
 | R42 `S` shows the next instruction | **Done in simulation** (smoke Part F); hardware check pending. A deferred hook keeps `S` independent of the disassembler (§17 R42) |
 | R43 MROM 128 KiB + OSD ROM mount | **Done**, owner-checked on hardware (2026-11-01): OSD mount, Reset SSP, words compiled with `compiletoflash` survive the reset. Simulation: `dl-path`, 5 mutants killed; full suite green; Quartus build reviewed (§17 R43) |
+| R44 video console + OSD entry; terminal + ACIA work for RomWBW | **Done in simulation** (`vdu`, `terminal`; 14 mutants killed; full suite green); Quartus build reviewed (§17 R44). Hardware check pending (§1.2) |
 
 ### 1.2 What is on hardware
 
@@ -54,12 +56,20 @@ monitor on the 128 KiB map, window `0x5000..0x20000`). The owner confirmed `U` o
 hardware (2026-11-01). R43 is **owner-checked on hardware** (2026-11-01): the
 OSD **SSP Monitor ROM** mount works, **Reset SSP** works, and words compiled
 into the ROM with `compiletoflash` survive the reset.
+**Owner check pending for R44:** (1) OSD **SSP Console** = Video, **Enter SSP
+Monitor**: the green monitor screen replaces the Z80's, the keyboard works,
+`G` brings the Z80's screen back unchanged; with Serial, the monitor works on
+the serial port with **SSP Serial Escape** off. (2) The keyboard on the Z80's
+terminal: Esc, arrows, F-keys (e.g. in a VT100 editor under RomWBW).
+(3) RomWBW `~/RomWBW/Binary/MRZ80_std.rom`: the boot log lists `ACIA0`
+(IO=0x82) and `ACIA1` (IO=0x80), and pressing a key on the video keyboard at
+the loader prompt moves the console there.
 **Owner check pending for R42:** the mnemonic on each `S` line on hardware; the
 key-break path of a long `U` is still not in the smoke. Not exercisable on
 hardware yet: real INT sources (none exist; the step-time INT mask is proven in
-simulation only). R43 Quartus build (reviewed): 340/553 M10K (61 %), 48 % of
-block-RAM bits, 13,318 ALMs; no negative slack; clk_sys setup slack 2.5 ns
-(an intermediate fit gave 1.3 ns: fit-to-fit variation, watch it).
+simulation only). R44 Quartus build (reviewed): 14,191 ALMs (34 %), 345/553
+M10K (62 %), 49 % of block-RAM bits; no negative slack; clk_sys setup slack
+2.2 ns (R43 fits ranged 1.3-2.5 ns: fit-to-fit variation, watch it).
 
 ### 1.3 Repository and build facts
 
@@ -83,6 +93,13 @@ block-RAM bits, 13,318 ALMs; no negative slack; clk_sys setup slack 2.5 ns
   the dictionary linearly for every token, so typing in the raw Forth (`F`) is
   slower and a dictionary build takes longer (~3 min) as it grows. Monitor
   commands themselves are compiled and unaffected.
+- **R44 video console limits.** The monitor's screen is exclusive (not a
+  mirror of the serial console). If the monitor firmware hangs while it owns
+  the video console, the Z80's screen and keyboard stay hidden until **Reset
+  SSP** (the park itself is released by WDG_PARK; the D-13 question in §5 also
+  covers console demotion). Simulation covers the byte port with a model and
+  the terminal RTL separately (`terminal`); the screen switch in `MrZ80.sv` is
+  covered statically (`seam-check`) and on hardware only.
 - **R43 mount limits.** A mount replaces the ROM completely (no copy of the
   factory image is kept: recovery = mount another file or reload the core).
   Words compiled into the ROM on the board are lost at core reload or the next
@@ -112,7 +129,8 @@ block-RAM bits, 13,318 ALMs; no negative slack; clk_sys setup slack 2.5 ns
 | SSP RTL | `ssp_top.v` (core + MROM/RV RAM + decoder + bridge + UART + console mux), `ssp_bridge.v` (register file, park controller, D-30 sequencer for FW mem/IO kicks, WDG×2, `TICK_US`, R39 step sequencer), `ssp_uart.v` (8N1, 128-byte RX FIFO, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` and `ssp_tramp.vhd` (instantiated in the CPM core since R33) |
 | T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + boundary park gate (BusAck only when the next state is M1; prefix-gated). Wired since R33: `n_BUSRQ <= ssp_busrq_n`; `FREEZE_req_n` is a dead port (R28 finding). With the SSP idle the core is unchanged (P-B) |
 | GHDL integration benches | `integ-park` (R-40: every park on an instruction boundary vs an unparked reference), `integ-mux` (R-42: mux + real T80 + engine model), `integ-core` (R-42 against the real SDRAM/BRAM/MMU fabric), `cycle-golden` + `engine-golden` (engine strobes == real T80, per T-state; committed `sim/ssp/golden_cycles.txt`), `tramp` (`G aaaa` vs the real T80, 176 checks) |
-| Verilator lanes | `p1a`: real `ssp_top` + behavioural Z80 (`sim/ssp/z80_bfm.v`, T80-contract model since R39) + pin-level serial + a mock physical client (R40) + an OSD mount model (R43); `smoke-p1a` Parts A–H; `dl-path` (R43); `tramp-p1a`; `uart-fifo` |
+| Verilator lanes | `p1a`: real `ssp_top` + behavioural Z80 (`sim/ssp/z80_bfm.v`, T80-contract model since R39) + pin-level serial + a mock physical client (R40) + an OSD mount model (R43) + an OSD-entry and SSP-terminal byte-port model (R44); `smoke-p1a` Parts A–H; `dl-path` (R43); `vdu` (R44); `tramp-p1a`; `uart-fifo` |
+| GHDL terminal bench | `terminal` (R44): the real video terminal + `ssp_vdu` + the serial ACIA's master reset (`sim/tb_terminal.vhd`) |
 | Hygiene | Build dirs and waveform dumps untracked and ignored. History was purged once (R26; old→new hashes `513a539`→`9ef7346`, `ba6cc92`→`d3a8b33`, `07a4ee9`→`12ad50b`) |
 
 ---
@@ -215,6 +233,8 @@ Owner priorities from P1a first light (R35), with status:
   **done**, owner-checked on hardware (R41); `S` shows the next instruction (R42).
 - **(e)** MROM 128 KiB + OSD ROM mount with monitor-only reset → **done**,
   owner-checked on hardware (R43). `MPKG` deferred.
+- **(f)** SSP console on video + keyboard, OSD entry (D-19) → **done in
+  simulation** (R44); hardware check pending (§1.2).
 - Remaining P1b scope (`SSP_DESIGN.md` §15): `PR`/mailbox, reset stretcher, T80s MC/TS/ALT export
   completion (needed for MCYCLE/TSTATE stepping via `freeze_any`), ODT skin,
   real ANSI SGR colours (the `col-*` stubs in `monitor.fs`).
@@ -234,7 +254,11 @@ Owner priorities from P1a first light (R35), with status:
 | OQ-10 | Exact "Reset System" scope | P1b |
 | OQ-18 | Board-freeze UX values | P2 |
 
-Settled this period (R43): MROM 128 KiB, RV RAM unchanged; dictionary window
+Settled this period (R44): D-19 built as an exclusive second terminal (not a
+mirror, not engine I/O to the Z80's terminal); OSD trigger + Serial/Video
+option; serial escape always routes serial; RomWBW uses the stock ACIA driver
+with both devices emulating the 6850 master reset; keyboard Esc = 1B and
+VT100/xterm sequences. Earlier (R43): MROM 128 KiB, RV RAM unchanged; dictionary window
 `0x5000..0x20000` as one parameter checked by `ssp-map`; on-board
 `compiletoflash` supported; no image self-ID header and no `V` command; mount
 clears the ROM first and resets the monitor only; SignalTap off by default; P0
@@ -338,6 +362,8 @@ make -C sim tramp-p1a             # G aaaa: FW-side handshake on the p1a lane
 make -C sim uart-fifo             # ssp_uart RX FIFO unit bench, depths 8 and 128 (iverilog)
 make -C sim dict-p1a smoke-p1a    # monitor dictionary build (~3.5 min) + operator-session smoke (~4.5 min)
 make -C sim dl-path               # OSD ROM mount (R43, R-29), ~10 s
+make -C sim vdu                   # SSP video console + OSD entry (R44), ~10 s
+make -C sim terminal              # video terminal + ssp_vdu + ACIA master reset (GHDL, R44), ~5 s
 make -C sim fw-rom                # rebuild + regenerate the committed factory ROM (.mif)
 make -C sim mrom-install          # scp the monitor ROM image to the MiSTer as mrz80-ssp.mrz
 make -C sim integ-park integ-mux cycle-golden   # GHDL, real T80 (seconds each)

@@ -397,6 +397,8 @@ parameter CONF_STR = {
 	"-;",
 	"OK,SSP Monitor,Off,On;",                        // status[20]: SSP (System Support Processor) enable (osd_ok); Off = indistinguishable from absent
 	"OM,SSP Serial Escape,Off,On;",                  // status[22]: escape byte on the selected serial port enters the SSP monitor (OM)
+	"OO,SSP Console,Serial,Video;",                  // status[24]: where "Enter SSP Monitor" puts the monitor console (R44)
+	"RL,Enter SSP Monitor;",                         // status[21]: trigger (closes the OSD): park the Z80 and enter the monitor, OM not needed (R44)
 	"FC6,MRZ,SSP Monitor ROM;",                       // index 6: SSP monitor ROM image -> ssp_top MROM (128 KiB; never SDRAM, never resets the Z-80)
 	"TN,Reset SSP;",                                 // status[23]: pulse -> ~1 ms RV core reset (host hatch)
 	"-,CPU Held in Reset until ROM image loaded;",
@@ -411,7 +413,8 @@ parameter CONF_STR = {
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
 // X     XXXXXXX XX     (bit 0 = Reset via "R0"; bit 13 = Boot Load Target ("OD"); bit 14 = Flow Control; bit 15 = Reset after Mount)
 // bits 16-19 = Front Panel Profile ("OGJ"): 0 = Software, 1..8 = profile 0..7
-// bit 20 = SSP Monitor enable ("OK"), bit 22 = SSP Serial Escape ("OM"), bit 23 = Reset SSP (trigger "TN"); bit 21 spare
+// bit 20 = SSP Monitor enable ("OK"), bit 21 = Enter SSP Monitor (trigger "RL"), bit 22 = SSP Serial Escape ("OM"),
+// bit 23 = Reset SSP (trigger "TN"), bit 24 = SSP Console Serial/Video ("OO")
    
 //////////////////   HPS I/O   ///////////////////
 wire  [1:0] buttons;
@@ -1025,6 +1028,11 @@ wire  [3:0] fp_osd_profile = (status[19:16] >= 4'd1 && status[19:16] <= 4'd8)
                              ? (status[19:16] - 4'd1) : 4'hF;
 
 // SSP seam nets (ssp_top instance below, after the core)
+// R44: SSP video terminal (ssp_vdu, below) -- also steers the Z80 terminal's keys
+wire        ssp_vdu_show, ssp_vdu_tx_valid, ssp_vdu_tx_ready;
+wire        ssp_vdu_rx_valid, ssp_vdu_rx_take;
+wire  [7:0] ssp_vdu_tx_data, ssp_vdu_rx_data;
+wire  [1:0] ssp_vdu_r, ssp_vdu_g, ssp_vdu_b;
 wire        ssp_busrq_n, ssp_z_reset_n, ssp_z_wait_n, ssp_z_cen_gate, ssp_freeze_any;
 wire        ssp_int_hold;   // R39: INT blocked during single-step sequence
 wire        ssp_tramp_arm, ssp_tramp_done;
@@ -1136,7 +1144,8 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
     .ssp_ph_done        (ssp_ph_done),
     .ssp_ph_err         (ssp_ph_err),
     .ssp_ph_rdata       (ssp_ph_rdata),
-    .ssp_t80_reg        (ssp_t80_reg)
+    .ssp_t80_reg        (ssp_t80_reg),
+    .ssp_vdu_own        (ssp_vdu_show)          // R44: keys to the SSP terminal
 );
 
 //////////////  SSP (System Support Processor)  ////////////////
@@ -1160,12 +1169,47 @@ always @(posedge clk_sys) begin
 end
 wire ssp_rv_rst_n = (ssp_rv_rst_cnt == 16'd0);
 
+// "Enter SSP Monitor" (status[21], an R-type trigger: it also closes the OSD,
+// so the keyboard is back with the core): one clk_sys pulse on its rising edge.
+// ssp_top treats it like the serial escape, without needing OM, and routes the
+// console by "SSP Console" (status[24]: 0 = serial, 1 = the SSP's own video
+// terminal below).
+reg  ssp_enter_q = 1'b0;
+always @(posedge clk_sys) ssp_enter_q <= status[21];
+wire ssp_osd_enter = status[21] & ~ssp_enter_q;
+
+// The SSP's own video terminal (R44, ssp/rtl/ssp_vdu.vhd): while the monitor
+// owns the console with video output, its screen replaces the Z80's terminal
+// on HDMI/VGA and it gets the keyboard (the Z80 terminal keeps no keys then).
+// Both terminals run identical video timing from clk_sys with free-running,
+// never-reset counters, so only the colour signals are switched.
+
+ssp_vdu ssp_vdu
+(
+    .clk      (clk_sys),
+    .n_reset  (~reset_sys),
+    .show     (ssp_vdu_show),
+    .tx_valid (ssp_vdu_tx_valid),
+    .tx_data  (ssp_vdu_tx_data),
+    .tx_ready (ssp_vdu_tx_ready),
+    .rx_valid (ssp_vdu_rx_valid),
+    .rx_data  (ssp_vdu_rx_data),
+    .rx_take  (ssp_vdu_rx_take),
+    .ps2Clk   (PS2_CLK),
+    .ps2Data  (PS2_DAT),
+    .R        (ssp_vdu_r),
+    .G        (ssp_vdu_g),
+    .B        (ssp_vdu_b)
+);
+
 ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif"), .DICT_BASE(17'h05000)) ssp_top
 (
     .clk            (clk_sys),
     .rst_n          (~reset_sys),
     .osd_ok         (status[20]),
     .osd_esc_en     (status[22]),
+    .osd_enter      (ssp_osd_enter),        // R44: OSD "Enter SSP Monitor"
+    .osd_vid        (status[24]),           // R44: OSD "SSP Console" = Video
     .esc_disable    (1'b0),                 // panel frame bit 32 (P1b)
     .panel_stop     (1'b0),                 // panel STOP latch (P1b)
     .baud_increment (baud_increment),       // the O9B value the Z80 UART uses
@@ -1222,6 +1266,13 @@ ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif"), .DICT_BASE(17'h05000)) ssp_top
     .mnt_addr       (ssp_mnt_addr),
     .mnt_data       (ssp_mnt_data),
     .mnt_busy       (ssp_mnt_busy),
+    .vdu_show       (ssp_vdu_show),         // R44: SSP video terminal
+    .vdu_tx_valid   (ssp_vdu_tx_valid),
+    .vdu_tx_data    (ssp_vdu_tx_data),
+    .vdu_tx_ready   (ssp_vdu_tx_ready),
+    .vdu_rx_valid   (ssp_vdu_rx_valid),
+    .vdu_rx_data    (ssp_vdu_rx_data),
+    .vdu_rx_take    (ssp_vdu_rx_take),
     .dbg_rom_illegal_writes (),
     .dbg_bus_errs   ()
 );
@@ -1231,9 +1282,9 @@ video_cleaner video_cleaner
     .clk_vid(CLK_VIDEO),
     .ce_pix(CE_PIXEL),
 
-    .R({4{r}}),
-    .G({4{g}}),
-    .B({4{b}}),
+    .R({4{ssp_vdu_show ? ssp_vdu_r : r}}),  // R44: SSP screen while it has the console
+    .G({4{ssp_vdu_show ? ssp_vdu_g : g}}),
+    .B({4{ssp_vdu_show ? ssp_vdu_b : b}}),
     .HSync(hs),
     .VSync(vs),
     .HBlank(hblank),

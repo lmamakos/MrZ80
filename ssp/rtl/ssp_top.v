@@ -24,11 +24,16 @@
 //   z80_rxd  = !ssp_active ? raw pin           (P-B: monitor-disabled is
 //                                                indistinguishable from
 //                                                monitor-absent, R-43)
+//              :  mon_rx_ser  ? idle high        (the monitor reads the
+//                                                serial port: Z80 gets no
+//                                                operator bytes; R44: also
+//                                                with OM off, after an OSD
+//                                                entry)
 //              :  !osd_esc_en ? raw pin          (OM off: bit-transparent)
-//              :  console_own ? idle high        (parked REPL: Z80 gets
-//                                                no operator bytes)
 //              :  relay_txd                      (OM on: filtered+re-timed
 //                                                stream, ESC consumed)
+// mon_rx_ser = console_own & CONN_ROUTE.in_snac (R44): with the monitor on
+// the video console the serial line stays the Z80's.
 // The relay path deserializes from the raw pin and re-emits, so with OM on
 // the Z80 sees each byte exactly once.  Ownership = ssp_active &&
 // rv_ctrl_ok && CTRL.CONSOLE_OWN; escape sets it in hardware (bridge).
@@ -79,6 +84,8 @@ module ssp_top #(
     // ---- OSD / panel policy ----------------------------------------------
     input  wire        osd_ok,        // OSD bit 20: monitor enable
     input  wire        osd_esc_en,    // OSD bit 22: Serial Escape (OM)
+    input  wire        osd_enter,     // R44: 1-clk, OSD "Enter SSP Monitor"
+    input  wire        osd_vid,       // R44: OSD "SSP Console" = Video
     input  wire        esc_disable,   // panel frame bit 32 toggle (P1b: fp)
     input  wire        panel_stop,    // panel STOP latch (P1b: fp_engine)
     input  wire [15:0] baud_increment,// O9B table value (shared SNAC truth)
@@ -146,6 +153,14 @@ module ssp_top #(
     input  wire [16:0] mnt_addr,     // byte address within the 128 KiB MROM
     input  wire [7:0]  mnt_data,
     output wire        mnt_busy,     // clearing the MROM: hold the stream off
+    // SSP video terminal (R44, ssp_vdu at the integrator): byte streams
+    output wire        vdu_show,     // SSP screen shown, keyboard to it
+    output wire        vdu_tx_valid,
+    output wire [7:0]  vdu_tx_data,
+    input  wire        vdu_tx_ready,
+    input  wire        vdu_rx_valid,
+    input  wire [7:0]  vdu_rx_data,
+    output wire        vdu_rx_take,
     // diagnostics (sim / lamp chrome)
     output reg  [31:0] dbg_rom_illegal_writes,
     output reg  [31:0] dbg_bus_errs
@@ -292,6 +307,7 @@ module ssp_top #(
     wire [7:0]  uart_tx_wdata, uart_esc_char, uart_rx_rdata, uart_rx_rnext;
     wire        uart_tx_ready, uart_rx_avail, uart_rx_overrun, uart_rx_push;
     wire        uart_esc_evt, uart_esc_eff, uart_relay_en, conn_out_snac;
+    wire        conn_out_hdmi, conn_in_snac, conn_in_kbd;
     wire        mon_txd, relay_txd;
     wire        console_own, parked;
 
@@ -306,6 +322,7 @@ module ssp_top #(
         .z_mc (z_mc), .z_ts (z_ts), .z_alt (z_alt),
         .z_would_boundary (z_would_boundary), .t80_reg (t80_reg),
         .ssp_active (ssp_active), .osd_esc_en (osd_esc_en),
+        .osd_enter (osd_enter), .osd_vid (osd_vid),
         .s32_disable (esc_disable), .panel_stop (panel_stop),
         .rv_rst_n (rv_run_n), .rv_stalled (rv_stalled), .rv_alive (rv_alive),
         .z_busrq_n (z_busrq_n), .z_reset_n (z_reset_n),
@@ -326,6 +343,8 @@ module ssp_top #(
         .uart_rx_overrun (uart_rx_overrun), .uart_rx_push (uart_rx_push),
         .esc_char (uart_esc_char), .uart_esc_eff (uart_esc_eff),
         .uart_relay_en (uart_relay_en), .conn_out_snac (conn_out_snac),
+        .conn_out_hdmi (conn_out_hdmi), .conn_in_snac (conn_in_snac),
+        .conn_in_kbd (conn_in_kbd), .vdu_show (vdu_show),
         .tramp_arm (tramp_arm), .tramp_target (tramp_target),
         .tramp_done (tramp_done),
         .uart_esc_evt (uart_esc_evt),
@@ -345,6 +364,12 @@ module ssp_top #(
         .esc_char (uart_esc_char), .esc_eff (uart_esc_eff),
         .relay_en (uart_relay_en), .parked (parked),
         .console_own (console_own),
+        .ser_out (conn_out_snac), .vdu_out (conn_out_hdmi),
+        .in_ser (conn_in_snac), .in_kbd (conn_in_kbd),
+        .vdu_tx_valid (vdu_tx_valid), .vdu_tx_data (vdu_tx_data),
+        .vdu_tx_ready (vdu_tx_ready),
+        .kbd_valid (vdu_rx_valid), .kbd_byte (vdu_rx_data),
+        .kbd_take (vdu_rx_take),
         .snac_rxd (snac_rxd), .relay_txd (relay_txd), .mon_txd (mon_txd),
         .esc_evt (uart_esc_evt), .rx_push (uart_rx_push)
     );
@@ -377,9 +402,11 @@ module ssp_top #(
     // RX selection per header block (R25/H6):
     // relay and raw paths are mutually exclusive -- no byte duplication.
     assign snac_txd  = (console_own & conn_out_snac) ? mon_txd : z80_txd;
-    assign z80_rxd = (!ssp_active || !osd_esc_en) ? snac_rxd :
-                       console_own                  ? 1'b1       :
-                                                    relay_txd;
+    wire mon_rx_ser = console_own & conn_in_snac;
+    assign z80_rxd = !ssp_active ? snac_rxd :
+                     mon_rx_ser  ? 1'b1     :
+                     !osd_esc_en ? snac_rxd :
+                                   relay_txd;
 
     // ------------------------------------------------ diagnostics --------
     always @(posedge clk) begin

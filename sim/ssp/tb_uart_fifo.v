@@ -35,6 +35,9 @@ module tb_uart_fifo;
         .rx_pop(rx_pop), .rx_rdata(), .tx_wdata(8'd0), .tx_wr(1'b0),
         .esc_char(8'h1d), .esc_eff(1'b0), .relay_en(1'b0),
         .parked(1'b0), .console_own(own),
+        .ser_out(1'b1), .vdu_out(1'b0), .in_ser(1'b1), .in_kbd(1'b0),  // R44: serial route
+        .vdu_tx_valid(), .vdu_tx_data(), .vdu_tx_ready(1'b0),
+        .kbd_valid(1'b0), .kbd_byte(8'd0), .kbd_take(),
         .snac_rxd(rxd), .relay_txd(), .mon_txd(),
         .esc_evt(), .rx_push(rx_push), .rx_rnext(rx_rnext));
 
