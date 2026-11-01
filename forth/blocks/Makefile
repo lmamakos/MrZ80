@@ -29,7 +29,7 @@ DISASM   = $(patsubst %.fth,%.blk,$(sort $(wildcard 3?-disasm.fth 4?-disasm.fth)
 
 blks=      00-start.blk 01-utils.blk 02-blocks.blk 03-blocks.blk 04-blocks.blk \
            ${LINEEDIT} 08-case.blk  ${EDITOR} ${SEE} 25-mmu.blk 26-fpledtest.blk 27-bench.blk \
-           28-defertest.blk 29-blank.blk ${DISASM}
+           28-defertest.blk 29-triangle.blk ${DISASM}
 
 forth.blk: blank.blk $(blks) Makefile
 	cat ${blks} > forth.blk
