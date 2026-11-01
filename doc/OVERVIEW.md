@@ -45,13 +45,14 @@ A single **T80** Z-80-compatible core runs at **10 MHz** (the FPGA generates
 a clock-enable pulse one cycle in five from its 50 MHz system clock, so the
 CPU sees true Z80 T-states). It sits on a banked memory system:
 
-* **128 MB of SDRAM** — main RAM, physical addresses `0x0000000`–`0x7FFFFFF`.
-* **64 KB of on-FPGA block RAM** — fast scratch memory at physical
-  `0x8000000`, handy for benchmarking "what would a cache buy me?".
+* **128 MB of SDRAM** — main RAM, physical addresses `0x0000000`–`0x7FFFFFF`,
+  at essentially block-RAM speed (§8).
+* **64 KB of on-FPGA block RAM** — the fastest memory in the machine, at
+  physical `0x8000000`; the OSD can load a boot image straight into it.
 * An **MMU** (compatible with the RomWBW **Z2** platform) maps four 16 KB
   frames anywhere in the resulting 28-bit / 256 MB physical address space.
   The Z80's 64 KB logical address space is thus four live pages over a
-  quarter-gigabyte machine — exactly the banked model RomWBW expects.
+  quarter-gigabyte address space — exactly the banked model RomWBW expects.
 
 The MMU is programmed from Z80 I/O ports `$B0`–`$BF`: four frame-low bytes,
 four frame-high bytes, and a **direct-access window** — a 28-bit physical
@@ -133,6 +134,9 @@ The MrZ80 OSD menu, and what it means:
   address 0; then it is released and runs your "ROM". This single mechanism
   makes *everything* swappable: a RomWBW ROM, a CP/M boot image, the
   standalone CamelFORTH kernel, or Grant Searle's classic BASIC/monitor.
+* **Boot Load Target** (`SDRAM` / `Block RAM`) — where that image lands: SDRAM
+  at address 0 as usual, or the 64 KB of on-FPGA block RAM for a run at the
+  machine's fastest memory. Manual picks only; a sticky auto-load uses SDRAM.
 * **"Sticky" selections** — the file you chose is remembered and auto-loaded
   on every core start, so the machine boots into your OS like a real computer.
   (If a sticky image ever hangs the system, open the file picker and press
@@ -171,14 +175,13 @@ The MrZ80 boot path today is: core loads → pick (or auto-load) a Boot Rom
 Image → the Z80 runs it. CP/M and the standalone CamelFORTH kernel boot this
 way, and the **RomWBW port exists as an MVP — a minimum viable product**:
 HBIOS and the multi-boot environment come up on the banked-memory MMU and the
-block devices and run. "Viable, not yet luxurious" has one concrete meaning:
-the paths RomWBW leans on hardest — **bank swaps and bank peek/poke** through
-the MMU — are functionally correct but not yet optimized for speed.
-Acceleration is an explicit roadmap item: the memory-subsystem work in
-`REQUIREMENTS.md` item 4 (clock-enable CPU timing, a cache for hot SDRAM
-pages, optionally placing the hot RomWBW banks in fast block RAM) targets
-exactly these paths. One RomWBW ROM multi-boots the family — CP/M 2.2 and
-3.0, ZSDOS, Z-System, CamelFORTH, N8DOS, and the other HBIOS-aware guests.
+block devices and run. What "viable, not yet luxurious" means today: the
+MrZ80 **HBIOS platform driver** is still to be written, and the banked paths
+RomWBW leans on need measuring and tuning under a real workload. The memory
+underneath them is not the problem — SDRAM runs within 0.7% of block RAM (§8),
+and RomWBW's hot banks can be placed in block RAM by programming the MMU. One
+RomWBW ROM multi-boots the family — CP/M 2.2 and 3.0, ZSDOS, Z-System,
+CamelFORTH, N8DOS, and the other HBIOS-aware guests.
 See §7 for the status snapshot.
 
 ---
@@ -276,6 +279,15 @@ diagnostics are one line long:
   (`HEX 100 10 DISASM`) that even decodes the custom instructions below. It is
   the same source the SSP monitor's `U` command uses (see §6).
 
+Kernels and library: `make -C forth install` copies `camel80.bin` (the stock
+kernel), `camelf.bin` (custom-instruction kernel), `camel80cpm.com` for CP/M, and
+`forth.blk` — the library you mount as **8MB Disk Image**. Typing `blocks`
+loads the block package and screen editor, and three words then cover "what is
+this machine doing": `SEE` reads a Forth definition back as source, `DISASM`
+disassembles the machine code underneath it, and the SSP's `U` (§6) does the
+same from *outside*. What to load, and what each word does: `forth/README.md`
+and `doc/FORTH-GLOSSARY.md`.
+
 ### Custom Z-80 instructions, forged for Forth
 
 Here is the part that makes this core genuinely unusual: **the CPU itself was
@@ -294,22 +306,18 @@ fetches the next word's address and advances the instruction pointer.
 `PUSHIX`/`POPIX` make `IX` a true return-stack pointer, which is exactly how
 CamelFORTH organizes its return stack. None of them disturb the flags.
 
-The measured payoff on this hardware (the same loop benchmark, timed by the
-on-chip µs timer):
-
-| Kernel | From block RAM | From SDRAM |
-|--------|-------------:|-----------:|
-| Stock Z-80 sequences | 13.0 s | 19.3 s |
-| Custom `F_NEXT`/`PUSHIX`/`POPIX` | **9.0 s** | **13.4 s** |
-
-About **30% faster, in hardware, for a handful of two-byte opcodes** — and the
-CP/M application and the standalone kernel are the same dictionary. CamelFORTH wraps
-the encodings in macros (`CUSTNEXT`, `CUSTRSP`) so one source builds for a
-stock Z-80 or for this core; a kernel built with them verifies at startup that
-the CPU really implements them. No assembler knows the mnemonics — you emit
-`DB 0EDh,092h` like a pioneer, exactly as you would have coded undocumented
-opcodes in 1979. (When RomWBW's bundled CamelFORTH runs on this core, it gets
-the same wind.)
+About **30% faster, in hardware, for a handful of two-byte opcodes**: the
+T-state counts above are architectural, and on the board a CamelFORTH loop ran
+that much faster on the custom kernel. (Those wall-clock figures predate the
+memory work in §8; re-recording them on the current core is an open item in
+`REQUIREMENTS.md`.) The CP/M application and the standalone kernel are the same
+dictionary: CamelFORTH wraps the encodings in macros (`CUSTNEXT`, `CUSTRSP`) so
+one source builds for a stock Z-80 or for this core, and a kernel built with
+them verifies at startup that the CPU really implements them. No *assembler*
+knows these mnemonics — you emit `DB 0EDh,092h` like a pioneer, exactly as you
+would have coded undocumented opcodes in 1979. The disassembler does know them,
+and prints them by name (§6). (When RomWBW's bundled CamelFORTH runs on this
+core, it gets the same wind.)
 
 ---
 
@@ -377,7 +385,8 @@ bit-identical when you type `G`.
 
 ### A taste of it: physical memory and single-stepping
 
-*(An illustrative session — the format is exact, the contents are made up.)*
+*(An illustrative session: the format is exactly what the monitor prints; the
+contents come from a simulated machine.)*
 
 ```
 .PHY
@@ -456,7 +465,9 @@ a Z-80 assembler and must reproduce the original bytes, and the two Forths
 must print **byte-for-byte identical text**. Deliberately breaking either the
 decoder or the 16/32-bit portability makes the check fail, which is the point.
 (It also found a handful of bugs in an earlier, hand-written version — the
-sort of thing that only shows when you assemble the output back.)
+sort of thing that only shows when you assemble the output back.) It is not
+free: the decoder took the monitor's dictionary from 11.7 KB to 22.4 KB of its
+48 KB.
 
 ### Engineering underneath (because you'll appreciate it)
 
@@ -464,60 +475,73 @@ sort of thing that only shows when you assemble the output back.)
   monitor firmware ever dies or wedges, hardware watchdogs demote it and the
   Z80 machine carries on — a broken debugger can never brick a running
   computer. Transient monitor holds of the Z80 are capped at ~4 ms.
-* **Transparency by default.** Without OSD `OM`, no byte value on the wire has
-  special meaning — WordStar `^K` sequences and binary uploads are safe. Only
-  an enabled, single configurable escape character (`ESC_CHAR`, default `^]`)
-  triggers a hand-over.
+* **Transparency by default.** Without the OSD's **SSP Serial Escape**
+  (`OM`), no byte value on the wire has special meaning — WordStar `^K`
+  sequences and binary uploads are safe. Only an enabled, single configurable
+  escape character (`ESC_CHAR`, default `^]`) triggers a hand-over.
 * **Interrupts held during stepping** so a 50 Hz clock tick can't hijack your
   trace; pending sources stay visible.
 * **Roadmap:** breakpoints with stop-before-execute (the hardware injects a
   self-loop at the matched opcode so `PC` is exactly the breakpoint), a
-  16-entry jump-history ring, T-state and machine-cycle stepping, downloadable
-  monitor firmware and Forth source packs *via the OSD* (no FPGA reflash to
-  update the monitor), an HDMI+keyboard console, and integration with the
-  switch panel and lamp pages (profile 7 is reserved, in hardware, for the
-  monitor's own lamp display). A mailbox at Z80 ports `$D0`–`$D3` is reserved
-  as the seed of HBIOS cooperation — the RomWBW world talking to the Forth
-  world deliberately, not just observingly.
+  16-entry jump-history ring, T-state and machine-cycle stepping, monitor
+  firmware and Forth source packs mounted from the OSD (hardware reserves the
+  slots; today the ROM ships inside the FPGA image, §8), an HDMI+keyboard
+  console, and integration with the switch panel and lamp pages (profile 7 is
+  reserved by design for the monitor's own lamps). A mailbox at Z80 ports
+  `$D0`–`$D3` is reserved as the seed of HBIOS cooperation — the RomWBW world
+  talking to the Forth world deliberately, not just observingly.
 
 **Status today:** the full escape → park → examine/deposit → resume cycle has
-been proven on hardware, as has transparency with the SSP disabled. The
-later commands — `I`/`O`, `MAP`, single-step `S`, the `U` unassembler (and the
-mnemonic on each `S` line, simulation-checked so far), and physical examine/deposit
-under `PHY` — each passed a simulation campaign (including mutation testing,
-and checks against the real T80 and the real SDRAM fabric) and then a check on
-the bench. It's a live development, and §7 says how to follow it.
+been proven on hardware, as has transparency with the SSP disabled. The later
+commands — `I`/`O`, `MAP`, single-step `S`, the `U` unassembler (and the
+mnemonic on each `S` line, simulation-checked so far), and physical
+examine/deposit under `PHY` — each passed a simulation campaign (including
+mutation testing, and checks against the real T80 and the real SDRAM fabric)
+and then a check on the bench. It's a live development, and §7 says how to
+follow it.
 
 ---
 
 ## 7. Status at a glance
 
+*As of 2026-11-01.*
+
 | Area | State |
 |------|-------|
 | Z80 + MMU + SDRAM/BRAM memory system | Shipping and exercised on hardware |
+| Memory speed — SDRAM within 0.7% of block RAM | Working on hardware |
 | VGA ANSI terminal, serial console, RTC, timers, SD + image block devices | Working |
 | Front panel: 256-LED panel, profiles, OSD override | Shipping |
 | Front panel: switch panel + LED-driver PCB, hardware panel engine | PCB design upcoming; panel engine spec'd (P2) |
 | CamelFORTH standalone & CP/M, custom instructions, RAM-disk blocks | Working |
 | CP/M 2.2/3.0 boot images | Working |
-| RomWBW (HBIOS + multi-boot) | **MVP** — boots and runs; bank-swap / peek-poke acceleration on the roadmap |
+| RomWBW (HBIOS + multi-boot) | **MVP** — HBIOS and the multi-boot environment come up and run; the MrZ80 HBIOS platform driver and tuning under a real workload are the remaining work |
 | AY-3-8910 PSG audio (possibly a stereo pair) | Roadmap |
 | SSP monitor: escape/park/E/D/G/R | Proven on hardware |
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
 | SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | `U` working on hardware (owner, 2026-11-01); `S` mnemonic verified in simulation |
 | SSP: breakpoints, T-state/machine-cycle stepping, BRAM-page physical access, panel integration | Roadmap |
+| SSP: monitor firmware and Forth packs mounted from the OSD (no FPGA reflash) | Not implemented — the monitor ROM ships inside the core image; the OSD slots are reserved |
 | Legacy Grant Searle BASIC/monitor (`basmon`) | Still available as a bootable `.BIN` |
 
 ## 8. Room to grow
 
 Headroom *is* a feature. The latest fit report puts the entire machine — CPU,
 MMU, SDRAM controller, terminal, UARTs, front-panel engine, the whole
-SSP — at **13,128 of 41,910 ALMs: about 31% of the FPGA's logic elements**,
+SSP — at **13,200 of 41,910 ALMs: about 31% of the FPGA's logic elements**,
 with the block-RAM and DSP budgets similarly relaxed. Less than half the
 fabric spoken for — barely a third — is not a finish line; it's real estate.
-An SDRAM cache, another serial port, new peripherals, whatever gets dreamed up
-next: there's a place for it.
+Another serial port, new peripherals, whatever gets dreamed up next: there's a
+place for it.
 
+* **The memory penalty, designed out instead of cached over.** SDRAM used to
+  cost about half again as much time as block RAM. A series of timing and
+  protocol fixes — a clock-enabled CPU, waits released the cycle the data
+  arrives, speculative reads and posted writes — brought that to **0.7%**: the
+  CamelFORTH benchmark now runs at effectively the same speed from either. The
+  block-RAM cache designed to fix the problem is shelved, and the fast RAM is
+  free for other uses. How, and what was deliberately not done:
+  `doc/SDRAM_REWORK_PLAN.md`.
 * **A real front-panel PCB.** Upcoming hardware design: a board that
   interfaces to the MiSTer's USER header, drives the 256-WS2812 light strip,
   and carries the toggle bank, function levers and encoder from §4's panel
@@ -528,15 +552,15 @@ next: there's a place for it.
   CPC, the Atari ST and countless arcade cabinets — and maybe *two* of them
   for stereo. Authentic 1980s sound for a 1970s CPU, inside a 2010s FPGA.
 * **The SSP will keep evolving — because it's just software.** The monitor is
-  not etched anywhere: it's Forth code in a downloadable ROM image that the
-  HPS loads when the core starts. New commands — breakpoints, search,
-  another console skin — mean *new Forth source*, re-mounted from the OSD, not
-  an FPGA recompile (the unassembler was the first such addition, and it was
-  written once for both Forths); even the bridge's register file is generated
-  from one CSV so hardware and firmware grow together. The pace so far — from
-  no monitor at all to escape, park, examine, deposit, step and physical
-  memory access in a few dozen development rounds — suggests the command set
-  will keep getting taller.
+  not etched anywhere: it is Forth source assembled into a ROM image that ships
+  in the core, and even the bridge's register file is generated from one CSV so
+  hardware and firmware grow together. Growing it today means new Forth source
+  and a rebuild of the core; mounting monitor ROMs and Forth packs straight
+  from the OSD — reserved in the hardware, not built yet — would make it a
+  file you download instead. The pace so far — from no monitor at all to
+  escape, park, examine, deposit, step, physical memory and disassembly in a
+  few dozen development rounds — suggests the command set will keep getting
+  taller.
 * **Customization is the design idiom.** ANSI terminal emulation you can
   extend in the fabric, panel maps that are YAML data files, boot behavior and
   serial routing chosen in the OSD, the debugger written in an interactive
@@ -550,10 +574,13 @@ next: there's a place for it.
 | [`README.md`](../README.md) | Project overview, console wiring, OSD, build |
 | [`HARDWARE.md`](../HARDWARE.md) | Authoritative memory map, full I/O port maps, boot/reset semantics, custom instructions |
 | [`Components/FRONTPANEL/README.md`](../Components/FRONTPANEL/README.md) | Front-panel datasheet, profile file format, capture chain |
-| [`forth/README.md`](../forth/README.md) + [`doc/FORTH-GLOSSARY.md`](FORTH-GLOSSARY.md) | CamelFORTH port notes and complete word glossary |
+| [`forth/README.md`](../forth/README.md) + [`doc/FORTH-GLOSSARY.md`](FORTH-GLOSSARY.md) | CamelFORTH port notes and tooling, and the kernel word glossary |
+| [`forth/disasm/README.md`](../forth/disasm/README.md) | The Z-80 disassembler shared by CamelFORTH and the SSP monitor |
 | [`doc/SSP_DESIGN.md`](SSP_DESIGN.md) / [`doc/SSP_STATUS.md`](SSP_STATUS.md) | SSP architecture and decisions / live milestone status |
+| [`doc/SSP_REGS.md`](SSP_REGS.md) | SSP bridge register map (generated from `ssp/regs/ssp_regs.csv`) |
 | [`doc/SSP_PANEL_UX.md`](SSP_PANEL_UX.md) | The classic switch-panel user-experience spec |
-| [`HISTORY.md`](../HISTORY.md) / [`REQUIREMENTS.md`](../REQUIREMENTS.md) | Design rationale, development log, roadmap |
+| [`HISTORY.md`](../HISTORY.md) / [`REQUIREMENTS.md`](../REQUIREMENTS.md) | Design rationale, development log, requirements and roadmap |
+| [`AGENTS.md`](../AGENTS.md) | Contributor guide: repository layout, build commands, toolchain |
 
 *Stop-hazards are for 1978. On MrZ80 the machine glows, the Forth answers,
 and the `.` prompt is waiting.*
