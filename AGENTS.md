@@ -136,6 +136,87 @@ um80 accepts `.PHASE`/`.DEPHASE` but silently IGNORES them (no address
 shift). For code copied to and run at another address, write its absolute
 self-references as `label+OFFSET` (see `IM` in `testing/sdramstress.asm`).
 
+## Running bare-metal code without hardware
+
+Two quick emulator wrappers live in `tools/`. Use them for fast edit/run
+cycles on Forth code; the GHDL/Verilator lanes (`sim/`, commands in
+`doc/SSP_STATUS.md` §7) remain the authority for anything cycle- or
+RTL-dependent. Both are scriptable from the shell or importable as a library
+(`sys.path.insert(0, 'tools')`). `z80sim.py` exits 2 if the target hangs
+(no prompt); `qforth.py --check` exits 1 if any line errors. Neither parses
+Camel's `word?` error text, so grep the transcript for it when that matters.
+
+### CamelFORTH (Z-80): `tools/z80sim.py`
+
+Runs the bootable kernel in the Python `z80` emulator (`pip install --user
+z80`; not preinstalled) with the console (ports 82h/83h) and the RAM-disk
+MMU ports (B8h..BCh) modelled, so the kernel's own `LOAD`/`BLOCK` read the
+real `forth/blocks/forth.blk`. A whole session takes seconds.
+
+```sh
+# build the stock bootable kernel, load the blocks, run commands:
+tools/z80sim.py --build --blk forth/blocks/forth.blk \
+    -e '0 LOAD' -e '1 LOAD' -e 'blocks' -e '30 49 THRU' -e 'HEX 0 4 DISASM'
+tools/z80sim.py --bin forth/camel80.bin -f myscript.fth   # prebuilt kernel
+```
+
+```python
+from z80sim import Z80Forth, build_kernel     # library use
+f = Z80Forth(build_kernel(), blk='forth/blocks/forth.blk')
+text, ok = f.send('1 2 + .')      # ok=False: no prompt (hung/crashed)
+f.poke(0x9000, b'\xf3\xc3'); f.peek(0x9000, 2)    # 64 KB flat RAM
+```
+
+Limits: a **stock** Z-80 only. Kernels built with `CUSTNEXT`/`CUSTRSP` use
+the custom `ED` opcodes and will not run; use `sim/run_forth.sh` (real T80
+under GHDL, slow) for those. No SSP, MMU frame remapping or SD card. It
+reproduced real crashes (e.g. the RST 38 on a block that spans a `THRU`), so
+trust it for logic bugs; it cannot show hardware timing.
+
+### Mecrisp-Quintus (RISC-V SSP): `tools/qforth.py`
+
+Drives the Mecrisp REPL of the SSP firmware under `qemu-system-riscv32`
+(`make -C ssp/fw qemu`, or `--build`). Same kernel and Forth sources as the
+silicon image, ns16550 console, everything in DRAM.
+
+```sh
+tools/qforth.py --build -e ': sq dup * ;' -e '7 sq .'
+tools/qforth.py -f ssp/fw/apps/mycode.fs --strip --check   # exit 1 on any error
+# preload a test image into guest RAM (free from 0x80100000):
+tools/qforth.py --load /tmp/img.bin@0x80100000 -e '$80100000 c@ .'
+```
+
+Limits: no SSP bridge registers (`SSP_*`), no Z-80, no real UART timing.
+Code that touches `SSP_*` or the monitor is tested on the Verilator lane:
+`make -C sim p1a dict-p1a smoke-p1a`. Input is paced byte-by-byte on the echo
+(unpaced bursts silently lose characters); an error line has no `ok.`, which
+is how `--check` detects it.
+
+### Shared Forth source: the Z-80 disassembler
+
+`forth/disasm/z80dis.fth` is loaded unchanged by both CamelFORTH (generated
+blocks 30-49) and the SSP monitor (spliced in by `sim/ssp/p1a_dictbuild.sh` at
+the `\ @include` line of `ssp/fw/apps/monitor.fs`). Edit only the shared core
+and the small per-environment ports; never the generated `3x-`/`4x-disasm.fth`.
+`make -C forth/disasm check` (~6 s) assembles every disassembled line back to
+bytes and requires byte-identical output from both environments. Rules, port
+contract and workflow: `forth/disasm/README.md`. The monitor's own port is
+tested by `PARTS=H sim/ssp/p1a_smoke.sh`. After changing the core, rebuild the
+Camel blocks (`make -C forth/blocks`) and the factory ROM (`make -C sim fw-rom`,
+recommit `ssp/fw/forth_rom.mif`).
+
+### Porting facts that bit us
+
+- Mecrisp is **case-insensitive**; CamelFORTH is **case-sensitive** (kernel
+  names are uppercase). Shared Forth source is therefore written UPPERCASE.
+- Mecrisp has no `.R`, `WITHIN` or `?OF`-style helpers; its `CASE`/`OF` is
+  standard (`OF` drops the selector). It needs `0 variable x` in
+  `compiletoflash`; Camel's `VARIABLE` takes no initial value.
+- Camel blocks are 16 lines x 64 columns, evaluated one line at a time: a
+  parsing word and its argument (`."`, `(`, `POSTPONE x`) must share a line.
+  A definition may span blocks only if loaded by `THRU` (a typed `n LOAD` in
+  compile state just compiles the `LOAD`).
+
 ## Target device
 
 Cyclone V `5CSEBA6U23I7` (DE10-Nano / MiSTer).
