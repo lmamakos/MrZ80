@@ -168,7 +168,9 @@ SPURIOUS:
 SPURMSG:
 	DB "Spurious interrupt/RST ",0
 
-$ENDADDR EQU       4000h ; end of first 16K MMU page
+$ENDADDR EQU       8000h ; end of first two 16K MMU frames (32K); the
+                         ; stacks/user area/TIB sit just below this, and
+                         ; the dictionary grows up toward the TIB
       ENDIF
 
 ; ===============================================

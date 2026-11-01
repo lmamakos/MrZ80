@@ -676,14 +676,28 @@ INTER9: DW DROP,EXIT
         DW TICKSOURCE,TWOSTORE,EXIT
 
 ;C QUIT     --    R: i*x --    interpret from kbd
+;   LATEST @ C@ 80 AND IF       unfinished colon definition?
+;       LATEST @ NFA>LFA        drop its header and body:
+;       DUP DP !  @ LATEST !
+;   THEN
 ;   L0 LP !  R0 RP!   0 STATE !
 ;   BEGIN
 ;       TIB DUP TIBSIZE ACCEPT  SPACE
 ;       INTERPRET
 ;       STATE @ 0= IF CR ." OK" THEN
 ;   AGAIN ;
+; An error inside a definition (e.g. POSTPONE with nothing to
+; parse, or an unknown word) ABORTs into here with the new word
+; still hidden (smudge bit set by HIDE, cleared only by ;).
+; Left alone it stays LATEST, and WORDS then prints garbage.
+; The header starts at its link field, which is where HERE was
+; when CREATE began, so DP := lfa and LATEST := old link
+; removes the partial definition completely.
     head QUIT,4,'QUIT',docolon
-        DW L0,LP,STORE
+        DW LATEST,FETCH,CFETCH,LIT,80H,aAND,qbranch,QUIT0
+        DW LATEST,FETCH,NFATOLFA,DUP,DP,STORE
+        DW FETCH,LATEST,STORE
+QUIT0:  DW L0,LP,STORE
         DW R0,RPSTORE,LIT,0,STATE,STORE
 QUIT1:  DW TIB,DUP,TIBSIZE
       IFDEF CPM
