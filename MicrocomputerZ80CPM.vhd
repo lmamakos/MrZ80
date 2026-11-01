@@ -772,14 +772,14 @@ fpLatchDataOut <= fpLatch;
 -- clock. 50_000_000 / 60 = 833_333. The fpRefreshCount comparison
 -- against the integer literal works under the std_logic_arith
 -- package family used throughout this wrapper.
--- updated: to 100Hz update rate - 50_000_000 / 100 = 500_00
+-- updated: to 75Hz update rate - 50_000_000 / 75 = 666_666
 process(clk)
 begin
 	if rising_edge(clk) then
 		if N_RESET = '0' then
 			fpRefreshCount <= (others => '0');
 			fpRefreshTick  <= '0';
-		elsif fpRefreshCount = 800000-1 then
+		elsif fpRefreshCount = 666_666-1 then
 			fpRefreshCount <= (others => '0');
 			fpRefreshTick  <= '1';
 		else
