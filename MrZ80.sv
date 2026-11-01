@@ -397,6 +397,7 @@ parameter CONF_STR = {
 	"-;",
 	"OK,SSP Monitor,Off,On;",                        // status[20]: SSP (System Support Processor) enable (osd_ok); Off = indistinguishable from absent
 	"OM,SSP Serial Escape,Off,On;",                  // status[22]: escape byte on the selected serial port enters the SSP monitor (OM)
+	"FC6,MRZ,SSP Monitor ROM;",                       // index 6: SSP monitor ROM image -> ssp_top MROM (128 KiB; never SDRAM, never resets the Z-80)
 	"TN,Reset SSP;",                                 // status[23]: pulse -> ~1 ms RV core reset (host hatch)
 	"-,CPU Held in Reset until ROM image loaded;",
 	"R0,Reset;",                                     // status[0]: OSD Reset (CPU reset only; keeps loaded image)
@@ -601,7 +602,9 @@ always @(posedge clk_sys) begin
 
     // On the falling edge of ANY download, hold the CPU in reset for a
     // short stretch so it restarts cleanly into the new memory image.
-    if (ioctl_download_d & ~ioctl_download) begin
+    // An SSP ROM mount (index 6) is excluded: it must not touch the Z-80
+    // (D-16); ssp_top runs its own monitor-only reset for it.
+    if (ioctl_download_d & ~ioctl_download & ~dl_is_mrom) begin
         dl_reset_stretch <= 1'b1;
         dl_reset_counter <= 16'd0;
     end else if (dl_reset_stretch) begin
@@ -612,12 +615,16 @@ always @(posedge clk_sys) begin
     end
 end
 
-// CPU is held in reset during a download, for the post-download stretch, and
-// for as long as no boot image has been loaded (no built-in boot ROM).
-// ~bin_loaded is deliberately NOT part of sdram_init_reset below.
+// CPU is held in reset during a download (other than an SSP ROM mount), for
+// the post-download stretch, and for as long as no boot image has been loaded
+// (no built-in boot ROM). ~bin_loaded is deliberately NOT part of
+// sdram_init_reset below, nor of reset_sys: the SSP (which has its own ROM)
+// runs whether or not a Z-80 boot image has been loaded.
 // (buttons[1], the user button, resets the CPU only, like OSD Reset.)
-wire reset = RESET_sync | status[0] | buttons[1] | reset_from_mount
-           | ioctl_download | dl_reset_stretch | ~bin_loaded;
+wire dl_guest  = ioctl_download & ~dl_is_mrom;   // downloads that own the Z-80 side
+wire reset_sys = RESET_sync | status[0] | buttons[1] | reset_from_mount
+               | dl_guest | dl_reset_stretch;
+wire reset     = reset_sys | ~bin_loaded;
 
 // The SDRAM controller must NOT be re-initialized during a download (that
 // would wipe the bytes we are streaming in, and would stall the HPS forever
@@ -842,9 +849,13 @@ localparam [26:0] DSK_IMAGE_SIZE = 27'h0800000;          //   8 MB
 //           probably need to revisit DSK_IMAGE_SIZE.)
 //   5       front-panel profile file      -> FrontPanel_Subsystem; NEVER
 //           written to SDRAM (the SDRAM download FSM below ignores it)
+//   6       SSP monitor ROM image (.MRZ)  -> ssp_top MROM; NEVER SDRAM, and
+//           the Z-80 keeps running (no CPU reset, SDRAM stays the Z-80's)
+//   7       reserved (SSP)
 wire        dl_is_bin  = (ioctl_index[5:0] == 6'd1);
 wire        dl_is_dsk  = (ioctl_index[5:0] >= 6'd2) && (ioctl_index[5:0] <= 6'd4);
 wire        dl_is_fpp  = (ioctl_index[5:0] == 6'd5);
+wire        dl_is_mrom = (ioctl_index[5:0] == 6'd6);
 // Downloads that are written to SDRAM (BIN + DSK-style); everything else
 // (e.g. the profile file) must leave the SDRAM download FSM idle.
 wire        dl_to_sdram = ioctl_download & (dl_is_bin | dl_is_dsk);
@@ -963,17 +974,39 @@ always @(posedge clk_sys) begin
 	end
 end
 
+// SSP monitor ROM mount (index 6, R43): the bytes go straight into the
+// ssp_top MROM (single-cycle M10K writes). ssp_top holds the RV core in
+// reset for the whole download, first clears the 128 KiB MROM (ssp_mnt_busy,
+// ~0.66 ms, which holds the HPS off through ioctl_wait), and restarts the
+// monitor when the download ends. Bytes past the 128 KiB are dropped.
+wire        ssp_mnt_active = ioctl_download & dl_is_mrom;
+wire        ssp_mnt_in_rom = (ioctl_addr[26:17] == 10'd0);   // 128 KiB MROM
+wire        ssp_mnt_busy;
+reg         ssp_mnt_wr   = 1'b0;
+reg  [16:0] ssp_mnt_addr = 17'd0;
+reg  [7:0]  ssp_mnt_data = 8'h00;
+always @(posedge clk_sys) begin
+	ssp_mnt_wr <= 1'b0;
+	if (ssp_mnt_active && ssp_mnt_in_rom && dl_wr_edge) begin
+		ssp_mnt_addr <= ioctl_addr[16:0];
+		ssp_mnt_data <= ioctl_dout;
+		ssp_mnt_wr   <= 1'b1;
+	end
+end
+
 // Hold HPS off until the byte is committed. SDRAM path uses the busy
-// window; block-RAM path completes immediately (single-cycle write).
-assign ioctl_wait = dl_busy;
+// window; block-RAM path completes immediately (single-cycle write); the
+// SSP ROM mount only while ssp_top clears the MROM.
+assign ioctl_wait = dl_busy | ssp_mnt_busy;
 
 // SDRAM client mux. During an OSD download the download path overrides
 // the Z-80 client (CPU is in reset). Address/data pass through
-// unconditionally; with we=rd=0 the controller stays idle.
-assign sdram_addr_mux  = ioctl_download ? dl_addr_r : z80_sdram_addr;
-assign sdram_din_mux   = ioctl_download ? dl_din_r  : z80_sdram_din;
-assign sdram_we_mux    = ioctl_download ? dl_we     : z80_sdram_we;
-assign sdram_rd_mux    = ioctl_download ? 1'b0      : z80_sdram_rd;
+// unconditionally; with we=rd=0 the controller stays idle. NOT during an SSP
+// ROM mount: the Z-80 keeps running then and keeps its SDRAM (dl_guest).
+assign sdram_addr_mux  = dl_guest ? dl_addr_r : z80_sdram_addr;
+assign sdram_din_mux   = dl_guest ? dl_din_r  : z80_sdram_din;
+assign sdram_we_mux    = dl_guest ? dl_we     : z80_sdram_we;
+assign sdram_rd_mux    = dl_guest ? 1'b0      : z80_sdram_rd;
 
 
 // Front-panel profile file (index 5). The bytes go straight into
@@ -1116,6 +1149,10 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
 // R-43). RTS/CTS flow control stays Z80-only (the SSP UART has none, R4).
 // "Reset SSP" (status[23], a trigger item): stretch the pulse to ~1.3 ms so the
 // RV core sees a clean reset whatever the OSD pulse width.
+// rst_n = ~reset_sys: the SSP resets with the Z-80's reset sources but NOT
+// with ~bin_loaded -- it boots from its own ROM whether or not a Z-80 image
+// has been loaded. An SSP ROM mount (index 6) resets only the monitor
+// (inside ssp_top, D-16).
 reg [15:0] ssp_rv_rst_cnt = 16'd0;
 always @(posedge clk_sys) begin
     if (status[23])                  ssp_rv_rst_cnt <= 16'hFFFF;
@@ -1123,10 +1160,10 @@ always @(posedge clk_sys) begin
 end
 wire ssp_rv_rst_n = (ssp_rv_rst_cnt == 16'd0);
 
-ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif")) ssp_top
+ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif"), .DICT_BASE(17'h05000)) ssp_top
 (
     .clk            (clk_sys),
-    .rst_n          (~reset),
+    .rst_n          (~reset_sys),
     .osd_ok         (status[20]),
     .osd_esc_en     (status[22]),
     .esc_disable    (1'b0),                 // panel frame bit 32 (P1b)
@@ -1180,9 +1217,11 @@ ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif")) ssp_top
 
     .ssp_irq        (ssp_irq),
     .rv_alive       (ssp_rv_alive),
-    .dl_wr          (1'b0),                 // MROM download (P1b)
-    .dl_addr        (16'd0),
-    .dl_wdata       (32'd0),
+    .mnt_active     (ssp_mnt_active),       // OSD SSP ROM mount (R43)
+    .mnt_wr         (ssp_mnt_wr),
+    .mnt_addr       (ssp_mnt_addr),
+    .mnt_data       (ssp_mnt_data),
+    .mnt_busy       (ssp_mnt_busy),
     .dbg_rom_illegal_writes (),
     .dbg_bus_errs   ()
 );

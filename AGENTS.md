@@ -17,7 +17,7 @@ system to run on this core in the future.
 ## Quartus revision
 
 `MrZ80.qpf` defines a single revision, `MrZ80`, with its settings
-in `MrZ80.qsf` (USB support, Z80, SignalTap enabled, aggressive
+in `MrZ80.qsf` (USB support, Z80, SignalTap off by default, aggressive
 optimization settings).
 
 Run Analysis & Synthesis after changing `.qsf` assignments.

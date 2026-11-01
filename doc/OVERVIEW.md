@@ -154,7 +154,8 @@ The MrZ80 OSD menu, and what it means:
 * **Front Panel Profiles** (`.FPP`) and **Front Panel Profile** — load and
   live-select the blinkenlights maps (§4).
 * **SSP Monitor / SSP Serial Escape / Reset SSP** — enable and use the
-  embedded debug console (§6).
+  embedded debug console (§6). **SSP Monitor ROM** (`.MRZ`) loads a new
+  monitor firmware image without touching the running Z80.
 * **Reset** — restarts the loaded image (SDRAM contents survive). A **hard**
   reset (the framework Reset) discards the loaded boot image; OSD Reset
   doesn't. Rule of thumb: *OSD Reset restarts the software; hard reset removes
@@ -466,8 +467,9 @@ must print **byte-for-byte identical text**. Deliberately breaking either the
 decoder or the 16/32-bit portability makes the check fail, which is the point.
 (It also found a handful of bugs in an earlier, hand-written version — the
 sort of thing that only shows when you assemble the output back.) It is not
-free: the decoder took the monitor's dictionary from 11.7 KB to 22.4 KB of its
-48 KB.
+free: the decoder took the monitor's dictionary from 11.7 KB to 22.4 KB — which
+is why the monitor's ROM has since doubled to 128 KB, leaving a 108 KB
+dictionary window with room to grow.
 
 ### Engineering underneath (because you'll appreciate it)
 
@@ -483,11 +485,10 @@ free: the decoder took the monitor's dictionary from 11.7 KB to 22.4 KB of its
   trace; pending sources stay visible.
 * **Roadmap:** breakpoints with stop-before-execute (the hardware injects a
   self-loop at the matched opcode so `PC` is exactly the breakpoint), a
-  16-entry jump-history ring, T-state and machine-cycle stepping, monitor
-  firmware and Forth source packs mounted from the OSD (hardware reserves the
-  slots; today the ROM ships inside the FPGA image, §8), an HDMI+keyboard
-  console, and integration with the switch panel and lamp pages (profile 7 is
-  reserved by design for the monitor's own lamps). A mailbox at Z80 ports
+  16-entry jump-history ring, T-state and machine-cycle stepping, an
+  HDMI+keyboard console, and integration with the switch panel and lamp pages
+  (profile 7 is reserved by design for the monitor's own lamps). A mailbox at
+  Z80 ports
   `$D0`–`$D3` is reserved as the seed of HBIOS cooperation — the RomWBW world
   talking to the Forth world deliberately, not just observingly.
 
@@ -521,18 +522,18 @@ follow it.
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
 | SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | `U` working on hardware (owner, 2026-11-01); `S` mnemonic verified in simulation |
 | SSP: breakpoints, T-state/machine-cycle stepping, BRAM-page physical access, panel integration | Roadmap |
-| SSP: monitor firmware and Forth packs mounted from the OSD (no FPGA reflash) | Not implemented — the monitor ROM ships inside the core image; the OSD slots are reserved |
+| SSP: monitor ROM (128 KB) loaded from the OSD, no FPGA rebuild | Working in simulation; hardware check pending. Forth source packs from the OSD: not planned for now |
 | Legacy Grant Searle BASIC/monitor (`basmon`) | Still available as a bootable `.BIN` |
 
 ## 8. Room to grow
 
 Headroom *is* a feature. The latest fit report puts the entire machine — CPU,
 MMU, SDRAM controller, terminal, UARTs, front-panel engine, the whole
-SSP — at **13,200 of 41,910 ALMs: about 31% of the FPGA's logic elements**,
-with the block-RAM and DSP budgets similarly relaxed. Less than half the
-fabric spoken for — barely a third — is not a finish line; it's real estate.
-Another serial port, new peripherals, whatever gets dreamed up next: there's a
-place for it.
+SSP — at **13,318 of 41,910 ALMs: about 32% of the FPGA's logic elements**,
+with under half the block-RAM bits and a third of the DSPs in use. Less than
+half the fabric spoken for — barely a third — is not a finish line; it's real
+estate. Another serial port, new peripherals, whatever gets dreamed up next:
+there's a place for it.
 
 * **The memory penalty, designed out instead of cached over.** SDRAM used to
   cost about half again as much time as block RAM. A series of timing and
@@ -554,10 +555,10 @@ place for it.
 * **The SSP will keep evolving — because it's just software.** The monitor is
   not etched anywhere: it is Forth source assembled into a ROM image that ships
   in the core, and even the bridge's register file is generated from one CSV so
-  hardware and firmware grow together. Growing it today means new Forth source
-  and a rebuild of the core; mounting monitor ROMs and Forth packs straight
-  from the OSD — reserved in the hardware, not built yet — would make it a
-  file you download instead. The pace so far — from no monitor at all to
+  hardware and firmware grow together. A new monitor is a file, not an FPGA
+  build: rebuild the ROM image and load it from the OSD, and the Z80 never
+  notices. Words can even be compiled straight into the ROM's dictionary
+  window on the running board. The pace so far — from no monitor at all to
   escape, park, examine, deposit, step, physical memory and disassembly in a
   few dozen development rounds — suggests the command set will keep getting
   taller.

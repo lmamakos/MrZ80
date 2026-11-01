@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # sim/ssp/dictbuild_qemu.sh -- D-35 build-pipeline rehearsal on qemu.
 #
-# Flow (the qemu lane of the dictionary build; the authoritative run later
-# happens on the sim/ssp Verilator stub SoC with hardware-true addresses,
-# same script shape):
-#   1. build the FW qemu variant (dict window 0x8000_4400..0x8001_0000,
+# Flow (the qemu lane of the dictionary build; the authoritative run is
+# sim/ssp/p1a_dictbuild.sh on the p1a model, hardware-true addresses, same
+# script shape):
+#   1. build the FW qemu variant (dict window 0x8000_5000..0x8002_0000,
 #      "rom" = writable DRAM)
 #   2. boot REPL, send `compiletoflash`, feed apps/demo.fs (paced bytes)
 #   3. capture the dictionary window with QMP pmemsave
@@ -21,14 +21,15 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 FW=$ROOT/ssp/fw
 BUILD=$FW/build
 WORK=/tmp/opencode/dictbuild
-DICT_OFF=0x4400                 # window offset within the 64 KiB image
-DICT_LEN=$((0x10000 - 0x4400)) # 0xBC00
+ROM_LEN=0x20000                 # 128 KiB image (R43)
+DICT_OFF=0x5000                 # window offset within the image
+DICT_LEN=$((ROM_LEN - DICT_OFF)) # 0x1B000
 OBJCOPY=${CROSS:-riscv64-unknown-elf-}objcopy
 
 mkdir -p "$WORK"
 rm -f "$WORK"/*.bin "$WORK"/*.log "$WORK"/qmp
 make -C "$FW" qemu >/dev/null || { echo "FAIL: fw build"; exit 1; }
-"$OBJCOPY" -O binary --gap-fill 0x00 --pad-to 0x80010000 \
+"$OBJCOPY" -O binary --gap-fill 0x00 --pad-to $((0x80000000 + ROM_LEN)) \
   "$BUILD/mecrisp-ssp-qemu.elf" "$WORK/kernel.bin" || { echo "FAIL: objcopy"; exit 1; }
 
 send_line() {  # $1 = pty, rest paced like a 115200-ish terminal
@@ -108,10 +109,9 @@ cp "$WORK/kernel.bin" "$WORK/app.bin"
 dd if="$WORK/dict.bin" of="$WORK/app.bin" bs=1 seek="$((DICT_OFF))" \
    conv=notrunc status=none
 python3 "$ROOT/tools/bin2hex.py" "$WORK/app.bin" \
-  "$BUILD/mecrisp-ssp-qemu-app.hex" 0x10000 0x80000000 >/dev/null
+  "$BUILD/mecrisp-ssp-qemu-app.hex" "$ROM_LEN" 0x80000000 >/dev/null
 cp "$WORK/app.bin" "$BUILD/mecrisp-ssp-qemu-app.bin"
-# dict fragment alone (the piece the stub-SoC flow will regenerate at true
-# hardware offsets, and the reproducible-diff artifact for CI):
+# dict fragment alone (the reproducible-diff artifact for CI):
 cp "$WORK/dict.bin" "$BUILD/dict-qemu.bin"
 python3 "$ROOT/tools/bin2hex.py" "$WORK/dict.bin" \
   "$BUILD/dict-qemu.hex" "$DICT_LEN" "$DICT_OFF" >/dev/null

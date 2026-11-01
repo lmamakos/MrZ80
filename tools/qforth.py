@@ -19,7 +19,7 @@ Command line (lines are sent in command-line order):
     --build         run `make -C ssp/fw qemu` first
     --load F@ADDR   preload binary F into guest RAM at ADDR (hex ok).  The
                     guest has 8 MB at 0x80000000; Forth uses the first
-                    128 KB, so 0x80100000 and up is free for test data
+                    192 KB, so 0x80100000 and up is free for test data
     -e LINE         send LINE
     -f FILE         send each line of FILE
     --strip         drop blank lines and full-line `\\` comments from -f

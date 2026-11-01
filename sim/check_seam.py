@@ -9,7 +9,10 @@ ssp_int_hold gate).  Static check:
     instance (VHDL port defaults would otherwise hide an omitted one);
   * every port of module ssp_top is connected in the ssp_top instance;
   * every net on a CPM ssp_* port also appears on a port of the ssp_top
-    instance (the two halves of the seam are wired to each other).
+    instance (the two halves of the seam are wired to each other);
+  * R43 OSD ROM mount: the mnt_* ports are driven (not tied off), mnt_busy
+    reaches ioctl_wait, and the SDRAM mux does not switch on a bare
+    ioctl_download (an SSP mount leaves the Z-80 running on its SDRAM).
 """
 import re, sys, os
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -45,6 +48,25 @@ for p in cpm_ports:
     n = cpm.get(p, '')
     if n and n not in top_nets:
         bad.append('CPM %s (net %s) is not on any ssp_top port' % (p, n))
+
+# R43 OSD ROM mount: the mnt_* ports carry the index-6 download (never a
+# constant tie-off), its clear sweep holds the HPS off, and an SSP mount
+# must leave the SDRAM with the running Z-80 (a bare ioctl_download select
+# would hand it to the idle download FSM mid-run).
+for p in ('mnt_active', 'mnt_wr', 'mnt_addr', 'mnt_data', 'mnt_busy'):
+    n = sspt.get(p, '')
+    if not n or re.match(r"^\d*'[bdh]|^\d+$|^\{", n):
+        bad.append('ssp_top port %s is tied off (%r)' % (p, n))
+w = re.search(r'assign\s+ioctl_wait\s*=\s*([^;]*);', sv)
+if not w or sspt.get('mnt_busy', '#') not in w.group(1):
+    bad.append('ioctl_wait does not include the ssp_top mnt_busy net')
+for m in ('addr', 'din', 'we', 'rd'):
+    a = re.search(r'assign\s+sdram_%s_mux\s*=\s*(\w+)\s*\?' % m, sv)
+    if not a:
+        bad.append('sdram_%s_mux assignment not found' % m)
+    elif a.group(1) == 'ioctl_download':
+        bad.append('sdram_%s_mux selects on bare ioctl_download (an SSP ROM mount '
+                   'would take the SDRAM from the running Z-80)' % m)
 
 if bad:
     print('check_seam: FAIL'); print('\n'.join('  ' + b for b in bad)); sys.exit(1)

@@ -38,14 +38,14 @@ $(OBJROOT)/mecrisp-ssp.hex: $(SRCS) memmap-ssp | $(OBJROOT)
 	      -o $(OBJROOT)/mecrisp-ssp.elf $(OBJROOT)/ssp.o
 	$(OBJCOPY) -O binary --gap-fill 0x00 $(OBJROOT)/mecrisp-ssp.elf \
 	           $(OBJROOT)/mecrisp-ssp.bin
-	python3 ../../tools/bin2hex.py $(OBJROOT)/mecrisp-ssp.bin $@ 0x10000
+	python3 ../../tools/bin2hex.py $(OBJROOT)/mecrisp-ssp.bin $@ 0x20000
 
 # ---- qemu virt smoke variant: everything in DRAM, ns16550 console -----------
 QEMU_DEFS := --defsym QEMU_NS16550=1 \
-             --defsym RamAnfang=0x80010000 --defsym RamEnde=0x80020000 \
-             --defsym FlashAnfang=0x80000000 --defsym FlashEnde=0x80010000 \
-             --defsym FlashDictionaryAnfang=0x80004400 \
-             --defsym FlashDictionaryEnde=0x80010000
+             --defsym RamAnfang=0x80020000 --defsym RamEnde=0x80030000 \
+             --defsym FlashAnfang=0x80000000 --defsym FlashEnde=0x80020000 \
+             --defsym FlashDictionaryAnfang=0x80005000 \
+             --defsym FlashDictionaryEnde=0x80020000
 
 $(OBJROOT)/mecrisp-ssp-qemu.elf: $(SRCS) memmap-qemu | $(OBJROOT)
 	$(AS) $(AFLAGS) $(IFLAGS) $(QEMU_DEFS) mecrisp-quintus-ssp.s \

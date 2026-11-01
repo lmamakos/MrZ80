@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu stub stub-gracilis smoke-stub smoke-gracilis dict-stub dict-gracilis bench-stub bench-stub-fab bench-gracilis lint-ssp seam-check p1a dict-p1a smoke-p1a tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu lint-ssp seam-check ssp-map p1a p1a-vcd dict-p1a smoke-p1a dl-path mrom-install tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -23,6 +23,12 @@ sync:
 seam-check:
 	python3 $(ROOT)/sim/check_seam.py
 
+# R43: one SSP memory map -- MROM size and dictionary window agree across the
+# RTL (ssp_top, MrZ80.sv), the firmware (.s equates, linker maps) and the
+# build scripts
+ssp-map:
+	python3 $(ROOT)/sim/check_ssp_map.py
+
 # Mecrisp SSP firmware (needs $MECRISP, see ssp/fw/Makefile)
 fw:
 	$(MAKE) -C $(ROOT)/ssp/fw all
@@ -36,54 +42,9 @@ smoke-qemu:
 dict-qemu:
 	$(ROOT)/sim/ssp/dictbuild_qemu.sh
 
-# ---- Verilator stub SoC (RV side, hardware-true addresses; OQ-20 lane) -----
-# picorv32 + ROM(hex)/DTCM + minimal ssp_bridge w/ console UART (D-33 RV side)
-stub:
-	cd $(ROOT) && verilator --cc --exe --build \
-	  -CFLAGS "-std=c++17 -DSTUB_INC=Vssp_stub_top.h -DSTUB_CLASS=Vssp_stub_top" \
-	  --top-module ssp_stub_top -o ssp_stub \
-	  sim/ssp/tb_stub_main.cpp sim/ssp/ssp_stub_top.v \
-	  Components/RISCV/picorv32.v -Mdir sim/ssp/obj_dir
-
-# gracilis twin (FemtoRV32, D-34 ADDR_WIDTH=30) -- bake-off entrant B
-stub-gracilis:
-	cd $(ROOT) && verilator --cc --exe --build \
-	  -CFLAGS "-std=c++17 -DSTUB_INC=Vssp_stub_gracilis.h -DSTUB_CLASS=Vssp_stub_gracilis" \
-	  --top-module ssp_stub_gracilis -o ssp_gracilis \
-	  sim/ssp/tb_stub_main.cpp sim/ssp/ssp_stub_gracilis.v \
-	  Components/RISCV/femtorv32_gracilis.v -Mdir sim/ssp/obj_grac
-
-# REPL smoke on the stub SoC (picorv32 twin of smoke-qemu; ID read-back
-# $2000_0000 -> 4D525A03 proves the bridge decode against ssp_regs.csv)
-smoke-stub: stub
-	$(ROOT)/sim/ssp/smoke_stub.sh
-
-smoke-gracilis: stub-gracilis
-	TAG=gracilis MODEL=sim/ssp/obj_grac/ssp_gracilis \
-	$(ROOT)/sim/ssp/smoke_stub.sh
-
-# D-35 authoritative dictionary build at hardware addresses: harness-side
-# rom[] capture -> merged OSD MROM artifact + cold-boot residency proof
-dict-stub: stub
-	$(ROOT)/sim/ssp/dictbuild_stub.sh
-
-dict-gracilis: stub-gracilis
-	TAG=gracilis MODEL=sim/ssp/obj_grac/ssp_gracilis \
-	$(ROOT)/sim/ssp/dictbuild_stub.sh
-
-# Cycle-level performance benchmarks (OQ-20 evidence, R22): EMIT-marker
-# bracketed workloads over the console, TXTRACE cycle stamps -> CPI.
-# bench-stub-fab models the D-36 launch+1 IP fabric (silicon-predictive
-# pairing vs the natively-launch+1 gracilis stub).
-bench-stub: stub
-	$(ROOT)/sim/ssp/bench_stub.sh
-
-bench-stub-fab: stub
-	TAG=picorv32-fab EXTRA="+FABWAIT" $(ROOT)/sim/ssp/bench_stub.sh
-
-bench-gracilis: stub-gracilis
-	TAG=gracilis MODEL=sim/ssp/obj_grac/ssp_gracilis \
-	$(ROOT)/sim/ssp/bench_stub.sh
+# (The P0 bake-off stub-SoC lanes -- stub, stub-gracilis, smoke-stub,
+# smoke-gracilis, dict-stub, dict-gracilis, bench-* -- were retired in R43:
+# the p1a lane below runs the real ssp_top with the selected core.)
 
 # ---- P1a "first light" (gracilis + bridge + uart + BFM, D-28 lane 1) -------
 # Lint gate (R25/P1): -Wall over the whole Verilator lane; waivers are
@@ -164,12 +125,23 @@ dict-p1a: p1a
 smoke-p1a: p1a
 	$(ROOT)/sim/ssp/p1a_smoke.sh
 
+# R43 (R-29): OSD ROM mount -- clear sweep, byte lanes, RV-only hold, monitor
+# restart on the mounted image, guest never reset
+dl-path: p1a
+	$(ROOT)/sim/ssp/p1a_dlpath.sh
+
 # Factory ROM (D-38): rebuild the monitor dictionary and regenerate the MIF
 # the MROM instance loads.  Recommit ssp/fw/forth_rom.mif when it changes.
 fw-rom: dict-p1a
-	python3 $(ROOT)/tools/bin2mif.py $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 16384
-	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 16384
+	python3 $(ROOT)/tools/bin2mif.py $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
+	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
+
+# R43: copy the monitor ROM image (the last dict-p1a build, 128 KiB) to the
+# MiSTer, where the OSD "SSP Monitor ROM" item (FC6, .MRZ) can mount it
+mrom-install:
+	test -f $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin
+	scp $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin mister:/media/fat/games/MrZ80/mrz80-ssp.mrz
 
 # Drift check only (needs a prior dict-p1a build)
 fw-rom-check:
-	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 16384
+	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768

@@ -59,7 +59,9 @@ top 8 MB at `0x7800000`.
 OSD file indices (`ioctl_index[5:0]`): 1 = `.BIN` boot image (SDRAM at 0, or
 block RAM), 2 = `.DSK` RAM disk, 3 and 4 = reserved for larger RAM-disk
 images (SDRAM, same slot/base scheme as index 2), 5 = front-panel profile
-file (`FC5`; goes to `FrontPanel_Subsystem`, never to SDRAM).
+file (`FC5`; goes to `FrontPanel_Subsystem`, never to SDRAM), 6 = SSP monitor
+ROM (`FC6`, `.MRZ`; goes to the SSP's 128 KB ROM, never to SDRAM, and does not
+reset the Z-80), 7 = reserved for the SSP.
 
 ## Boot, reset and image loading
 
@@ -90,7 +92,7 @@ the CPU runs.
 The HPS writes to the core in exactly these situations:
 
 1. **You pick a file in the OSD** (any of Boot Rom Image, 8MB Disk Image,
-   Front Panel Profiles). The file is streamed in immediately. The HPS also
+   Front Panel Profiles, SSP Monitor ROM). The file is streamed in immediately. The HPS also
    remembers the file name for that menu item (see "Sticky" below).
 2. **The core is started** (power-up, or the core is (re)loaded by the
    MiSTer menu / FPGA reconfiguration). For each `FC` item that has a
@@ -114,10 +116,15 @@ Consequences of the "files are loaded before the settings are restored" ordering
 - Any completed download (`.BIN`, `.DSK` or `.FPP`) resets the CPU for a short
   stretch afterwards so it restarts cleanly into the new memory contents.
   While a download is in progress the CPU is held in reset.
+- The exception is an **SSP Monitor ROM** (`.MRZ`): the Z-80 keeps running and
+  keeps the SDRAM. Only the SSP is held in reset while the file streams in; its
+  ROM is first cleared, and the monitor restarts on the new image when the
+  download ends. The SSP no longer waits for a Boot Rom Image: it runs from its
+  own ROM even while the Z-80 is held in reset.
 
 ### "Sticky" `FC` selections and how to clear one
 
-The `C` in `FC1`, `FC2`, `FC5` means the HPS stores the chosen file name per
+The `C` in `FC1`, `FC2`, `FC5`, `FC6` means the HPS stores the chosen file name per
 menu item in the core's configuration area on the SD card and re-selects it at
 every core start. That is what makes a Boot Rom Image "sticky": after you have
 chosen it once, the core boots into it at power-up with no further action.

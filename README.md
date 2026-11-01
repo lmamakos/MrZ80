@@ -164,8 +164,10 @@ Physical access covers the SDRAM only; the block-RAM page at `0x8000000` is
 reached through the logical view. The OSD also has **Reset SSP** to restart the
 monitor processor without touching the Z80. A hardware watchdog keeps a hung
 monitor from holding the Z80. The monitor firmware is a Forth ROM image built
-in `ssp/fw/` and baked into the core; its register interface is generated from
-`ssp/regs/ssp_regs.csv`. See [`doc/OVERVIEW.md`](doc/OVERVIEW.md) §6 for a
+in `ssp/fw/` and baked into the core; a newer image can be loaded from the OSD
+(**SSP Monitor ROM**, built by `make -C sim dict-p1a`, copied over by
+`make -C sim mrom-install`) without rebuilding the core. Its register interface
+is generated from `ssp/regs/ssp_regs.csv`. See [`doc/OVERVIEW.md`](doc/OVERVIEW.md) §6 for a
 tour, [`doc/SSP_DESIGN.md`](doc/SSP_DESIGN.md) for the design and
 [`doc/SSP_STATUS.md`](doc/SSP_STATUS.md) for current status.
 
@@ -339,6 +341,11 @@ CPU selection any more — the core is Z-80 only.)
 * **SSP Serial Escape** (Off/On) — with this On, the escape byte (`^]` by
   default) on the selected serial port parks the Z80 and enters the monitor.
   With it Off, every byte value passes through to the Z80 untouched.
+* **SSP Monitor ROM** (`.MRZ`, `FC6`) — replaces the monitor's 128 KB ROM with
+  a new image (kernel + monitor dictionary) and restarts the monitor on it,
+  without resetting the Z80. Remembered and auto-loaded at core start; with no
+  file chosen, the ROM built into the core is used. Reloading the core restores
+  the built-in ROM.
 * **Reset SSP** — restarts the monitor processor (~1 ms reset pulse) without
   resetting the Z80.
 

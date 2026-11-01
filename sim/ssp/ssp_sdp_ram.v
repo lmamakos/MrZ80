@@ -12,12 +12,14 @@
 `timescale 1 ns / 1 ps
 
 module ssp_sdp_ram #(
-    parameter INIT_FILE = "UNUSED"      // synthesis: altsyncram init_file (the
+    parameter INIT_FILE = "UNUSED",     // synthesis: altsyncram init_file (the
                                         // factory ROM .mif); the sim loads the
                                         // MROM with $readmemh (+ROM) instead
+    parameter DEPTH     = 16384,        // words; R43: MROM passes 32768
+    parameter AWIDTH    = 14            // log2(DEPTH)
 ) (
-    input  wire [13:0] address_w,
-    input  wire [13:0] address_r,
+    input  wire [AWIDTH-1:0] address_w,
+    input  wire [AWIDTH-1:0] address_r,
     input  wire        clock,
     input  wire [31:0] data_w,
     input  wire [3:0]  byteena,
@@ -25,7 +27,7 @@ module ssp_sdp_ram #(
     output reg  [31:0] q
 );
 
-    (* ramstyle = "M9K, logic" *) reg [31:0] mem [0:16383];
+    (* ramstyle = "M9K, logic" *) reg [31:0] mem [0:DEPTH-1];
 
     always @(posedge clock) begin
         q <= mem[address_r];                 // launch+1 (D-36 fabric truth)

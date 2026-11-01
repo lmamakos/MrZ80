@@ -2,9 +2,15 @@
 // real ssp_top (gracilis + bridge + uart) against the behavioural Z80 BFM,
 // pin-level SNAC serial in/out via DPI (tb_putc / tb_rx_poll).
 //
-// Plusargs:  +ROM=file  MROM init (hex words, 16K)   [default
+// Plusargs:  +ROM=file  MROM init (hex words, 32K = 128 KiB)   [default
 //            ssp/fw/build/mecrisp-ssp-p1a.hex]
 //            +DUMP=file   dump MROM on dump_req (dict build)
+//            +MNT=file    R43 OSD ROM mount: one hex BYTE per line, streamed
+//                         into the mnt_* port like hps_io does (ioctl_wait
+//                         honoured = the harness waits out mnt_busy)
+//            +MNT_LEN=n   bytes to stream (default 131072)
+//            +MNT_AT=n    cycle the download starts (default 2_000_000)
+//            +MNT_GAP=n   clocks between bytes (default 8)
 //            +OSD_OK=0/1  OSD OK policy (default 1)
 //            +OM=0/1      OSD Serial-Escape switch (default 0)
 //            +WAIT        enable engine mem-read wait injection
@@ -180,6 +186,68 @@ module ssp_p1a_top (
     assign dbg_ph_addr  = ph_last_addr;
     assign dbg_ph_data  = ph_last_data;
 
+    // ---- R43: OSD ROM mount model (hps_io ioctl byte stream) -----------------
+    // Download start raises mnt_active; after a short lead the bytes go out one
+    // per +MNT_GAP clocks, never while mnt_busy (the MROM clear sweep -- in
+    // MrZ80.sv that is ioctl_wait, which stalls every HPS transfer); then
+    // mnt_active drops.  Events: "[p1a-mnt @n] start|end|restart ...".
+    reg  [7:0]  mnt_img [0:131071];
+    string      mntfile;
+    int         mnt_len, mnt_at, mnt_gap, mnt_i, mnt_wait, mnt_st;
+    reg         mnt_active, mnt_wr;
+    reg  [16:0] mnt_addr;
+    reg  [7:0]  mnt_data;
+    wire        mnt_busy;
+    reg  [31:0] mnt_fetch0;
+    initial begin
+        mnt_active = 1'b0;  mnt_wr = 1'b0;  mnt_addr = 17'd0;  mnt_data = 8'd0;
+        mnt_st = 0;  mnt_i = 0;  mnt_wait = 0;
+        if (!$value$plusargs("MNT=%s", mntfile)) mntfile = "";
+        if (!$value$plusargs("MNT_LEN=%d", mnt_len)) mnt_len = 131072;
+        if (!$value$plusargs("MNT_AT=%d", mnt_at))   mnt_at  = 2_000_000;
+        if (!$value$plusargs("MNT_GAP=%d", mnt_gap)) mnt_gap = 8;
+        if (mntfile != "") begin
+            $readmemh(mntfile, mnt_img, 0, mnt_len - 1);
+            $display("[p1a] mount image <- %s (%0d bytes @ cycle %0d)", mntfile,
+                     mnt_len, mnt_at);
+        end
+    end
+    always @(posedge clk) begin
+        mnt_wr <= 1'b0;
+        case (mnt_st)
+        0: if (mntfile != "" && rst_n && tb_cycle == mnt_at) begin
+               mnt_active <= 1'b1;  mnt_wait <= 4;  mnt_st <= 1;
+               mnt_fetch0 <= fetch_count;
+               $display("[p1a-mnt @%0d] start fetches=%0d parked=%b busrq_n=%b",
+                        tb_cycle, fetch_count, parked_dbg, z_busrq_n);
+           end
+        1: if (mnt_wait != 0) mnt_wait <= mnt_wait - 1;
+           else if (!mnt_busy) begin
+               if (mnt_i < mnt_len) begin
+                   mnt_wr   <= 1'b1;
+                   mnt_addr <= mnt_i[16:0];
+                   mnt_data <= mnt_img[mnt_i];
+                   mnt_i    <= mnt_i + 1;
+                   mnt_wait <= mnt_gap;
+               end else begin
+                   mnt_active <= 1'b0;  mnt_st <= 2;
+                   $display("[p1a-mnt @%0d] end bytes=%0d fetches_during=%0d busrq_n=%b z_reset_n=%b",
+                            tb_cycle, mnt_i, fetch_count - mnt_fetch0, z_busrq_n,
+                            z_reset_n);
+               end
+           end
+        2: if (!u_dut.mnt_hold) begin
+               mnt_st <= 3;
+               $display("[p1a-mnt @%0d] restart (RV released) console_own=%b busrq_n=%b",
+                        tb_cycle, u_dut.console_own, z_busrq_n);
+           end
+        default: ;
+        endcase
+        // D-16: a mount never resets or holds the guest once the RV is down
+        if (rst_n && u_dut.mnt_hold && !z_reset_n)
+            $display("[p1a-ERR @%0d] guest reset asserted during a mount", tb_cycle);
+    end
+
     // R39: a 1M-clock (20 ms) step watchdog instead of 20M, so the timeout path
     // runs in a short simulation (a real step is ~30 clocks)
     ssp_top #(.STEP_TIMEOUT_T(25'd1_000_000)) u_dut (
@@ -207,7 +275,8 @@ module ssp_p1a_top (
         .snac_rxd (snac_rxd), .snac_txd (snac_txd),
         .z80_rxd (guest_rxd), .z80_txd (guest_txd),
         .ssp_irq (ssp_irq), .rv_alive (rv_alive),
-        .dl_wr (1'b0), .dl_addr (16'd0), .dl_wdata (32'd0),
+        .mnt_active (mnt_active), .mnt_wr (mnt_wr), .mnt_addr (mnt_addr),
+        .mnt_data (mnt_data), .mnt_busy (mnt_busy),
         .dbg_rom_illegal_writes (dbg_rom_illegal_writes),
         .dbg_bus_errs (dbg_bus_errs)
     );

@@ -1,6 +1,6 @@
 // tb_p1a_main.cpp -- Verilator harness for the P1a "first light" SoC
-// (ssp_top + z80_bfm, sim/ssp/p1a_sim_top.v).  Clone of tb_stub_main.cpp
-// with the p1a extras: no trap pin (gracilis, D-37), final info line comes
+// (ssp_top + z80_bfm, sim/ssp/p1a_sim_top.v).  Derived from the P0 stub
+// harness (retired R43) with the p1a extras: no trap pin (gracilis, D-37), final info line comes
 // from the RTL $display task; input-release gate identical (operator bytes
 // flow only after FW proves life: first TX + grace).
 //

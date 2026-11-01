@@ -17,6 +17,9 @@
 -- Port A = write (byte-enable), Port B = read with REGISTERED address
 -- (ADDRESS_REG_B=CLOCK0) and unregistered output: q valid the cycle after
 -- the address edge -- SSP fabric read timing truth for both bake-off cores.
+--
+-- R43: DEPTH/AWIDTH generics (defaults = the original 16K x 32 shape, so the
+-- RV RAM instance is unchanged); the MROM instance is 32K x 32 (128 KiB).
 
 LIBRARY ieee;
 USE ieee.std_logic_1164.all;
@@ -27,12 +30,14 @@ USE altera_mf.altera_mf_components.all;
 ENTITY ssp_sdp_ram IS
 	GENERIC
 	(
-		INIT_FILE		: STRING := "UNUSED"	-- .mif / .hex, "UNUSED" = none
+		INIT_FILE		: STRING := "UNUSED";	-- .mif / .hex, "UNUSED" = none
+		DEPTH			: NATURAL := 16384;		-- words (32-bit)
+		AWIDTH			: NATURAL := 14			-- log2(DEPTH)
 	);
 	PORT
 	(
-		address_w		: IN STD_LOGIC_VECTOR (13 DOWNTO 0);
-		address_r		: IN STD_LOGIC_VECTOR (13 DOWNTO 0);
+		address_w		: IN STD_LOGIC_VECTOR (AWIDTH-1 DOWNTO 0);
+		address_r		: IN STD_LOGIC_VECTOR (AWIDTH-1 DOWNTO 0);
 		clock			: IN STD_LOGIC  := '1';
 		data_w			: IN STD_LOGIC_VECTOR (31 DOWNTO 0);
 		byteena			: IN STD_LOGIC_VECTOR (3 DOWNTO 0);
@@ -57,15 +62,15 @@ BEGIN
 		init_file => INIT_FILE,
 		intended_device_family => "Cyclone V",
 		lpm_type => "altsyncram",
-		numwords_a => 16384,
-		numwords_b => 16384,
+		numwords_a => DEPTH,
+		numwords_b => DEPTH,
 		operation_mode => "DUAL_PORT",
 		outdata_aclr_b => "NONE",
 		outdata_reg_b => "UNREGISTERED",
 		power_up_uninitialized => "FALSE",
 		read_during_write_mode_mixed_ports => "DONT_CARE",
-		widthad_a => 14,
-		widthad_b => 14,
+		widthad_a => AWIDTH,
+		widthad_b => AWIDTH,
 		width_a => 32,
 		width_b => 32,
 		width_byteena_a => 4

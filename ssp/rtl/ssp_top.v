@@ -2,10 +2,11 @@
 // the VHDL Z80/CPM world is this module's port list).
 //
 // Core: FemtoRV32-gracilis (D-37, R23 owner ruling), ADDR_WIDTH=30 (D-34).
-// Memory map (SSP_DESIGN 5.2):
-//   0x0000_0000  MROM 64K  (core-visible; writable only in the dictionary
-//                            window 0x4400..0x10000 -- D-35 build/mount
-//                            surface; illegal core writes counted, never land)
+// Memory map (SSP_DESIGN 5.2; R43: MROM 64K -> 128K, RV RAM unchanged):
+//   0x0000_0000  MROM 128K (core-visible; core writes land only in the
+//                            dictionary window DICT_BASE..0x20000 -- the
+//                            Mecrisp `compiletoflash` region, on silicon as
+//                            in sim; writes below it are counted, never land)
 //   0x1000_0000  RV RAM 64K  byte-enable
 //   0x2000_0000  ssp_bridge 4K
 //   else         decoder error (reads 0, counted)
@@ -46,8 +47,16 @@
 // the CPM boundary (verified against the real T80, sim/tb_tramp.vhd).  FW order:
 // arm + vent while parked, then release reset and drop the park together.
 //
-// P1b mounts (OSD MROM/MPKG download write port) hook the spare ROM write
-// port `dl_*` below (currently tied inactive at the integrator).
+// OSD ROM mount (R43, D-16): `mnt_*` streams a new MROM image in from the
+// OSD (hps_io ioctl, one byte per mnt_wr).  While mnt_active is high the RV
+// core is held in reset (the R25 sovereignty path: Z80 controls release, an
+// in-flight engine op finishes and reports an error); on its rising edge the
+// whole MROM is first cleared to zero (mnt_busy, ~0.66 ms -- the integrator
+// holds the HPS off with ioctl_wait), so any image size leaves an erased
+// tail for Mecrisp's backward dictionary-pointer scan.  When the stream ends
+// a short monitor-subsystem reset (core + bridge + UART) restarts the
+// monitor on the new image.  The Z80 is never reset by a mount.  This logic
+// has no reset of its own: an auto-loaded image arrives while rst_n is held.
 
 `timescale 1 ns / 1 ps
 `include "ssp_regs.vh"
@@ -56,12 +65,16 @@ module ssp_top #(
     // Factory ROM image (D-38) for the MROM's altsyncram init_file; path relative
     // to the Quartus project directory.  Simulation ignores it (+ROM/$readmemh).
     parameter MROM_INIT = "ssp/fw/forth_rom.mif",
+    // R43: first byte of the dictionary window = Mecrisp FlashDictionaryAnfang
+    // (ssp/fw/mecrisp-quintus-ssp.s); `make -C sim ssp-map` checks they agree
+    parameter [16:0] DICT_BASE = 17'h05000,
     // R39: step phase watchdog, passed to ssp_bridge (default = WDG_PARK budget)
     parameter [24:0] STEP_TIMEOUT_T = 25'd20_000_000
 ) (
     input  wire        clk,             // clk_sys 50 MHz (shared domain)
-    input  wire        rst_n,         // subsystem reset (= Z80 reset now;
-                                     //   monitor-only mount domain is P1b)
+    input  wire        rst_n,         // subsystem reset (the integrator's
+                                     //   reset sources; a mount adds its own
+                                     //   monitor-only pulse below)
 
     // ---- OSD / panel policy ----------------------------------------------
     input  wire        osd_ok,        // OSD bit 20: monitor enable
@@ -127,16 +140,56 @@ module ssp_top #(
     // ---- misc -------------------------------------------------------------
     output wire        ssp_irq,      // to core (unused by v1 FW, D-27)
     output wire        rv_alive,     // RV seen fetching (liveness, R25)
-    // OSD download mount path (P1b): held-reset ROM write port
-    input  wire        dl_wr,
-    input  wire [15:0] dl_addr,
-    input  wire [31:0] dl_wdata,
+    // OSD ROM mount (R43): byte stream into the MROM, see header
+    input  wire        mnt_active,   // level: an MROM download is in progress
+    input  wire        mnt_wr,       // 1-clk: write mnt_data at mnt_addr
+    input  wire [16:0] mnt_addr,     // byte address within the 128 KiB MROM
+    input  wire [7:0]  mnt_data,
+    output wire        mnt_busy,     // clearing the MROM: hold the stream off
     // diagnostics (sim / lamp chrome)
     output reg  [31:0] dbg_rom_illegal_writes,
     output reg  [31:0] dbg_bus_errs
 );
 
     wire ssp_active = osd_ok & ~esc_disable;
+
+    // ------------------------------------------------ OSD ROM mount -------
+    // No reset term on purpose (see header): power-up values only.
+    localparam [7:0] MNT_RST_CLKS = 8'd255;   // post-mount monitor reset
+    reg        mnt_q, clr_busy, mnt_any_q;
+    reg [14:0] clr_ix;
+    reg [7:0]  mnt_rcnt;
+    initial begin                              // FPGA power-up values
+        mnt_q = 1'b0;  clr_busy = 1'b0;  mnt_any_q = 1'b0;
+        clr_ix = 15'd0;  mnt_rcnt = 8'd0;
+    end
+    wire       mnt_any   = mnt_active | clr_busy;
+    always @(posedge clk) begin
+        mnt_q     <= mnt_active;
+        mnt_any_q <= mnt_any;
+        if (mnt_active && !mnt_q) begin
+            clr_busy <= 1'b1;                  // stream start: erase all
+            clr_ix   <= 15'd0;
+        end else if (clr_busy) begin
+            clr_ix <= clr_ix + 15'd1;
+            if (clr_ix == 15'h7FFF) clr_busy <= 1'b0;
+        end
+        if (mnt_any_q && !mnt_any)       mnt_rcnt <= MNT_RST_CLKS;
+        else if (mnt_rcnt != 8'd0)       mnt_rcnt <= mnt_rcnt - 8'd1;
+    end
+    assign mnt_busy  = clr_busy;
+    wire   mnt_rst   = (mnt_rcnt != 8'd0);     // monitor-subsystem reset pulse
+    // mnt_any_q bridges the one clock between the end of the stream and the
+    // first clock of mnt_rst (the counter loads on that edge)
+    wire   mnt_hold  = mnt_any | mnt_any_q | mnt_rst;   // RV held, whole mount
+    wire   mnt_we    = mnt_active & mnt_wr & ~clr_busy;
+
+    // Reset domains: srst_n = the integrator's reset + the post-mount pulse
+    // (core, bridge, UART, diagnostics); rv_run_n = the OSD RV-reset hatch +
+    // the whole mount, which the bridge treats like the hatch (Z80 controls
+    // release while the RV cannot exert them, R25).
+    wire srst_n   = rst_n & ~mnt_rst;
+    wire rv_run_n = rv_rst_n & ~mnt_hold;
 
     // ------------------------------------------------ core ----------------
     wire [31:0] mem_addr, mem_wdata;
@@ -163,7 +216,7 @@ module ssp_top #(
     wire rv_stalled = 1'b0;
     reg [15:0] alive_cnt;
     always @(posedge clk) begin
-        if (!rst_n || !rv_rst_n) alive_cnt <= 16'd0;
+        if (!srst_n || !rv_run_n) alive_cnt <= 16'd0;
         else if (mem_rstrb)      alive_cnt <= 16'hFFFF;
         else if (alive_cnt != 16'd0)
                                  alive_cnt <= alive_cnt - 16'd1;
@@ -183,31 +236,38 @@ module ssp_top #(
         .mem_rbusy         (mem_rbusy),
         .mem_wbusy         (mem_wbusy),
         .interrupt_request (1'b0),            // polled FW (D-27)
-        .reset             (rst_n & rv_rst_n) // active-low ("set to 0");
+        .reset             (srst_n & rv_run_n) // active-low ("set to 0");
                                              // OSD hatch R25 excludes only the
                                              // host -- fabric/CTRL keep state
     );
 
     // ------------------------------------------------ decode -------------
-    wire is_rom    = (mem_addr[31:16] == 16'h0000);
+    // The two memories have different index widths: rom_ix (15 bits, 128 KiB)
+    // must never feed the RV RAM, nor ram_ix (14 bits) the MROM.
+    wire is_rom    = (mem_addr[31:17] == 15'd0);
     wire is_rram   = (mem_addr[31:16] == 16'h1000);
+    wire [14:0] rom_ix = mem_addr[16:2];
     wire [13:0] ram_ix = mem_addr[15:2];
 
-    wire wr_fire = rst_n && (mem_wmask != 4'b0);
-    wire dict_window = (mem_addr[15:0] >= 16'h4400);   // D-35
+    wire wr_fire = srst_n && rv_run_n && (mem_wmask != 4'b0);
+    wire dict_window = (mem_addr[16:0] >= DICT_BASE);   // D-35
 
+    // MROM write port, priority: mount clear sweep > mount byte > core.
+    // (The core is in reset for the whole mount, so they never compete.)
     wire rom_core_we  = wr_fire && is_rom && dict_window;
-    wire rom_dl_we    = dl_wr;                            // P1b mount path
-    wire rom_we       = rom_core_we | rom_dl_we;         // dl wins (rare)
-    wire [13:0] rom_waddr = rom_dl_we ? dl_addr[15:2] : ram_ix;
-    wire [31:0] rom_wdata = rom_dl_we ? dl_wdata : mem_wdata;
-    wire [3:0]  rom_be    = rom_dl_we ? 4'b1111 : mem_wmask;
+    wire rom_we       = clr_busy | mnt_we | rom_core_we;
+    wire [14:0] rom_waddr = clr_busy ? clr_ix :
+                            mnt_we   ? mnt_addr[16:2] : rom_ix;
+    wire [31:0] rom_wdata = clr_busy ? 32'd0 :
+                            mnt_we   ? {4{mnt_data}} : mem_wdata;
+    wire [3:0]  rom_be    = clr_busy ? 4'b1111 :
+                            mnt_we   ? (4'b0001 << mnt_addr[1:0]) : mem_wmask;
     wire rram_we   = wr_fire && is_rram;
 
     wire [31:0] q_rom, q_rram;
-    ssp_sdp_ram #(.INIT_FILE (MROM_INIT)) u_mrom (
+    ssp_sdp_ram #(.INIT_FILE (MROM_INIT), .DEPTH (32768), .AWIDTH (15)) u_mrom (
         .address_w (rom_waddr),
-        .address_r (ram_ix),
+        .address_r (rom_ix),
         .clock     (clk),
         .data_w    (rom_wdata),
         .byteena   (rom_be),
@@ -236,7 +296,7 @@ module ssp_top #(
     wire        console_own, parked;
 
     ssp_bridge #(.STEP_TIMEOUT_T(STEP_TIMEOUT_T)) u_bridge (
-        .clk (clk), .rst_n (rst_n),
+        .clk (clk), .rst_n (srst_n),
         .mem_addr (mem_addr), .mem_wdata (mem_wdata), .mem_wmask (mem_wmask),
         .mem_rstrb (mem_rstrb), .mem_rdata (bridge_rdata),
         .mem_rbusy (/*inert*/), .mem_wbusy (/*inert*/), .is_bridge (is_bridge),
@@ -247,7 +307,7 @@ module ssp_top #(
         .z_would_boundary (z_would_boundary), .t80_reg (t80_reg),
         .ssp_active (ssp_active), .osd_esc_en (osd_esc_en),
         .s32_disable (esc_disable), .panel_stop (panel_stop),
-        .rv_rst_n (rv_rst_n), .rv_stalled (rv_stalled), .rv_alive (rv_alive),
+        .rv_rst_n (rv_run_n), .rv_stalled (rv_stalled), .rv_alive (rv_alive),
         .z_busrq_n (z_busrq_n), .z_reset_n (z_reset_n),
         .z_wait_n (z_wait_n), .z_cen_gate (z_cen_gate),
         .freeze_any (freeze_any), .int_hold (int_hold),
@@ -274,7 +334,7 @@ module ssp_top #(
     );
 
     ssp_uart u_uart (
-        .clk (clk), .rst_n (rst_n),
+        .clk (clk), .rst_n (srst_n),
         .baud_increment (baud_increment),
         .en (uart_en), .rx_clr (uart_rx_clr), .tx_clr (uart_tx_clr),
         .tx_ready (uart_tx_ready), .rx_avail (uart_rx_avail),
@@ -323,7 +383,7 @@ module ssp_top #(
 
     // ------------------------------------------------ diagnostics --------
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (!srst_n) begin
             dbg_rom_illegal_writes <= 32'd0;
             dbg_bus_errs           <= 32'd0;
         end else begin

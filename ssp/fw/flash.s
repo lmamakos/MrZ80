@@ -4,15 +4,14 @@
 #
 #    "Flash" here means the MROM window [FlashDictionaryAnfang..FlashEnde)
 #    that sits contiguously above the kernel in the OSD-loaded image (D-35).
-#    flash!/hflash! are plain stores:
-#      * in sim (qemu DRAM, Verilator stub rom[] array) the window is
-#        writable, so `compiletoflash` builds the application dictionary
-#        contiguously with the kernel -- the build pipeline captures that
-#        window into the shipped MROM hex;
-#      * on silicon MROM ignores RV writes, so the same words are inert and
-#        `compiletoflash` there is harmless (dictionary lost at reset).
-#    The dictionary build is therefore a build-system/stub procedure; the
-#    operator-visible persistence path stays source packs (D-21, OSD MPKG).
+#    flash!/hflash! are plain stores, and the window is writable everywhere
+#    (ssp_top accepts RV writes at DICT_BASE and up; qemu has DRAM there):
+#      * the build pipeline (sim/ssp/p1a_dictbuild.sh) runs `compiletoflash`
+#        on the p1a model and captures the window into the shipped MROM image;
+#      * on the board the same words extend the dictionary in place.  Those
+#        words survive an RV reset ("Reset SSP": the boot scan finds them)
+#        and are lost when the core is reloaded or a new image is mounted
+#        from the OSD (R43).  Writes below the window never land.
 #
 #    The initflash hook is deliberately absent: boot.s skips its call (.ifdef),
 #    there is no controller to bring up.

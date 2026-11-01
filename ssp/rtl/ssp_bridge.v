@@ -14,7 +14,7 @@
 //
 // Read latency: launch+1 (D-36 fabric truth): selects captured at the
 // rstrb launch edge, data muxed at launch+1 -- proven stub shape
-// (sim/ssp/ssp_stub_gracilis.v, bake-off R21).
+// (the bake-off R21 gracilis stub, retired R43).
 //
 // Parking (D-25 rev R25): the boundary decision lives INSIDE the T80
 // (freeze_ok gates the BusAck grant at the T_Res of the instruction-end

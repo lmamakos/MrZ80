@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sim/ssp/p1a_dictbuild.sh -- D-35 dictionary build of the P1a MONITOR on the
-# p1a lane (real ssp_top + Z80 BFM).  Clone of dictbuild_stub.sh; artifacts
-# carry the tag "p1a" so the P0 goldens are untouched.
+# p1a lane (real ssp_top + Z80 BFM).  Derived from the P0 stub-lane script
+# (retired R43); artifacts carry the tag "p1a".
 #
 # Flow:
 #   1. make -C ssp/fw ssp                    kernel hex (silicon map)
@@ -25,8 +25,9 @@ MODEL=${MODEL:-sim/ssp/obj_p1a/ssp_p1a}
 FW=ssp/fw
 BUILD=$FW/build
 WORK=/tmp/opencode/dictbuild-$TAG; mkdir -p "$WORK"
-DICT_OFF=0x4400
-DICT_LEN=$((0x10000 - 0x4400))
+ROM_LEN=0x20000                 # 128 KiB MROM (R43)
+DICT_OFF=0x5000                 # = FlashDictionaryAnfang = ssp_top DICT_BASE
+DICT_LEN=$((ROM_LEN - DICT_OFF))
 
 [ -x "$MODEL" ] || { echo "FAIL: model $MODEL missing (make -C sim p1a)"; exit 1; }
 make -C "$FW" ssp >/dev/null || { echo "FAIL: fw build"; exit 1; }
@@ -76,7 +77,7 @@ grep -aiE 'not found|stack|unbalanced' "$WORK/console_build.log" | head -5 > "$W
 [ -s "$WORK/errs.txt" ] && { echo "FAIL: build session errors:"; cat "$WORK/errs.txt"; tail -12 "$WORK/console_build.log"; exit 1; }
 grep -aq 'compiletoflash' "$WORK/console_build.log" || { echo "FAIL: compiletoflash missing"; exit 1; }
 [ -f "$WORK/p1a-rom.hex" ] || { echo "FAIL: no ROM dump"; exit 1; }
-python3 tools/hex2bin.py "$WORK/p1a-rom.hex" "$WORK/p1a-rom.bin" 0x10000
+python3 tools/hex2bin.py "$WORK/p1a-rom.hex" "$WORK/p1a-rom.bin" "$ROM_LEN"
 
 # ---- dictionary usage + kernel integrity --------------------------------------
 DICT_USED=$(python3 - "$WORK/p1a-rom.bin" "$DICT_OFF" "$DICT_LEN" <<'PYEOF'
@@ -105,7 +106,7 @@ PYEOF
 # ---- artifacts ---------------------------------------------------------------
 cp "$WORK/p1a-rom.bin" "$BUILD/mecrisp-ssp-$TAG-app.bin"
 python3 tools/bin2hex.py "$BUILD/mecrisp-ssp-$TAG-app.bin" \
-  "$BUILD/mecrisp-ssp-$TAG-app.hex" 0x10000 >/dev/null \
+  "$BUILD/mecrisp-ssp-$TAG-app.hex" "$ROM_LEN" >/dev/null \
   || { echo "FAIL: bin2hex merged image"; exit 1; }
 dd if="$WORK/p1a-rom.bin" of="$BUILD/dict-$TAG.bin" bs=1 skip=$((DICT_OFF)) \
    count=$((DICT_LEN)) status=none
