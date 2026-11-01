@@ -34,13 +34,18 @@ KHEX=$BUILD/mecrisp-ssp.hex
 KBIN=$BUILD/mecrisp-ssp.bin
 
 # ---- build input: constants monitor.fs uses + monitor.fs, comment-stripped --------
+# monitor.fs may pull in shared source with a line `\ @include path/from/repo/root`
+# (R41: forth/disasm/z80dis.fth, the Z-80 disassembler core shared with CamelFORTH).
 # Every input byte costs 4.3k cycles of wire time, so drop blank lines, full-line
 # comments and trailing "\ ..." comments (no string in monitor.fs contains a
 # backslash) and the "( ... )" description the generator appends to constants.
 python3 - "$FW/ssp-regs.fs" "$FW/apps/monitor.fs" "$WORK/build_input.fs" <<'PYEOF' || exit 1
 import re, sys
 regs, mon, out = sys.argv[1:4]
-src = open(mon).read().splitlines()
+src = []
+for l in open(mon).read().splitlines():            # \ @include <repo-relative file>
+    m = re.match(r"\\ @include\s+(\S+)\s*$", l)
+    src.extend(open(m.group(1)).read().splitlines() if m else [l])
 used = set(re.findall(r"\bSSP_[A-Z0-9_]+\b", "\n".join(
     l for l in src if not l.lstrip().startswith("\\"))))
 consts = {}

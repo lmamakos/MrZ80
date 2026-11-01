@@ -356,7 +356,8 @@ The command set is deliberately tiny and classic:
 | `R` | **Registers** — PC, SP, AF, BC, DE, HL, IX, IY, the whole shadow bank, I, R, interrupt mode and flip-flops |
 | `I aaaa` / `O aaaa dd` | **Input/Output** — master Z80 I/O ports while the CPU is parked |
 | `MAP` | **MMU decode** — the four logical frames and the physical pages they point at |
-| `S [n]` | **Single-step** — one line per instruction (`PC` + registers); CR repeats; any key breaks out. `HALTED` when the CPU halts. |
+| `S [n]` | **Single-step** — one line per instruction: `PC`, its bytes, the registers after the step and the **disassembled next instruction**; CR repeats; any key breaks out. `HALTED` when the CPU halts. |
+| `U [aaaa [n]]` | **Unassemble** — address, instruction bytes and Z-80 mnemonic, `n` instructions (default 16; a bare `U` carries on); `JR`/`DJNZ` show the target address; understands `F_NEXT`/`PUSHIX`/`POPIX`; any key breaks out. The decoder is the same source CamelFORTH uses (`forth/disasm/`) |
 | `PHY` / `LOG` | Switch examine/deposit between the **28-bit physical** SDRAM view (up to 7-digit addresses, `0000000`–`7FFFFFF`) and the Z80's logical, MMU-translated view |
 | `F` | Drop out of the ODT skin into the **raw Mecrisp Forth** that the monitor is written in |
 
@@ -446,6 +447,7 @@ the bench. It's a live development, and §7 says how to follow it.
 | AY-3-8910 PSG audio (possibly a stereo pair) | Roadmap |
 | SSP monitor: escape/park/E/D/G/R | Proven on hardware |
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
+| SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | `U` working on hardware (owner, 2026-11-01); `S` mnemonic verified in simulation |
 | SSP: breakpoints, T-state/machine-cycle stepping, BRAM-page physical access, panel integration | Roadmap |
 | Legacy Grant Searle BASIC/monitor (`basmon`) | Still available as a bootable `.BIN` |
 

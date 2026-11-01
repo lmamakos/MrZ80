@@ -19,7 +19,14 @@
 \   R             registers (parked snapshot)
 \   S [n]         single-step n instructions (default 1) with boundary
 \                 re-park; INT is held off for the whole sequence (R39);
-\                 bare CR repeats the last S; any key breaks a trace
+\                 each line shows the NEXT instruction (PC, bytes, registers
+\                 after the step, mnemonic -- R42); bare CR repeats the last
+\                 S; any key breaks a trace
+\   U [aaaa [n]]  unassemble n instructions (default $10) from aaaa; no aaaa
+\                 = continue after the last E/D/U.  Address, bytes, mnemonic;
+\                 any key breaks the listing.  Uses the shared Z-80
+\                 disassembler core (forth/disasm/z80dis.fth, spliced in at
+\                 the @include below); only the memory hook is ours.
 \   I aaaa        read a Z80 I/O port;  O aaaa dd  write one (R37)
 \   MAP           the four MMU frames: logical -> physical page (R37)
 \   PHY / LOG     E/D address mode: PHYSICAL (28-bit, SDRAM window only, via
@@ -235,8 +242,8 @@ SSP_CTRL_ESC_BREAK_EN
 \ 50-100 Hz clock tick must not hijack a trace; a pending source fires after
 \ G).  STATUS.STEP_BUSY covers the sequencer from the kick on; STEP_CTL
 \ .STEP_ERR is sticky, read clears.  Snapshots refresh at every re-park, so
-\ each line shows exact architectural state: the NEXT instruction's PC and
-\ bytes, and the registers after the stepped one.  S n prints one line per
+\ each line shows exact architectural state: the NEXT instruction's PC, bytes
+\ and disassembly (R42), and the registers after the stepped one.  S n prints one line per
 \ step (FW loops single kicks); any key aborts the trace.  Bare CR repeats
 \ the last S count; any other command forgets it.
 : m-w ( addr shift -- )  swap @ swap rshift m-h4 space ;
@@ -250,6 +257,13 @@ SSP_CTRL_ESC_BREAK_EN
   begin SSP_UART_STAT @ SSP_UART_STAT_RX_AVAIL and while
     SSP_UART_RXDATA @ drop repeat
   true ;
+: m-nop ( -- )  ;
+\ Deferred "after the step" action (R42, a vector in a variable): a nop until a
+\ later section installs a word, so S does not depend on the disassembler.  The
+\ variable is RAM, so the install must run at BOOT (see init / m-dis-reg), not
+\ just while the dictionary is built.
+' m-nop variable m-after-step
+: m-after ( -- )  m-after-step @ execute ;
 : m-step1 ( -- f )   \ one step + its display line; f = ok
   m-iffs 1 and m-iff1 !
   SSP_STEP_CTL_MODE 2/ SSP_STEP_CTL_MODE and 1 or   \ MODE=INSN(1) | N=1
@@ -262,7 +276,7 @@ SSP_CTRL_ESC_BREAK_EN
   ." BC=" SSP_SNAP_REG2 16 m-w
   ." DE=" SSP_SNAP_REG3 0 m-w
   ." HL=" SSP_SNAP_REG3 16 m-w
-  ." SP=" SSP_SNAP_REG1 16 m-w cr
+  ." SP=" SSP_SNAP_REG1 16 m-w  m-after cr
   \ INT is masked while stepping, so an IFF1 fall here is DI or an NMI;
   \ only the NMI shape (IFF1 cleared, IFF2 kept, PC=0066) is reported.
   m-iff1 @  m-iffs 2 =  and  SSP_PC_LATCH @ $FFFF and $66 = and
@@ -278,6 +292,7 @@ SSP_CTRL_ESC_BREAK_EN
   repeat
   drop ;
 : m-step-lg ( n -- )   \ the Z80's own bytes are LOGICAL whatever MD says
+  0 m-pa !                                     \ ... so dz@ must not mask as PHYSICAL
   SSP_MD @  swap  0 SSP_MD !  m-step-n  SSP_MD ! ;
 : m-step ( -- )
   0 m-bad !
@@ -289,6 +304,62 @@ SSP_CTRL_ESC_BREAK_EN
   m-stepn @ 0= if exit then
   m-need-park 0= if exit then
   m-stepn @ m-step-lg ;
+
+\ ---- Z-80 disassembler: port + shared core (R41), used by U (R41) and S (R42) -------
+\ The disassembler CORE is forth/disasm/z80dis.fth, the single source also loaded
+\ by CamelFORTH (see forth/disasm/README.md).  It reads Z-80 memory only through
+\ DZ@ and keeps its state in the four dz-* variables; both are the PORT, defined
+\ here, BEFORE the include (sim/ssp/p1a_dictbuild.sh expands the @include line).
+\ dz@ goes through gc@ (the D-30 sequencer), so it honours LOG/PHY and needs the
+\ Z-80 parked; a failed read sets m-dzbad and yields 0.
+0 variable dz-pc
+0 variable dz-ix
+0 variable dz-dv
+0 variable dz-hd
+0 variable m-dzbad                            \ a byte read failed
+: dz@ ( a -- b )  m-amask and gc@ 0= if 1 m-dzbad ! then ;
+\ @include forth/disasm/z80dis.fth
+\ The listing shows the bytes BEFORE the mnemonic, so the length is needed first:
+\ decode once with the console output switched off (Mecrisp's emit goes through
+\ hook-emit), then again for real.  The core prints no address or newline.
+: m-nop-emit ( c -- )  drop ;
+: m-dlen ( a -- len )
+  hook-emit @ >r  ['] m-nop-emit hook-emit !
+  dup dz-op swap -
+  r> hook-emit ! ;
+
+: m-sdis ( -- )   \ the S hook: mnemonic of the NEXT instruction (at the parked PC)
+  0 m-dzbad !
+  SSP_PC_LATCH @ $FFFF and dz-op drop
+  m-dzbad @ if ." ??" then ;
+: m-dis-reg ( -- )  ['] m-sdis m-after-step ! ;   \ install it (init runs this at boot)
+
+\ ---- U : unassemble -----------------------------------------------------------
+\ The listing words; the disassembler port and core are defined above (before S).
+: m-ubytes ( a len -- )                       \ first 4 bytes, padded to 4 columns
+  dup 4 min >r
+  r@ 0 do over i + dz@ m-h2 space loop
+  4 r@ - 0 max 0 ?do 3 spaces loop
+  r> drop 4 > if 43 emit else space then
+  space drop ;
+: m-unasm ( -- )
+  0 m-bad !  m-phys? m-pa !
+  m-next@ m-arg-a m-a !
+  $10 m-arg $FFFF and m-n !  m-end
+  m-bad @ m-n @ 0= or if m-q exit then
+  m-need-park 0= if exit then
+  begin m-n @ while
+    0 m-dzbad !
+    m-a @ m-dlen m-k !
+    m-dzbad @ if ." RD ERR" cr m-a @ m-next! exit then
+    m-a @ m-a. ." : "
+    m-a @ m-k @ m-ubytes
+    m-a @ dz-op drop cr
+    m-k @ m-a +!  m-a @ m-amask and m-a !
+    -1 m-n +!
+    m-key? if ." BREAK" cr m-a @ m-next! exit then
+  repeat
+  m-a @ m-next! ;
 
 \ ---- E : examine ---------------------------------------------------------------
 : m-rd-row ( addr k -- f )
@@ -390,7 +461,8 @@ SSP_CTRL_ESC_BREAK_EN
   ." I AAAA       INPUT: READ Z80 I/O PORT" cr
   ." O AAAA DD    OUTPUT: WRITE Z80 I/O PORT" cr
   ." MAP          MMU FRAMES: LOGICAL -> PHYSICAL" cr
-  ." S [N]        SINGLE-STEP N (INT HELD OFF; CR=REPEAT, KEY=BREAK)" cr
+  ." S [N]        STEP N, SHOWING EACH NEXT INSN (INT OFF; CR=REPEAT, KEY=BREAK)" cr
+  ." U [AAAA [N]]  UNASSEMBLE N INSTRUCTIONS (DEFAULT 10)" cr
   ." PHY / LOG    E/D ADDRESS MODE: PHYSICAL (SDRAM) / LOGICAL" cr
   ." F             FORTH" cr ;
 : m-ch ( c -- f )  m-getc 32 or = dup if m-adv then ;   \ exact letter, CI
@@ -408,6 +480,7 @@ SSP_CTRL_ESC_BREAK_EN
   dup 111 = if drop m-port-w exit then        \ o
   dup 109 = if drop m-map exit then           \ m
   dup 115 = if drop m-step exit then          \ s
+  dup 117 = if drop m-unasm exit then         \ u
   dup 112 = if drop m-tail-hy if m-phy exit else m-q exit then then  \ p-h-y
   dup 108 = if drop m-tail-og if m-log exit else m-q exit then then  \ l-o-g
   dup 102 = if drop 2 m-state ! exit then     \ f
@@ -428,4 +501,4 @@ SSP_CTRL_ESC_BREAK_EN
     begin m-console? 0= until                 \ Z80 has the console again
   again ;
 
-: init ( -- )  0 m-next !  0 m-nextp !  mon ;
+: init ( -- )  0 m-next !  0 m-nextp !  m-dis-reg  mon ;

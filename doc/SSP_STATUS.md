@@ -1,7 +1,8 @@
 # SSP_STATUS — state, plans and hand-off for the System Support Processor
 
-Updated: **2026-10-31** · Branch `r24-p1b`: R39 (`30aed3a`) and R40 (`96d3b8d`)
-committed locally, not pushed · Phase **P1b**; M4 (single-step) and M3 (physical
+Updated: **2026-11-01** · Branch `r24-p1b`: R39 (`30aed3a`) and R40 (`96d3b8d`)
+committed locally, not pushed; R41 (monitor `U`, shared Z-80 disassembler) and R42
+(`S` shows the next instruction) committed locally · Phase **P1b**; M4 (single-step) and M3 (physical
 memory) done in simulation and **reported working on hardware** (owner,
 2026-10-31).
 
@@ -39,13 +40,17 @@ Planning documents are not kept outside `doc/`.
 | P1b M2 | **Shelved R38**: direct MMU frame taps + `MAP_CHANGED` IRQ (regmap slots reserved, read 0) |
 | P1b M4 single-step (R39) | **Done**, owner-checked on hardware (details: `SSP_DESIGN.md` §17 R39) |
 | P1b M3 physical memory client (R40) | **Done**, owner-checked on hardware (details: `SSP_DESIGN.md` §9.2 "as landed", §17 R40) |
+| R41 monitor `U` (unassemble) | **Done**, owner-checked on hardware (2026-11-01). Shared source with CamelFORTH: `forth/disasm/` (§17 R41) |
+| R42 `S` shows the next instruction | **Done in simulation** (smoke Part F); hardware check pending. A deferred hook keeps `S` independent of the disassembler (§17 R42) |
 
 ### 1.2 What is on hardware
 
 The owner rebuilt and flashed through R40 and reports the M1 (`I`/`O`/`MAP`/
 `PHY`/`LOG`), M4 (`S`) and M3 (physical `E`/`D`) commands working
-(2026-10-31). The committed factory ROM (`ssp/fw/forth_rom.mif`) matches
-(current through R40). Not exercisable on hardware yet: real INT sources
+(2026-10-31). The committed factory ROM (`ssp/fw/forth_rom.mif`) was
+regenerated for R42 (adds `U` and the `S` mnemonic). The owner confirmed `U` on
+hardware (2026-11-01). **Owner check pending for R42:** the mnemonic on each `S`
+line on hardware; the key-break path of a long `U` is still not in the smoke. Not exercisable on hardware yet: real INT sources
 (none exist; the step-time INT mask is proven in simulation only) and the
 Quartus place-and-route/timing numbers were not reviewed in this log.
 
@@ -58,11 +63,26 @@ Quartus place-and-route/timing numbers were not reviewed in this log.
   integrated in `MicrocomputerZ80CPM.vhd` and `MrZ80.sv`; T80 park gate in
   `Components/Z80/T80.vhd` (R25).
 - Firmware: Mecrisp-Quintus port in `ssp/fw/`; monitor in
-  `ssp/fw/apps/monitor.fs` (`E D G R I O MAP PHY LOG S F ?`).
+  `ssp/fw/apps/monitor.fs` (`E D G R I O MAP PHY LOG S U F ?`). monitor.fs may
+  contain `\ @include <repo-relative file>` lines, expanded by
+  `sim/ssp/p1a_dictbuild.sh` (used for the shared disassembler core).
 - Verification: Verilator lanes in `sim/ssp/`, GHDL lanes in `sim/`
   (commands in §7).
 
 ### 1.4 Known gaps
+
+- **`U` costs dictionary space and REPL speed.** The monitor dictionary grew
+  from 11,704 to 22,156 of 48,128 bytes. Mecrisp searches the dictionary
+  linearly for every token, so typing in the raw Forth (`F`) is slower and a
+  dictionary build takes longer (~3 min). Monitor commands themselves are
+  compiled and unaffected.
+- `U` shows branch targets as their low 16 bits (logical); under `PHY` that is
+  the low 16 bits of the physical address, not a Z-80 address (the core is
+  address-space agnostic; documented in `forth/disasm/README.md`).
+- The `S` mnemonic is installed into a RAM vector (`m-after-step`) by `init`
+  (`m-dis-reg`), not while the dictionary is built: a RAM variable set during the
+  build is lost at power-up. A section that registers itself must be called from
+  `init`.
 
 - **WDG_PARK expiry** only latches `park_dead_l`; D-13 says it also demotes
   the console and releases the firmware hold. Awaiting an owner ruling (§5).
@@ -79,7 +99,7 @@ Quartus place-and-route/timing numbers were not reviewed in this log.
 | SSP RTL | `ssp_top.v` (core + MROM/RV RAM + decoder + bridge + UART + console mux), `ssp_bridge.v` (register file, park controller, D-30 sequencer for FW mem/IO kicks, WDG×2, `TICK_US`, R39 step sequencer), `ssp_uart.v` (8N1, 128-byte RX FIFO, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` and `ssp_tramp.vhd` (instantiated in the CPM core since R33) |
 | T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + boundary park gate (BusAck only when the next state is M1; prefix-gated). Wired since R33: `n_BUSRQ <= ssp_busrq_n`; `FREEZE_req_n` is a dead port (R28 finding). With the SSP idle the core is unchanged (P-B) |
 | GHDL integration benches | `integ-park` (R-40: every park on an instruction boundary vs an unparked reference), `integ-mux` (R-42: mux + real T80 + engine model), `integ-core` (R-42 against the real SDRAM/BRAM/MMU fabric), `cycle-golden` + `engine-golden` (engine strobes == real T80, per T-state; committed `sim/ssp/golden_cycles.txt`), `tramp` (`G aaaa` vs the real T80, 176 checks) |
-| Verilator lanes | `p1a`: real `ssp_top` + behavioural Z80 (`sim/ssp/z80_bfm.v`, T80-contract model since R39) + pin-level serial + a mock physical client (R40); `smoke-p1a` Parts A–G; `tramp-p1a`; `uart-fifo` |
+| Verilator lanes | `p1a`: real `ssp_top` + behavioural Z80 (`sim/ssp/z80_bfm.v`, T80-contract model since R39) + pin-level serial + a mock physical client (R40); `smoke-p1a` Parts A–H; `tramp-p1a`; `uart-fifo` |
 | Hygiene | Build dirs and waveform dumps untracked and ignored. History was purged once (R26; old→new hashes `513a539`→`9ef7346`, `ba6cc92`→`d3a8b33`, `07a4ee9`→`12ad50b`) |
 
 ---
@@ -104,7 +124,7 @@ exercised until an INT source exists.
 | `sim/tb_integ_park.vhd` `step_once`/`step_window` | bridge-exact step sequence on the real T80; `STEP_OBSERVE=false sim/run_integ_park.sh` is the no-observe mutant |
 | `sim/tb_integ_core.vhd` INT-gate block | forces `n_INT` via external name, watches `n_INT_ssp` |
 | `make -C sim seam-check` (`sim/check_seam.py`) | `MrZ80.sv` seam wiring; run after any top-level or port change |
-| `PARTS=F sim/ssp/p1a_smoke.sh` | run selected smoke parts only (default `ABCDEFG`) |
+| `PARTS=F sim/ssp/p1a_smoke.sh` | run selected smoke parts only (default `ABCDEFGH`) |
 | `z80_bfm.v` T80-contract model | cen-sampled request, release ends boundary, `halt_n`, `+STEPHANG=<n> +STEPHANG_CLKS=<c>` |
 | harness `0x02` eager key, `+BRKTX=<n>` | send a key mid-output |
 | `[p1a-step]` events (`p1a_sim_top.v`) | kick / regrant (fetches, pc) / int_hold edges / timeout |
@@ -178,6 +198,8 @@ Owner priorities from P1a first light (R35), with status:
   permanent per R38 (direct frame taps and `MAP_CHANGED` shelved; regmap
   slots reserved). Reactivation path if a live-running consumer ever appears:
   the tap.
+- **(d)** `U` unassemble on the monitor, sharing the disassembler with CamelFORTH →
+  **done**, owner-checked on hardware (R41); `S` shows the next instruction (R42).
 - Remaining P1b scope (`SSP_DESIGN.md` §15): `PR`/mailbox, MROM/MPKG mount
   path (monitor-only reset), reset stretcher, T80s MC/TS/ALT export
   completion (needed for MCYCLE/TSTATE stepping via `freeze_any`), ODT skin,
@@ -194,6 +216,7 @@ Owner priorities from P1a first light (R35), with status:
 |---|---|---|
 | — | WDG_PARK expiry semantics: should expiry also demote the console and release the firmware hold (D-13), or only latch `park_dead_l` as now? | P1b (watchdog completion) |
 | OQ-24 | Physical-access command surface: modal `PHY`/`LOG` (current default) vs explicit physical verbs | M3 FW surface (no RTL impact) |
+| — | `U` UX (R41): default count $10 and a pointer shared with `E`/`D` (a bare `U` continues after the last `E`/`D`/`U`) -- keep, or give `U` its own pointer? | nothing (FW only) |
 | OQ-10 | Exact "Reset System" scope | P1b |
 | OQ-18 | Board-freeze UX values | P2 |
 
@@ -257,6 +280,10 @@ address-mode independence (R37). Full open-question list: `SSP_DESIGN.md` §14.
   `ssp/fw/build/mecrisp-ssp.hex`, so build the FW first on a fresh clone.
 - The REVERTED SDRAM fix noted at the `S_DONE` state must not be retried
   (`SDRAM-review-handoff.md`).
+- **A firmware timing change moves where an escape lands in a running Z-80
+  loop.** Smoke Part F had a hard-coded `PC=5001` that depended on this; R41's
+  larger dictionary exposed it. It now checks `R` against the last step line
+  (relative). Do not reintroduce absolute PCs for a free-running loop.
 - **Forth definition order:** Mecrisp needs every word defined before it is
   used. `dict-p1a` reports a forward reference as `not found` (R39 review B6).
 - **Both simulation halves stub the seam:** a wiring or polarity bug at the
@@ -276,6 +303,10 @@ make -C ssp/fw qemu run-qemu      # qemu smoke variant
 
 # Register map (after editing ssp/regs/ssp_regs.csv)
 make -C sim regmap regmap-check
+
+# Shared Z-80 disassembler (CamelFORTH + SSP), ~6 s: assemble-back check of all
+# 1,784 encodings in both environments + byte-identical diff between them
+make -C forth/disasm check
 
 # Verilator lanes (run from repo root)
 make -C sim lint-ssp              # ssp_top + bridge + uart + gracilis lint

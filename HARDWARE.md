@@ -634,7 +634,7 @@ electrically transparent.  Reserved for later: `0xD0`-`0xD3` (mailbox) and
   the monitor.  `G` hands it back.
 * **Commands:** `E`/`D` examine/deposit, `R` registers, `G [aaaa]` go/continue,
   `I`/`O` Z80 I/O ports, `MAP` MMU frames, `S [n]` single-step (interrupts held
-  off during the sequence), `PHY`/`LOG` address mode, `F` raw Forth, `?` help.
+  off during the sequence), `U [aaaa [n]]` unassemble, `PHY`/`LOG` address mode, `F` raw Forth, `?` help.
 * **Addressing:** logical (the Z80's MMU-translated 64 KB view, the default) or,
   after `PHY`, **physical**: up to 7 hex digits covering the SDRAM window
   `0x0000000`-`0x7FFFFFF`, bypassing the MMU.  The block-RAM page (physical

@@ -28,7 +28,7 @@ APP=ssp/fw/build/mecrisp-ssp-p1a-app.hex
 WORK=/tmp/opencode/p1a-smoke; mkdir -p "$WORK"
 
 [ -x "$MODEL" ] || { echo "FAIL: model missing -- run: make -C sim p1a"; exit 1; }
-if [ ! -f "$APP" ] || [ ssp/fw/apps/monitor.fs -nt "$APP" ] || [ ssp/fw/terminal.s -nt "$APP" ]; then
+if [ ! -f "$APP" ] || [ ssp/fw/apps/monitor.fs -nt "$APP" ] || [ forth/disasm/z80dis.fth -nt "$APP" ] || [ ssp/fw/terminal.s -nt "$APP" ]; then
   echo "(building the monitor dictionary: sim/ssp/p1a_dictbuild.sh)"
   sim/ssp/p1a_dictbuild.sh > "$WORK/dictbuild.log" 2>&1 \
     || { echo "FAIL: dictionary build"; tail -15 "$WORK/dictbuild.log"; exit 1; }
@@ -36,7 +36,7 @@ fi
 
 fail=0
 # PARTS=F runs only Part F (default: all parts)
-want() { [[ "${PARTS:-ABCDEFG}" == *$1* ]]; }
+want() { [[ "${PARTS:-ABCDEFGH}" == *$1* ]]; }
 runmodel() { # $1 = tag, rest = plusargs; stdin = operator input
   local tag=$1; shift
   # caller plusargs first: the harness takes the FIRST occurrence of a key
@@ -335,12 +335,21 @@ print("  %s: the last kick carried N=3" % ("ok" if kn and kn[-1] == "3" else "FA
 if not (kn and kn[-1] == "3"): good = False
 print("  %s: bridge-side parked PCs equal the displayed PCs"
       % ("ok" if rp == pcs else "FAIL"))
-sys.exit(0 if (ok and good and fe and min(fe) >= 1 and rp == pcs) else 1)
+# oracle 3 (R41: was a hard-coded PC=5001, which depended on where the escape
+# happened to land in the 5-instruction loop and moved with any FW timing change):
+# the first R, issued right after S 7, shows the PC of the 12th (last) step line.
+rpc = re.search(r"^PC=([0-9A-F]{4}) ", con, re.M)
+okr = bool(rpc) and len(pcs) > 11 and int(rpc.group(1), 16) == pcs[11]
+print("  %s: R after S 7 shows the PC of the last step line (R PC=%s, line %s)"
+      % ("ok" if okr else "FAIL", rpc.group(1) if rpc else "?",
+         "%04X" % pcs[11] if len(pcs) > 11 else "?"))
+sys.exit(0 if (ok and good and fe and min(fe) >= 1 and rp == pcs and okr) else 1)
 PYEOF
 [ $? -eq 0 ] || fail=1
-check "R after S 7 shows the PC of the last step"     '^PC=5001 '
 n_h=$(grep -ac '^HALTED' "$WORK/F.norm.log")
 [ "$n_h" -eq 2 ] && echo "  ok: HALTED reported on both steps in HALT" || { echo "  FAIL: HALTED x$n_h (want 2)"; fail=1; }
+check "S line ends with the next instruction (R42): NOP"      '^50[0-9A-F]{2}: 00 .*SP=FFFE +NOP *$'
+check "S line ends with the next instruction (R42): JP nn"    '^5004: C3 00 50 57 .*SP=FFFE +JP 5000h *$'
 check "HALT parks with PC = HALT + 1"                 '^PC=5011 '
 n_qF=$(grep -ac '^?$' "$WORK/F.norm.log")
 [ "$n_qF" -eq 3 ] && echo "  ok: S 0, S zz, S 1 2 each answered ?" || { echo "  FAIL: expected 3 '?', got $n_qF"; fail=1; }
@@ -526,6 +535,58 @@ TAG=G3
 } | runmodel G3 +OM=1 +LINEWAIT=2 +QUIET=150000 +PHDELAY=4400000 +IDLE=12000000
 check "bridge watchdog: RD ERR when the client never answers" '^0002000: RD ERR$'
 check "monitor alive after the watchdog: logical E works"      '^0100: C3 00 '
+fi
+
+if want H; then
+# ======================= Part H: U, the shared Z-80 disassembler (R41) =============
+# forth/disasm/z80dis.fth through the monitor port (dz@ -> gc@ -> D-30 engine).
+# A program is deposited at $1000 (covers a plain opcode, operands, a relative
+# jump's computed target, CB, DD, ED and FD pages and the three custom-CPU
+# instruction forms), listed, listed again by a bare U (continues), and listed
+# in PHYSICAL mode (28-bit address, bytes from the physical client's mock).
+TAG=H
+{
+  printf '\x1d'
+  printf '?\r'
+  printf 'D 1000\r'
+  for b in F3 3E 12 21 34 12 18 02 00 00 C3 00 10 CB 7E DD 36 05 99 \
+           ED B0 FD CB 02 06 ED 92 ED C5 ED E1 76 .; do printf '%s\r' $b; done
+  printf 'U 1000 e\r'                              # 14 instructions
+  printf 'U\r'                                      # continues after the last one
+  printf 'U zz\rU 1000 0\rU 1000 1 2\r'             # argument errors -> ?
+  printf 'PHY\r'
+  printf 'U 100 2\r'                                # physical: 7-digit address
+  printf 'LOG\r'
+  printf 'U 1000 1\r'                               # logical again
+  printf 'G\r'
+} | runmodel H +OM=1 +LINEWAIT=2 +QUIET=150000
+echo "--- Part H console ---"; cat "$WORK/H.norm.log"
+check "help lists U"                                  '^U \[AAAA \[N\]\]  UNASSEMBLE'
+check "DI (one byte)"                                 '^1000: F3 +DI *$'
+check "LD A, n"                                       '^1001: 3E 12 +LD A, 12h *$'
+check "LD HL, nn (little-endian operand)"             '^1003: 21 34 12 +LD HL, 1234h *$'
+check "JR shows the computed target address"          '^1006: 18 02 +JR 100Ah *$'
+check "NOP"                                           '^1008: 00 +NOP *$'
+check "JP nn"                                         '^100A: C3 00 10 +JP 1000h *$'
+check "CB page: BIT 7, (HL)"                          '^100D: CB 7E +BIT 7, \(HL\) *$'
+check "DD page: LD (IX+d), n (4 bytes, no marker)"    '^100F: DD 36 05 99 +LD \(IX\+05h\), 99h *$'
+check "ED page: LDIR"                                 '^1013: ED B0 +LDIR *$'
+check "FD CB d op: RLC (IY+d)"                        '^1015: FD CB 02 06 +RLC \(IY\+02h\) *$'
+check "custom CPU instruction F_NEXT"                 '^1019: ED 92 +F_NEXT *$'
+check "custom CPU instruction PUSHIX BC"              '^101B: ED C5 +PUSHIX BC *$'
+check "custom CPU instruction POPIX HL"               '^101D: ED E1 +POPIX HL *$'
+check "HALT, the 14th instruction"                    '^101F: 76 +HALT *$'
+check "bare U continues after the last listed byte"   '^1020: '
+n_qH=$(grep -ac '^?$' "$WORK/H.norm.log")
+[ "$n_qH" -eq 3 ] && echo "  ok: 3 '?' replies (U zz, U 1000 0, U 1000 1 2)" \
+  || { echo "  FAIL: expected 3 '?' replies, got $n_qH"; fail=1; }
+check "PHYSICAL U: 7-digit address, bytes via the physical client" '^0000100: A4 +AND H *$'
+check "second physical instruction"                   '^0000101: A5 +AND L *$'
+check "LOG restores the logical view"                 '^1000: F3 +DI *$'
+absent "no read error in a healthy listing"           'RD ERR'
+if grep -aq 'p1a-ERR' "$WORK/H.events.log"; then
+  echo "  FAIL: BUSRQ released during an engine cycle (Part H)"; fail=1
+fi
 fi
 
 [ $fail -eq 0 ] && echo "p1a_smoke: PASS" || echo "p1a_smoke: FAIL"

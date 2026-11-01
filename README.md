@@ -153,7 +153,8 @@ PC=00E9 SP=FFFE AF=0044 BC=0000 DE=0000 HL=00C3
 | `E [aaaa [n]]` / `D [aaaa]` | Examine (hex + ASCII) / deposit memory |
 | `R` | Registers, including the shadow bank, I, R, IM and IFF |
 | `G [aaaa]` | Resume the Z80, or restart it at `aaaa` |
-| `S [n]` | Single-step `n` instructions, one line each (interrupts held off) |
+| `S [n]` | Single-step `n` instructions, one line each: the next instruction (PC, bytes, mnemonic) and the registers after the step (interrupts held off) |
+| `U [aaaa [n]]` | Unassemble `n` instructions (default 16): address, bytes, Z-80 mnemonic; knows the custom CPU instructions |
 | `I aaaa` / `O aaaa dd` | Read / write a Z80 I/O port |
 | `MAP` | The four MMU frames and the physical pages they map |
 | `PHY` / `LOG` | Examine/deposit by **28-bit physical** SDRAM address (`0000000`–`7FFFFFF`, bypassing the MMU) or by the Z80's logical address |

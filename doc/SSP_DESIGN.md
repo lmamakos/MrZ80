@@ -1179,7 +1179,8 @@ only while OSD `OM` is On) + `F`/`ODT` skin switch.
   from `MON n` at R13]`
 - `SW[.]` — dump 32-switch bank (bridge mirror); `ENC` — menu counter + last
   committed selection `[new v0.4]`
-- `U` unassembler P1 (carried pull-forward); `S?` search P2; `TR` trap P2;
+- `U` unassembler P1 (carried pull-forward) **[landed R41: `U [aaaa [n]]`,
+  shared Z-80 disassembler core, see §17 R41]**; `S?` search P2; `TR` trap P2;
   `H` HBIOS page-table decode P2; `ME/MD` now native via `PHY`+`E/D` (and
   retain `ME p:aaaa` shorthand); `SD` background-block dump P2.
 - `ESC [hh]` — show / set the serial escape character (`ESC_CHAR`); also
@@ -2507,3 +2508,86 @@ warnings listed are the pre-existing power-up-level ones). Place & route and
 timing not run.
 **Status: complete in simulation and synthesis. [2026-10-31: owner reports
 physical `E`/`D` working on hardware.]**
+
+R41 **Monitor `U` (unassemble) and the shared Z-80 disassembler (2026-11-01;
+firmware + CamelFORTH only, no RTL).** *Request:* a Z-80 disassembler for the
+SSP debugger, usable as the basis of another examine/dump command, kept in sync
+with the CamelFORTH one. **Decisions.** (i) **One source, two ports.**
+`forth/disasm/z80dis.fth` is the single hand-edited source; it is UPPERCASE
+Forth restricted to words both kernels have (Mecrisp lacks `.R`/`WITHIN`; its
+`CASE` is standard, Camel's `OF` was fixed to drop the selector the same way).
+All per-environment code is a *port*: `DZ@ ( addr -- b )`, the four `DZ-*` state
+variables (declared by the port because `variable` needs an initial value in
+Mecrisp `compiletoflash`), and `EMIT`/`SPACE`/`."`. The core prints the mnemonic
+only; the port prints address/bytes/newline (Camel `DISASM`, monitor `U`).
+(ii) **Nothing generated is committed.** Camel blocks 30-49 are produced by
+`forth/disasm/mkblocks.py` (also a lint: 64 columns, 16 lines, no dangling
+parsing word, no unterminated `."`/`(`) from the port template plus the core,
+at every `make -C forth/blocks`; the monitor dictionary build expands a
+`\ @include forth/disasm/z80dis.fth` line in `monitor.fs`. (iii) **`U [aaaa
+[n]]`**: default n = $10, pointer shared with `E`/`D` (a bare `U` continues),
+`m-pa`/`m-amask` honoured so it works under `PHY`, any key breaks. The listing
+puts bytes before the mnemonic, so the port needs the length first: a silent
+first pass with Mecrisp's `hook-emit` swapped to a no-op, then the real pass --
+no change to the core and no length-only decoder to keep in sync. The core's
+address arithmetic is unmasked; `dz@` masks, so physical addresses never wrap
+at 16 bits, and branch targets print as their low 16 bits (documented).
+(iv) The custom CPU instructions (`F_NEXT` ED 92, `PUSHIX`/`POPIX` ED C5/D5/E5 /
+C1/D1/E1) decode by name; `ED F5`/`ED F1` stay `NOP` as in `HARDWARE.md`.
+**Bugs found and fixed in the old Camel disassembler while sharing it** (all
+found by the new round-trip test): `BITS` shifted the mask not the byte (every
+opcode decoded as x=0); `DISASM-BYTE` leaked the opcode byte per call; Camel's
+`OF` never dropped the selector, so every matched `CASE` leaked a cell (08-case
+fixed; the two default clauses that compensated with their own `DROP` were
+removed); DD/FD were handled by recursing into the x=3 decoder, so any prefixed
+non-x=3 opcode was misdecoded; `IM 1`/`IM 2` printed as 2/3; the block-transfer
+index used `2*` for `4 *`; `LD H,(IX+d)` printed `IXH`; a DD/FD before ED leaked
+into register names; `JR` showed the raw displacement. **Verification.**
+`make -C forth/disasm check` (6 s): 1,784 encodings (every base opcode, the full
+CB/ED/DD/FD/DDCB/FDCB maps, a negative displacement, prefix chains) are
+disassembled in Camel (the Python Z-80 emulator, real generated blocks via the
+kernel's own `LOAD`/RAM-disk path) and in Mecrisp (QEMU, `compiletoflash`), each
+line is assembled again with um80 and must reproduce the bytes and the consumed
+length, and the two environments' output must be byte-identical (0 differ).
+Rule-checked classes: ED mirror encodings, undocumented `IXH`/`IXL`, DDCB
+register copies, ignored prefixes, custom instructions. **Mutations:** a wrong
+bit-field shift fails every environment; dropping the 8-bit mask in `DZ-GET`
+passes Camel and fails Mecrisp (the case the cross-environment diff exists for).
+p1a lane: new smoke Part H (21 checks): a deposited program covering a plain
+opcode, operands, a computed `JR` target, the CB/DD/ED/FD pages and the three
+custom forms, a bare `U`, argument errors (`?`), PHYSICAL (7-digit address,
+bytes via the physical client), LOG restored; full smoke A-H, 124 checks, green.
+**Side findings.** (a) Smoke Part F's `R after S 7` check hard-coded `PC=5001`,
+which depends on where the escape lands in the five-instruction loop and shifted
+with the larger dictionary (verified by running the unmodified monitor: 5001;
+R41: 5002); the check is now relative to the last step line. (b) The monitor
+dictionary grew 11,704 -> 22,156 of 48,128 bytes; raw-Forth typing is slower
+(linear dictionary search). **Not done / open:** hardware check of `U`; the break
+path (a key during a long `U`) is not in the smoke; `S` could show the next
+mnemonic (`m-dlen`/`dz-op` exist). Factory ROM regenerated. Spec §10.2 notes `U` as landed;
+§10.1 is unchanged (the command list is documented in `monitor.fs`, README.md and
+doc/OVERVIEW.md).
+
+R42 **`S` shows the next instruction; `U` confirmed on hardware (2026-11-01;
+firmware only).** *Owner:* `U` works on hardware; `S` should also show the
+disassembled instruction. **Decisions.** (i) Each step line is now `PC: bb bb bb
+bb AF=.. BC=.. DE=.. HL=.. SP=..  <mnemonic>`: the mnemonic is of the NEXT
+instruction (the one at the displayed PC), appended after the registers so the
+existing line prefix -- and the Part F oracle that parses it -- is unchanged.
+(ii) **Deferred hook, per the owner's suggestion:** `S` calls `m-after`, a vector
+in the variable `m-after-step` that defaults to a nop (`' m-nop variable`), and
+the disassembler section installs `m-sdis` with `m-dis-reg`. `S` therefore no
+longer depends on the disassembler being compiled in, and the disassembler
+section stays where it is (after `S`, before `E`), with no definition-order
+constraint. (iii) **The install must run at boot.** A RAM variable written
+while the dictionary is built is not in the shipped image (variable init data
+comes from the declaration), so `init` calls `m-dis-reg` before `mon`; a module
+that registers itself needs one line in `init`. (iv) `S` always reads Z-80 memory
+logically, so `m-step-lg` also clears `m-pa`, otherwise `dz@` would mask as
+PHYSICAL after an earlier `PHY` `E`. **Verification.** Smoke Part F (S lines end
+in `NOP` / `JP 5000h`, through a cold boot of the shipped image, which is what
+proves the init-time install) and Part H (`U`, after the section reshuffle) green;
+the full suite was not re-run (application code only, owner's call). Factory ROM
+regenerated; dictionary 22,412 of 48,128 bytes. **Not done:** hardware check of
+the `S` mnemonic; a build without the disassembler include (the point of the
+hook) was reasoned, not exercised.
