@@ -11,4 +11,4 @@
 : .BASE BASE @ DUP DECIMAL . BASE ! ;
 
 \ look up LOAD as it's defined in initial loaded screens
-: blocks ." Loading.. " 8 2 DO I . I LOAD SPACE LOOP CR ;
+: blocks CR ." Loading.. " 9 2 DO I . I LOAD SPACE LOOP CR ;
