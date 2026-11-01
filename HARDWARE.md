@@ -678,4 +678,4 @@ Notes:
   the instructions, and print an error and halt (standalone) or exit
   (CP/M) if it does not.
 - Design notes, cycle-level comparison and verification:
-  `HISTORY.md` and `blog-custom-instructions.md`.
+  `HISTORY.md` and `doc/custom-forth-instructions.md`.
