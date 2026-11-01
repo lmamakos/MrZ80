@@ -2665,4 +2665,6 @@ doubled MROM's address fan-out costs margin that the fitter does not always
 find -- watch it in future builds. Factory ROM regenerated (`forth_rom.mif`, 32768 words).
 **Not done:** hardware check (mount from the OSD while a Z80 program runs;
 on-board `compiletoflash` surviving Reset SSP); the `MrZ80.sv` routing is
-covered statically (`seam-check`, `ssp-map`) but not simulated.
+covered statically (`seam-check`, `ssp-map`) but not simulated. **[R43 addendum, 2026-11-01: hardware check passed (owner) -- the OSD
+mount works, Reset SSP works, and words compiled into the ROM with
+`compiletoflash` survive the reset.]**

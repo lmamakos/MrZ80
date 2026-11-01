@@ -1,11 +1,10 @@
 # SSP_STATUS — state, plans and hand-off for the System Support Processor
 
-Updated: **2026-11-01** · Branch `r24-p1b`: R39 (`30aed3a`) and R40 (`96d3b8d`)
-committed locally, not pushed; R41 (monitor `U`, shared Z-80 disassembler) and R42
-(`S` shows the next instruction) committed locally; R43 (128 KiB MROM + OSD ROM mount)
-committed locally · Phase **P1b**; M4 (single-step) and M3 (physical
+Updated: **2026-11-01** · Branch `r24-p1b`, merged into `main` locally (not
+pushed) after R43: R39–R40, R41 (monitor `U`, shared Z-80 disassembler), R42
+(`S` shows the next instruction) and R43 (128 KiB MROM + OSD ROM mount) · Phase **P1b**; M4 (single-step) and M3 (physical
 memory) done in simulation and **reported working on hardware** (owner,
-2026-10-31).
+2026-10-31); R43 owner-checked on hardware (2026-11-01).
 
 ## 0. How to use the SSP documents
 
@@ -43,7 +42,7 @@ Planning documents are not kept outside `doc/`.
 | P1b M3 physical memory client (R40) | **Done**, owner-checked on hardware (details: `SSP_DESIGN.md` §9.2 "as landed", §17 R40) |
 | R41 monitor `U` (unassemble) | **Done**, owner-checked on hardware (2026-11-01). Shared source with CamelFORTH: `forth/disasm/` (§17 R41) |
 | R42 `S` shows the next instruction | **Done in simulation** (smoke Part F); hardware check pending. A deferred hook keeps `S` independent of the disassembler (§17 R42) |
-| R43 MROM 128 KiB + OSD ROM mount | **Done in simulation** (`dl-path`, 5 mutants killed; full suite green); Quartus build reviewed (§17 R43). Hardware check pending: mount `mrz80-ssp.mrz` from the OSD |
+| R43 MROM 128 KiB + OSD ROM mount | **Done**, owner-checked on hardware (2026-11-01): OSD mount, Reset SSP, words compiled with `compiletoflash` survive the reset. Simulation: `dl-path`, 5 mutants killed; full suite green; Quartus build reviewed (§17 R43) |
 
 ### 1.2 What is on hardware
 
@@ -52,10 +51,9 @@ The owner rebuilt and flashed through R40 and reports the M1 (`I`/`O`/`MAP`/
 (2026-10-31). The committed factory ROM (`ssp/fw/forth_rom.mif`) was
 regenerated for R42 (adds `U` and the `S` mnemonic), and again for R43 (same
 monitor on the 128 KiB map, window `0x5000..0x20000`). The owner confirmed `U` on
-hardware (2026-11-01). **Owner check pending for R43:** flash the new core;
-`make -C sim mrom-install`; load **SSP Monitor ROM** from the OSD while a Z80
-program runs (it must keep running), then escape and use the monitor; also
-`compiletoflash` a word in `F`, **Reset SSP**, and see it is still there.
+hardware (2026-11-01). R43 is **owner-checked on hardware** (2026-11-01): the
+OSD **SSP Monitor ROM** mount works, **Reset SSP** works, and words compiled
+into the ROM with `compiletoflash` survive the reset.
 **Owner check pending for R42:** the mnemonic on each `S` line on hardware; the
 key-break path of a long `U` is still not in the smoke. Not exercisable on
 hardware yet: real INT sources (none exist; the step-time INT mask is proven in
@@ -218,8 +216,8 @@ Owner priorities from P1a first light (R35), with status:
   the tap.
 - **(d)** `U` unassemble on the monitor, sharing the disassembler with CamelFORTH →
   **done**, owner-checked on hardware (R41); `S` shows the next instruction (R42).
-- **(e)** MROM 128 KiB + OSD ROM mount with monitor-only reset → **done in
-  simulation** (R43); hardware check pending (§1.2). `MPKG` deferred.
+- **(e)** MROM 128 KiB + OSD ROM mount with monitor-only reset → **done**,
+  owner-checked on hardware (R43). `MPKG` deferred.
 - Remaining P1b scope (`SSP_DESIGN.md` §15): `PR`/mailbox, reset stretcher, T80s MC/TS/ALT export
   completion (needed for MCYCLE/TSTATE stepping via `freeze_any`), ODT skin,
   real ANSI SGR colours (the `col-*` stubs in `monitor.fs`).

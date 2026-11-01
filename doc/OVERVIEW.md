@@ -522,7 +522,7 @@ follow it.
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
 | SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | `U` working on hardware (owner, 2026-11-01); `S` mnemonic verified in simulation |
 | SSP: breakpoints, T-state/machine-cycle stepping, BRAM-page physical access, panel integration | Roadmap |
-| SSP: monitor ROM (128 KB) loaded from the OSD, no FPGA rebuild | Working in simulation; hardware check pending. Forth source packs from the OSD: not planned for now |
+| SSP: monitor ROM (128 KB) loaded from the OSD, no FPGA rebuild; words compiled into it survive Reset SSP | Working on hardware (owner, 2026-11-01). Forth source packs from the OSD: not planned for now |
 | Legacy Grant Searle BASIC/monitor (`basmon`) | Still available as a bootable `.BIN` |
 
 ## 8. Room to grow
