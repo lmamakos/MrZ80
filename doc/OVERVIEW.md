@@ -270,9 +270,11 @@ diagnostics are one line long:
   saved state, and a screen editor live in a block device you can refill from
   your PC in seconds.
 * The blocks that ship with the image include a line-oriented **screen
-  editor**, `DUMP`/`DUMPW` hex dumps, double-number utilities, and a
-  benchmark suite (`timed`, `utimed`, `times`, `bench`) that measures the
-  machine with its own hardware timers.
+  editor**, `DUMP`/`DUMPW` hex dumps, double-number utilities, a benchmark
+  suite (`timed`, `utimed`, `times`, `bench`) that measures the machine with
+  its own hardware timers, and **`DISASM`** — a full Z-80 disassembler
+  (`HEX 100 10 DISASM`) that even decodes the custom instructions below. It is
+  the same source the SSP monitor's `U` command uses (see §6).
 
 ### Custom Z-80 instructions, forged for Forth
 
@@ -385,9 +387,14 @@ PHYSICAL (SDRAM, 28-BIT)
 .LOG
 LOGICAL
 .S 3
-0100: C3 00 50 00 AF=005A BC=0000 DE=0000 HL=0000 SP=FFFE
-5000: 21 00 80 7E AF=005A BC=0000 DE=0000 HL=0000 SP=FFFE
-5003: 7E 23 B7 20 AF=005A BC=0000 DE=0000 HL=8000 SP=FFFE
+0100: C3 00 50 00 AF=005A BC=0000 DE=0000 HL=0000 SP=FFFE JP 5000h
+5000: 21 00 80 7E AF=005A BC=0000 DE=0000 HL=0000 SP=FFFE LD HL, 8000h
+5003: 7E 23 B7 20 AF=005A BC=0000 DE=0000 HL=8000 SP=FFFE LD A, (HL)
+.U 5003 4
+5003: 7E            LD A, (HL)
+5004: 23            INC HL
+5005: B7            OR A
+5006: 20 FB         JR NZ, 5003h
 ```
 
 `PHY` lets you look at — and patch — any byte of the 128 MB of SDRAM by its
@@ -397,10 +404,59 @@ meant. (The 64 KB of fast block RAM at `0x8000000` is reachable through the
 Z80's logical view only; a physical address at or beyond `08000000` just gets a
 `?`.) `S` retires one instruction at a time with a hardware one-shot — release,
 wait for the CPU to actually leave the parked state, re-park at the next
-boundary — and prints the next instruction's address and bytes plus the
-registers after the one that just ran, so a trace reads like a listing. The
-interrupt line is masked for the whole sequence, so a clock tick cannot
-hijack it.
+boundary — and prints the next instruction's address, bytes and disassembly
+plus the registers after the one that just ran, so a trace reads like a
+listing. The interrupt line is masked for the whole sequence, so a clock tick
+cannot hijack it. `U` lists code the same way without running anything.
+
+### One disassembler, two Forths
+
+The disassembler behind `S` and `U` is a Z-80 decoder written in Forth — and
+the very same source file also runs **on the Z-80 itself**, inside
+CamelFORTH. Type `HEX 0 2 DISASM` at the standalone Forth prompt and the
+Z-80 reads its own memory and decodes its own boot vector with a disassembler
+that is itself running on that Z-80:
+
+```
+HEX 0 2 DISASM
+0000: DI
+0001: JP 008Dh
+```
+
+On the other side of the wall, the SSP's 32-bit RISC-V Forth runs the identical
+text against the *parked* Z-80's memory — logical or physical, through the same
+sequencer the `E` command uses. One source file, two cell sizes, two CPUs, two
+Forths; a thin per-environment "port" supplies only the byte reader and the
+output format, so a fix or a new instruction made once appears in both.
+
+It knows the undocumented corners too (`IXH`/`IXL`, the `DDCB` register-copy
+forms, the mirror encodings of `NEG`/`RETN`/`IM`) — and it knows this core's
+three custom instructions *by name*, which no stock disassembler can do. Here
+is CamelFORTH's own `>R` on a custom-instruction kernel, as the monitor's `U`
+shows it:
+
+```
+.U 31C 3
+031C: ED C5         PUSHIX BC
+031E: C1            POP BC
+031F: ED 92         F_NEXT
+```
+
+Three instructions are the whole word: push the old top of stack onto the
+return stack, pop the new one off the data stack, run the inner interpreter.
+(The same `>R` on a stock Z-80 is twelve instructions.)
+
+The disassembler is trusted because it is tested to the bone, not because it
+looks right. A repeatable check (`make -C forth/disasm check`, six seconds)
+disassembles **all 1,784 instruction encodings** — every base opcode, the full
+`CB`, `ED`, `DD`, `FD` and `DDCB`/`FDCB` pages, negative displacements, stacked
+prefixes — in CamelFORTH (under a Z-80 emulator, loaded from the real Forth
+blocks) *and* in Mecrisp (under QEMU). Each line of output is then fed back to
+a Z-80 assembler and must reproduce the original bytes, and the two Forths
+must print **byte-for-byte identical text**. Deliberately breaking either the
+decoder or the 16/32-bit portability makes the check fail, which is the point.
+(It also found a handful of bugs in an earlier, hand-written version — the
+sort of thing that only shows when you assemble the output back.)
 
 ### Engineering underneath (because you'll appreciate it)
 
@@ -426,7 +482,8 @@ hijack it.
 
 **Status today:** the full escape → park → examine/deposit → resume cycle has
 been proven on hardware, as has transparency with the SSP disabled. The
-later commands — `I`/`O`, `MAP`, single-step `S`, and physical examine/deposit
+later commands — `I`/`O`, `MAP`, single-step `S`, the `U` unassembler (and the
+mnemonic on each `S` line, simulation-checked so far), and physical examine/deposit
 under `PHY` — each passed a simulation campaign (including mutation testing,
 and checks against the real T80 and the real SDRAM fabric) and then a check on
 the bench. It's a live development, and §7 says how to follow it.
@@ -472,9 +529,10 @@ next: there's a place for it.
   for stereo. Authentic 1980s sound for a 1970s CPU, inside a 2010s FPGA.
 * **The SSP will keep evolving — because it's just software.** The monitor is
   not etched anywhere: it's Forth code in a downloadable ROM image that the
-  HPS loads when the core starts. New commands — breakpoints, search, an
-  unassembler, another console skin — mean *new Forth source*, re-mounted from
-  the OSD, not an FPGA recompile; even the bridge's register file is generated
+  HPS loads when the core starts. New commands — breakpoints, search,
+  another console skin — mean *new Forth source*, re-mounted from the OSD, not
+  an FPGA recompile (the unassembler was the first such addition, and it was
+  written once for both Forths); even the bridge's register file is generated
   from one CSV so hardware and firmware grow together. The pace so far — from
   no monitor at all to escape, park, examine, deposit, step and physical
   memory access in a few dozen development rounds — suggests the command set
