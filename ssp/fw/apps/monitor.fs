@@ -333,6 +333,12 @@ SSP_CTRL_ESC_BREAK_EN
   m-dzbad @ if ." ??" then ;
 : m-dis-reg ( -- )  ['] m-sdis m-after-step ! ;   \ install it (init runs this at boot)
 
+\ ---- cooperative multitasker (R46) --------------------------------------------------
+\ Mecrisp's own multitask.txt, vendored.  Single-task until `multitask` is run (it
+\ points hook-pause at the scheduler; hook-pause is a RAM vector, so every reset starts
+\ single-task).  `pause` is called by the kernel's key and emit waits.
+\ @include ssp/fw/mecrisp/multitask.fs
+
 \ ---- U : unassemble -----------------------------------------------------------
 \ The listing words; the disassembler port and core are defined above (before S).
 : m-ubytes ( a len -- )                       \ first 4 bytes, padded to 4 columns

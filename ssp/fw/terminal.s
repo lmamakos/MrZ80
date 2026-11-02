@@ -12,6 +12,31 @@
 
 .include "../common/terminalhooks.s"
 
+# `pause` (the multitasker's switch point, a Forth word) may clobber every scratch
+# register, but callers of key and emit (accept keeps its state in x10-x12) rely on the
+# hooks leaving them alone, so the waits below call it through this wrapper.
+pause_safe:
+  addi sp, sp, -32
+  sw x1,  0(sp)
+  sw x5,  4(sp)
+  sw x6,  8(sp)
+  sw x7,  12(sp)
+  sw x10, 16(sp)
+  sw x11, 20(sp)
+  sw x12, 24(sp)
+  sw x13, 28(sp)
+  jal x1, pause
+  lw x1,  0(sp)
+  lw x5,  4(sp)
+  lw x6,  8(sp)
+  lw x7,  12(sp)
+  lw x10, 16(sp)
+  lw x11, 20(sp)
+  lw x12, 24(sp)
+  lw x13, 28(sp)
+  addi sp, sp, 32
+  ret
+
 .ifdef QEMU_NS16550
 
 # -----------------------------------------------------------------------------
@@ -30,14 +55,18 @@ uart_init:
   sw x15, 0(x14)
   ret
 
-serial_emit: # ( c -- )
-  laf x14, UART_LSR
-1:lb x15, 0(x14)
+serial_emit: # ( c -- )  waits in `pause` so other tasks run
+  push x1
+1:laf x14, UART_LSR
+  lb x15, 0(x14)
   andi x15, x15, LSR_THRE
-  beq x15, zero, 1b
-  laf x14, UART_RBR_THR
+  bne x15, zero, 2f
+  jal x1, pause_safe
+  j 1b
+2:laf x14, UART_RBR_THR
   sb x8, 0(x14)
   drop # consume the character cell
+  pop x1
   ret
 
 serial_qemit: # ( -- ? )
@@ -47,14 +76,18 @@ serial_qemit: # ( -- ? )
   andi x8, x15, LSR_THRE
   ret
 
-serial_key: # ( -- c )
-  laf x14, UART_LSR
-1:lb x15, 0(x14)
+serial_key: # ( -- c )  waits in `pause` so other tasks run
+  push x1
+1:laf x14, UART_LSR
+  lb x15, 0(x14)
   andi x15, x15, LSR_DR
-  beq x15, zero, 1b
-  laf x14, UART_RBR_THR
+  bne x15, zero, 2f
+  jal x1, pause_safe
+  j 1b
+2:laf x14, UART_RBR_THR
   pushdatos
   lbu x8, 0(x14)
+  pop x1
   ret
 
 serial_qkey: # ( -- ? )
@@ -86,14 +119,18 @@ uart_init:
   sw x15, 0(x14)
   ret
 
-serial_emit: # ( c -- )  blocks until transmitter ready
-  laf x14, UART_STAT
-1:lw x15, 0(x14)
+serial_emit: # ( c -- )  blocks until transmitter ready, in `pause` so other tasks run
+  push x1
+1:laf x14, UART_STAT
+  lw x15, 0(x14)
   andi x15, x15, STAT_TX_READY
-  beq x15, zero, 1b
-  laf x14, UART_TXDATA
+  bne x15, zero, 2f
+  jal x1, pause_safe
+  j 1b
+2:laf x14, UART_TXDATA
   sb x8, 0(x14)
   drop # consume the character cell -- TOS reverts to the stack below
+  pop x1
   ret
 
 serial_qemit: # ( -- ? )
@@ -106,17 +143,21 @@ serial_qemit: # ( -- ? )
 serial_key: # ( -- c )  blocks until a byte arrives
   # R30: a human at the prompt must not trip the ~0.4 s WDG_PARK (D-13): the
   # park is held for as long as the FW sits here, so refresh it while waiting.
-  laf x14, UART_STAT
-1:lw x15, 0(x14)
+  # Each lap also calls `pause`, so other tasks run while the monitor waits.
+  push x1
+1:laf x14, UART_STAT
+  lw x15, 0(x14)
   andi x15, x15, STAT_RX_AVAIL
   bne x15, zero, 2f
   laf x15, WDG_PARK_KICK
   sw zero, 0(x15)             # any write re-arms (ssp_regs.csv 0x0B4)
+  jal x1, pause_safe
   j 1b
 2:
   laf x14, UART_RXDATA
   pushdatos
   lbu x8, 0(x14)
+  pop x1
   ret
 
 serial_qkey: # ( -- ? )

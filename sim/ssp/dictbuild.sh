@@ -49,7 +49,8 @@ python3 tools/ssp_appsrc.py "$FW/ssp-regs.fs" "$FW/apps/monitor.fs" "$WORK/build
   > "$WORK/console_build.log" 2> "$WORK/info_build.log"
 rc=$?
 [ $rc -eq 0 ] || { echo "FAIL: build session exit $rc"; tail -3 "$WORK/info_build.log"; tail -20 "$WORK/console_build.log"; exit 1; }
-grep -aiE 'not found|stack|unbalanced' "$WORK/console_build.log" | head -5 > "$WORK/errs.txt"
+# the kernel's own messages (words and comments in the source may contain "stack")
+grep -aiE 'not found|stack (underflow|overflow|not balanced)|flash full|ram full' "$WORK/console_build.log" | head -5 > "$WORK/errs.txt"
 [ -s "$WORK/errs.txt" ] && { echo "FAIL: build session errors:"; cat "$WORK/errs.txt"; tail -12 "$WORK/console_build.log"; exit 1; }
 grep -aq 'compiletoflash' "$WORK/console_build.log" || { echo "FAIL: compiletoflash missing"; exit 1; }
 [ -f "$WORK/rom.hex" ] || { echo "FAIL: no ROM dump"; exit 1; }

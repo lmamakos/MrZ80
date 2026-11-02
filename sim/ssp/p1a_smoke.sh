@@ -36,7 +36,7 @@ fi
 
 fail=0
 # PARTS=F runs only Part F (default: all parts)
-want() { [[ "${PARTS:-ABCDEFGH}" == *$1* ]]; }
+want() { [[ "${PARTS:-ABCDEFGHI}" == *$1* ]]; }
 runmodel() { # $1 = tag, rest = plusargs; stdin = operator input
   local tag=$1; shift
   # caller plusargs first: the harness takes the FIRST occurrence of a key
@@ -604,6 +604,55 @@ absent "no read error in a healthy listing"           'RD ERR'
 if grep -aq 'p1a-ERR' "$WORK/H.events.log"; then
   echo "  FAIL: BUSRQ released during an engine cycle (Part H)"; fail=1
 fi
+fi
+
+if want I; then
+# ======================= Part I: cooperative multitasker (R46) =====================
+# Mecrisp's multitask.txt (ssp/fw/mecrisp/multitask.fs) in the shipped dictionary, from
+# a cold boot, driven at the Forth prompt.  Switches happen in `pause`, which the
+# kernel's key and emit waits call.  Checks: `up` and `boot-task` (flash-initialised
+# variables) survive the cold boot; a heartbeat task and a task that writes a bridge
+# register (the park-watchdog kick) both run alongside the boot task; `singletask`
+# stops them; tasks keep running while the monitor sits idle at the prompt and while it
+# prints.
+TAG=I
+{
+  printf '\x1d'
+  printf 'F\r'
+  printf 'up @ boot-task = .\r'                    # cold boot: up points at boot-task
+  printf 'boot-task @ boot-task = .\r'              # ... and the ring is boot-task alone
+  printf 'task: t-beat\r'
+  printf 'task: t-dog\r'
+  printf '0 variable beats\r'
+  printf '0 variable kicks\r'
+  printf ': beat& ( -- )  t-beat activate begin 1 beats +! pause again ;\r'
+  printf ': dog& ( -- )  t-dog activate begin 1 kicks +! 0 $200000B4 ! pause again ;\r'
+  printf ': lap ( -- )  100 0 do pause loop ;\r'
+  printf 'multitask\r'
+  printf 'beat&\r'
+  printf 'dog&\r'
+  printf 'beats @ lap beats @ swap - .\r'           # one beat per lap round: 100
+  printf 'kicks @ lap kicks @ swap - .\r'           # likewise
+  printf 'beats @ 0 > kicks @ 0 > and .\r'          # they ran before (idle waits in key)
+  printf 'singletask\r'
+  printf 'beats @ lap beats @ swap - .\r'           # frozen: 0
+  printf 'kicks @ lap kicks @ swap - .\r'
+  printf 'multitask\r'
+  printf 'beats @ lap beats @ swap - .\r'           # woken again: 100
+  printf 'singletask\r'
+} | runmodel I +OM=1 +LINEWAIT=1 +QUIET=150000          # Forth: wait for each line's ok.
+echo "--- Part I console (tail) ---"; tail -24 "$WORK/I.norm.log" | grep -v '^$'
+check "up = boot-task after a cold boot"              'up @ boot-task = \. +-1 +ok\.'
+check "boot-task links to itself"                     'boot-task @ boot-task = \. +-1 +ok\.'
+check "heartbeat task: one beat per pause round"      'beats @ lap beats @ swap - \. +100 +ok\.'
+check "watchdog-kick task: one kick per round"        'kicks @ lap kicks @ swap - \. +100 +ok\.'
+check "both tasks ran while the monitor idled"        'kicks @ 0 > and \. +-1 +ok\.'
+check "singletask freezes the beat task"              'beats @ lap beats @ swap - \. +0 +ok\.'
+check "singletask freezes the kick task"              'kicks @ lap kicks @ swap - \. +0 +ok\.'
+n_100=$(grep -ac ' 100  ok\.' "$WORK/I.norm.log")
+[ "$n_100" -eq 3 ] && echo "  ok: multitask again wakes the tasks (3 laps of 100)" \
+  || { echo "  FAIL: laps of 100: $n_100 (want 3)"; fail=1; }
+absent "no unknown words"                             'not found'
 fi
 
 [ $fail -eq 0 ] && echo "p1a_smoke: PASS" || echo "p1a_smoke: FAIL"
