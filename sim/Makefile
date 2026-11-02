@@ -119,8 +119,11 @@ uart-fifo:
 
 # P1a dictionary build (monitor.fs into the p1a model; separate artifact
 # name space -- P0 goldens untouched)
-dict-rtl: p1a
-	$(ROOT)/sim/ssp/dictbuild.sh
+# The firmware artifacts are built from ssp/fw (make -C ssp/fw [image|rom|install]);
+# these are kept as aliases.  Unlike before they rebuild only when monitor.fs, its
+# includes, the register constants or the kernel changed.
+dict-rtl:
+	$(MAKE) -C $(ROOT)/ssp/fw image
 
 smoke-p1a: p1a
 	$(ROOT)/sim/ssp/p1a_smoke.sh
@@ -141,16 +144,11 @@ dl-path: p1a
 
 # Factory ROM (D-38): rebuild the monitor dictionary and regenerate the MIF
 # the MROM instance loads.  Recommit ssp/fw/forth_rom.mif when it changes.
-fw-rom: dict-rtl
-	python3 $(ROOT)/tools/bin2mif.py $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
-	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
+fw-rom:
+	$(MAKE) -C $(ROOT)/ssp/fw rom
 
-# R43: copy the monitor ROM image (the last dict-rtl build, 128 KiB) to the
-# MiSTer, where the OSD "SSP Monitor ROM" item (FC6, .MRZ) can mount it
 mrom-install:
-	test -f $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin
-	scp $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin mister:/media/fat/games/MrZ80/mrz80-ssp.mrz
+	$(MAKE) -C $(ROOT)/ssp/fw install
 
-# Drift check only (needs a prior dict-rtl build)
 fw-rom-check:
-	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
+	$(MAKE) -C $(ROOT)/ssp/fw rom-check

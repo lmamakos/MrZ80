@@ -168,8 +168,8 @@ reached through the logical view. The OSD also has **Reset SSP** to restart the
 monitor processor without touching the Z80. A hardware watchdog keeps a hung
 monitor from holding the Z80. The monitor firmware is a Forth ROM image built
 in `ssp/fw/` and baked into the core; a newer image can be loaded from the OSD
-(**SSP Monitor ROM**, built by `make -C sim dict-rtl`, copied over by
-`make -C sim mrom-install`) without rebuilding the core. Its register interface
+(**SSP Monitor ROM**, built by `make -C ssp/fw image`, copied over by
+`make -C ssp/fw install`) without rebuilding the core. Its register interface
 is generated from `ssp/regs/ssp_regs.csv`. See [`doc/OVERVIEW.md`](doc/OVERVIEW.md) §6 for a
 tour, [`doc/SSP_DESIGN.md`](doc/SSP_DESIGN.md) for the design and
 [`doc/SSP_STATUS.md`](doc/SSP_STATUS.md) for current status.

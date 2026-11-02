@@ -4,6 +4,9 @@
 Builds the Mecrisp kernel + the monitor dictionary (ssp/fw/apps/monitor.fs)
 into the 128 KiB MROM image the OSD "SSP Monitor ROM" item loads (.MRZ).
 
+(`make -C ssp/fw image` runs this with dependency tracking; `make -C ssp/fw`
+also regenerates the factory ROM, forth_rom.mif.)
+
   tools/ssp_image.py                 check + build -> ssp/fw/build/mrz80-ssp.mrz
   tools/ssp_image.py --check         only the quick qemu compile check (~5 s)
   tools/ssp_image.py -o /tmp/t.mrz   write the image somewhere else

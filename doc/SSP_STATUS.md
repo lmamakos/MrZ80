@@ -125,7 +125,7 @@ M10K (62 %), 49 % of block-RAM bits; no negative slack; clk_sys setup slack
 | Area | State |
 |---|---|
 | Cores | FemtoRV32-gracilis (selected) and picorv32 (fallback, no longer simulated: the P0 stub lanes were retired R43) in `Components/RISCV/`, provenance in `PROVENANCE.md` |
-| Firmware base | Mecrisp-Quintus 1.1.2a port in `ssp/fw/` (no flash device; 128 KiB MROM whose window `0x5000..0x20000` is the `compiletoflash` dictionary, D-32/D-35 rev R43). Kernel source referenced in place from `~/mecrisp-quintus` (GPLv3; compliance per H-3/R16). Build: `cd ssp/fw && make` → `ssp/fw/build/mecrisp-ssp.hex` (build dir git-ignored). Dictionary build (D-35): `make -C sim dict-rtl` → `ssp/fw/build/mecrisp-ssp-app.hex`; factory image `make -C sim fw-rom` → committed `ssp/fw/forth_rom.mif` (D-38) |
+| Firmware base | Mecrisp-Quintus 1.1.2a port in `ssp/fw/` (no flash device; 128 KiB MROM whose window `0x5000..0x20000` is the `compiletoflash` dictionary, D-32/D-35 rev R43). Kernel source referenced in place from `~/mecrisp-quintus` (GPLv3; compliance per H-3/R16). Build: `cd ssp/fw && make` → `ssp/fw/build/mecrisp-ssp.hex` (build dir git-ignored). Monitor image (D-35): `make -C ssp/fw image` → `ssp/fw/build/mrz80-ssp.mrz` (also leaves `mecrisp-ssp-app.{bin,hex}`, `dict.{bin,hex}`); factory image `make -C ssp/fw rom` → committed `ssp/fw/forth_rom.mif` (D-38); plain `make -C ssp/fw` does both |
 | SSP RTL | `ssp_top.v` (core + MROM/RV RAM + decoder + bridge + UART + console mux), `ssp_bridge.v` (register file, park controller, D-30 sequencer for FW mem/IO kicks, WDG×2, `TICK_US`, R39 step sequencer), `ssp_uart.v` (8N1, 128-byte RX FIFO, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` and `ssp_tramp.vhd` (instantiated in the CPM core since R33) |
 | T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + boundary park gate (BusAck only when the next state is M1; prefix-gated). Wired since R33: `n_BUSRQ <= ssp_busrq_n`; `FREEZE_req_n` is a dead port (R28 finding). With the SSP idle the core is unchanged (P-B) |
 | GHDL integration benches | `integ-park` (R-40: every park on an instruction boundary vs an unparked reference), `integ-mux` (R-42: mux + real T80 + engine model), `integ-core` (R-42 against the real SDRAM/BRAM/MMU fabric), `cycle-golden` + `engine-golden` (engine strobes == real T80, per T-state; committed `sim/ssp/golden_cycles.txt`), `tramp` (`G aaaa` vs the real T80, 176 checks) |
@@ -341,7 +341,11 @@ address-mode independence (R37). Full open-question list: `SSP_DESIGN.md` §14.
 
 ```sh
 # Firmware
-cd ssp/fw && make                 # -> build/mecrisp-ssp.hex (silicon map)
+make -C ssp/fw                    # everything: kernel + monitor image + factory ROM (rebuilds only what changed)
+make -C ssp/fw image              # build/mrz80-ssp.mrz, the OSD-mountable monitor ROM (~3.5 min)
+make -C ssp/fw rom                # forth_rom.mif, the committed factory ROM, from that image
+make -C ssp/fw check install      # ~2 s qemu compile check of monitor.fs / scp the image to the MiSTer
+make -C ssp/fw ssp                # kernel only -> build/mecrisp-ssp.hex (silicon map)
 make -C ssp/fw qemu run-qemu      # qemu smoke variant
 
 # Register map (after editing ssp/regs/ssp_regs.csv)
@@ -364,10 +368,8 @@ make -C sim dict-rtl smoke-p1a    # monitor dictionary build (~3.5 min) + operat
 make -C sim dl-path               # OSD ROM mount (R43, R-29), ~10 s
 make -C sim vdu                   # SSP video console + OSD entry (R44), ~10 s
 make -C sim terminal              # video terminal + ssp_vdu + ACIA master reset (GHDL, R44), ~5 s
-make -C sim fw-rom                # rebuild + regenerate the committed factory ROM (.mif)
-make -C sim mrom-install          # scp the monitor ROM image to the MiSTer as mrz80-ssp.mrz
-tools/ssp_image.py                # check + build the monitor ROM image for OSD mounting -> ssp/fw/build/mrz80-ssp.mrz (~3.5 min)
-tools/ssp_image.py --check        # qemu compile check of monitor.fs only (~2 s); --install also scp's the image
+# (make -C sim dict-rtl / fw-rom / mrom-install / fw-rom-check are aliases of the ssp/fw targets above;
+#  tools/ssp_image.py is the script behind `image`, usable directly: --check, -o FILE, --install)
 make -C sim integ-park integ-mux cycle-golden   # GHDL, real T80 (seconds each)
 make -C sim engine-golden         # real bridge engine vs the golden T80 waveforms
 

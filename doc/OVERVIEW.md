@@ -483,15 +483,20 @@ dictionary window with room to grow.
 The monitor is a ROM image, and making a new one takes one command:
 
 ```sh
-tools/ssp_image.py                 # check, then build  ->  ssp/fw/build/mrz80-ssp.mrz
-tools/ssp_image.py --check         # just the quick compile check (about 2 seconds)
-tools/ssp_image.py -o /tmp/t.mrz   # put the image somewhere else
-tools/ssp_image.py --install       # build, then scp it to the MiSTer
+make -C ssp/fw image               # check, then build  ->  ssp/fw/build/mrz80-ssp.mrz
+make -C ssp/fw check               # just the quick compile check (about 2 seconds)
+make -C ssp/fw install             # build if needed, then scp it to the MiSTer
+make -C ssp/fw                     # the image plus the factory ROM (below)
 ```
 
-Copy the `.mrz` to the MiSTer (`--install` puts it at
-`/media/fat/games/MrZ80/mrz80-ssp.mrz`; `--dest user@host:/path` changes
-that), pick it with the OSD's **SSP Monitor ROM** item and **Reset SSP**. The
+The Makefile rebuilds only when an input changed, so running it again after
+an edit is always safe. It drives `tools/ssp_image.py`, which you can also run
+directly (`-o FILE` to put the image elsewhere, `--dest user@host:/path` for
+`--install`).
+
+Copy the `.mrz` to the MiSTer (`install` puts it at
+`/media/fat/games/MrZ80/mrz80-ssp.mrz`; `make -C ssp/fw install
+MISTER_DEST=user@host:/path` changes that), pick it with the OSD's **SSP Monitor ROM** item and **Reset SSP**. The
 Z80 side keeps running throughout, and no FPGA rebuild is involved.
 
 **What goes in.**
@@ -526,8 +531,9 @@ prove the monitor's words are resident from power-on.
 
 The log of the slow step is `/tmp/opencode/ssp_image.log`. The image baked into
 the FPGA bitstream, `ssp/fw/forth_rom.mif`, is a separate, committed artifact:
-`make -C sim fw-rom` regenerates it from the same build for a release, while
-everyday testing never needs it.
+`make -C ssp/fw rom` regenerates it from the same image (plain `make -C ssp/fw`
+does both), and it only reaches the board with the next FPGA build, so everyday
+testing never needs it.
 
 **Why this belongs in a tour.** A new monitor command is a Forth word in one
 text file. It is compiled and tested in seconds, built into a ROM image in

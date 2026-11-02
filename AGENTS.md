@@ -202,8 +202,8 @@ and the small per-environment ports; never the generated `3x-`/`4x-disasm.fth`.
 bytes and requires byte-identical output from both environments. Rules, port
 contract and workflow: `forth/disasm/README.md`. The monitor's own port is
 tested by `PARTS=H sim/ssp/p1a_smoke.sh`. After changing the core, rebuild the
-Camel blocks (`make -C forth/blocks`) and the factory ROM (`make -C sim fw-rom`,
-recommit `ssp/fw/forth_rom.mif`).
+Camel blocks (`make -C forth/blocks`) and the factory ROM (`make -C ssp/fw`,
+which rebuilds only what changed; recommit `ssp/fw/forth_rom.mif`).
 
 ### Porting facts that bit us
 
