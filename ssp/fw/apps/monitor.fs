@@ -2,7 +2,7 @@
 \
 \ Fed to the REPL AFTER `compiletoflash` (D-35 pipeline), with the SSP_*
 \ register constants it uses (generated ssp/fw/ssp-regs.fs, filtered by
-\ sim/ssp/p1a_dictbuild.sh) loaded first.  `init` runs `mon` at boot.
+\ sim/ssp/dictbuild.sh) loaded first.  `init` runs `mon` at boot.
 \
 \ Design (recorded R30): a dedicated ODT-style command loop (prompt `.`,
 \ uppercase responses, SSP_DESIGN 10.1) rather than Forth words that parse
@@ -309,7 +309,7 @@ SSP_CTRL_ESC_BREAK_EN
 \ The disassembler CORE is forth/disasm/z80dis.fth, the single source also loaded
 \ by CamelFORTH (see forth/disasm/README.md).  It reads Z-80 memory only through
 \ DZ@ and keeps its state in the four dz-* variables; both are the PORT, defined
-\ here, BEFORE the include (sim/ssp/p1a_dictbuild.sh expands the @include line).
+\ here, BEFORE the include (sim/ssp/dictbuild.sh expands the @include line).
 \ dz@ goes through gc@ (the D-30 sequencer), so it honours LOG/PHY and needs the
 \ Z-80 parked; a failed read sets m-dzbad and yields 0.
 0 variable dz-pc
@@ -471,22 +471,23 @@ SSP_CTRL_ESC_BREAK_EN
 : m-cmd ( -- )
   m-spaces m-getc dup 0= if drop m-repeat exit then   \ bare CR: repeat S
   m-adv 32 or
-  dup 115 <> if 0 m-stepn ! then              \ any other command forgets S
-  dup 101 = if drop m-examine exit then       \ e
-  dup 100 = if drop m-deposit exit then       \ d
-  dup 103 = if drop m-go exit then            \ g
-  dup 114 = if drop m-regs exit then          \ r
-  dup 105 = if drop m-port-r exit then        \ i
-  dup 111 = if drop m-port-w exit then        \ o
-  dup 109 = if drop m-map exit then           \ m
-  dup 115 = if drop m-step exit then          \ s
-  dup 117 = if drop m-unasm exit then         \ u
-  dup 112 = if drop m-tail-hy if m-phy exit else m-q exit then then  \ p-h-y
-  dup 108 = if drop m-tail-og if m-log exit else m-q exit then then  \ l-o-g
-  dup 102 = if drop 2 m-state ! exit then     \ f
+  dup [char] s <> if 0 m-stepn ! then              \ any other command forgets S
+  dup [char] e = if drop m-examine exit then       \ e
+  dup [char] d = if drop m-deposit exit then       \ d
+  dup [char] g = if drop m-go exit then            \ g
+  dup [char] r = if drop m-regs exit then          \ r
+  dup [char] i = if drop m-port-r exit then        \ i
+  dup [char] o = if drop m-port-w exit then        \ o
+  dup [char] m = if drop m-map exit then           \ m
+  dup [char] s = if drop m-step exit then          \ s
+  dup [char] u = if drop m-unasm exit then         \ u
+  dup [char] p = if drop m-tail-hy if m-phy exit else m-q exit then then  \ p-h-y
+  dup [char] l = if drop m-tail-og if m-log exit else m-q exit then then  \ l-o-g
+  dup [char] f = if drop 2 m-state !
+	       ." mon  to restart" exit then  \ f
   dup 63 = over 104 = or if drop m-help exit then   \ ? h
   drop m-q ;
-: m-banner ( -- )  col-output cr ." MRZ80 SSP MONITOR  ? = HELP" cr col-reset ;
+: m-banner ( -- )  col-output cr ." MrZ80 SSP MONITOR  ? = HELP" cr col-reset ;
 
 : mon ( -- )
   begin
