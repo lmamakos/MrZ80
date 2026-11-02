@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu lint-ssp seam-check ssp-map p1a p1a-vcd dict-rtl smoke-p1a dl-path vdu terminal mrom-install tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu lint-ssp seam-check ssp-map p1a p1a-vcd dict-rtl smoke-p1a dl-path vdu terminal mrom-install tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core interval-timer itimer-z80 cycle-golden engine-golden fw-rom fw-rom-check
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -99,6 +99,14 @@ mem-client:
 # R-42 (SDRAM/BRAM/MMU half): engine through the real CPM fabric (GHDL)
 integ-core:
 	$(ROOT)/sim/run_integ_core.sh
+
+# IntervalTimer ($D0-$D3, REQUIREMENTS.md item 7): unit bench, then INT through the
+# real fabric into a Z80 program in interrupt modes 0 and 1 (GHDL, ~1 min)
+interval-timer:
+	$(ROOT)/sim/run_interval_timer.sh
+
+itimer-z80:
+	$(ROOT)/sim/run_itimer_z80.sh
 
 # R-42: z80_bus_mux + real T80s + engine model (GHDL)
 integ-mux:

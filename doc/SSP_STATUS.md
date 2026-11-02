@@ -245,12 +245,12 @@ Owner priorities from P1a first light (R35), with status:
   watchdog completion (§5), ODT skin, `MPKG` (deferred, §5).
 - Bridge board design (OQ-09) runs in parallel.
 
-**Side quests noted, outside the SSP (owner, 2026-11-02):** a stereo pair of
-YM2149 sound chips (jt49 as the basis) and a programmable millisecond interval
-timer that drives the Z80 `INT`. Both are described in `REQUIREMENTS.md` items 6
-and 7 and are not started. The timer interacts with the SSP: `n_INT_ssp`
-(`ssp_int_hold`) already masks `INT` during `S`, and the timer must keep counting
-while masked or parked.
+**Side quests, outside the SSP (owner, 2026-11-02):** a stereo pair of YM2149
+sound chips (jt49 as the basis; `REQUIREMENTS.md` item 6, not started) and a
+programmable millisecond interval timer driving the Z80 `INT` in mode 1 (item 7:
+`IntervalTimer.vhd`, ports `$D0`-`$D3`, done, hardware-tested by the owner 2026-11-02).
+The timer interacts with the SSP: `n_INT_ssp` (`ssp_int_hold`) masks `INT` during
+`S` (the timer keeps counting), and the Z80 is the only thing that acknowledges it.
 
 ### 4.1 Deferred and unscheduled (owner decisions, 2026-11-02)
 

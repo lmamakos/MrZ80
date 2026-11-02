@@ -652,57 +652,50 @@ left/right placement. Roadmap entry in `doc/OVERVIEW.md` (§ "Room to grow").
   GHDL/Verilator bench comparing register writes to expected waveform
   samples; no audio hardware in simulation, so the final check is by ear.
 
-### 7. Planned: programmable interval timer / interrupt source — not started
+### 7. Programmable interval timer / interrupt source (implemented 2026-11-02, hardware test passed)
 
-Noted 2026-11-02 (owner). A real-time interval timer that interrupts the Z80
-every *n* milliseconds, as the first real source for `n_INT`, which is tied
-inactive today (`MicrocomputerZ80CPM.vhd`; `n_int1`/`n_int2` from the two
-ACIAs are also unconnected). It is separate from the free-running benchmark
-timers (`$C0`-`$CF`, item 5) and from the DS12887 calendar RTC (`$70`/`$71`).
+Requested 2026-11-02 (owner). A real-time interval timer that interrupts the
+Z80 every *n* milliseconds: the first real source for `n_INT`, which was tied
+inactive. `Components/TIMER/IntervalTimer.vhd`, I/O ports `0xD0`-`0xD3`
+(register detail in `HARDWARE.md`). It is separate from the free-running
+benchmark timers (`$C0`-`$CF`, item 5) and the DS12887 calendar RTC
+(`$70`/`$71`).
 
-Required behaviour:
+Decisions (owner: Z80 interrupt mode 1, RomWBW polls the interrupt sources):
 
-- **Interval register:** holds *n* milliseconds (width to decide; 16 bits
-  gives up to about 65 s). Counted from the 50 MHz `clk`, so it is
-  independent of CPU speed and not stopped by CPU waits.
-- **Control register (write):** enable interrupt (IE), start/enable the
-  counter, reset the counter, and the options below. Control bits are
-  written, not just read back.
-- **Auto-restart option:** when set, the counter reloads and runs again on
-  expiry (periodic tick); when clear it is one-shot.
-- **Status register (read):**
-  - *expired*: set when the count reaches the interval;
-  - *overflow*: set when the counter expires **again before the previous
-    expiry was acknowledged**, i.e. a missed tick.
-- **Acknowledge:** a control bit written as 1 clears the *expired* indication
-  and withdraws the interrupt request. Whether it also clears *overflow*
-  (one bit or a separate one) is to be decided; the owner wants to be able to
-  clear the indication independently of resetting the counter.
-- **Interrupt request:** `INT` is asserted while *expired* is set and IE is
-  set, and released by the acknowledge (level, not a pulse).
+- **Mode 1, polled.** `INT` is a level; the handler at `0038h` reads STATUS
+  (INTREQ) to see whether this timer is the source. Mode 0 also works
+  (the acknowledge read floats to `FFh` = `RST 38h`); mode 2 and a vector
+  register are not provided.
+- **Registers:** INTERVAL (16 bits, ms, two ports); CONTROL (levels: RUN, IE,
+  AUTO) and COMMAND (strobes: RESET, ACK, CLROVF) on separate ports so an
+  acknowledge never has to restate the levels; STATUS (EXPIRED, OVERFLOW,
+  RUNNING, INTREQ, IE, AUTO) read from either port. EXPIRED clears with ACK,
+  which releases `INT`; OVERFLOW (a second expiry before ACK) clears with
+  CLROVF.
+- **Exact timing:** counted from the 50 MHz `clk` (`n * 50000` clocks per
+  expiry, no drift when periodic), independent of CPU speed and waits.
+- **Reset:** a Z80 reset clears the timer; the SSP monitor-only reset is not
+  involved. The existing single-step mask `n_INT_ssp` gates the line; the
+  timer keeps counting while masked.
 
-Integration points and open questions to settle when starting:
+Hardware (owner, 2026-11-02): section 6 of `testing/timertest.asm` passes on
+the board. It times the timer against the BenchTimer microsecond counter
+(periodic, one-shot, 16-bit interval, RESET, stop, OVERFLOW) and checks
+interrupt modes 0 and 1, IE as a mask and the `HALT` wake.
 
-- Combine with the ACIA interrupts into one open-drain-style `n_INT`
-  (`n_INT <= n_int1 and n_int2 and n_timer`). The ACIA lines would also need
-  to be checked first: they are unconnected today and may not match RomWBW's
-  expectations.
-- The existing single-step mask `n_INT_ssp` (`ssp_int_hold`) already gates
-  this line, so a tick cannot hijack `S`; the timer must keep counting while
-  masked and show *expired*/*overflow* afterwards. Check behaviour while the
-  Z80 is parked at the SSP monitor (counter continues; request held off).
-- Interrupt mode: IM 1 needs nothing more (the Z80 takes `RST 38h`); IM 2
-  needs the timer (or a vector register) to supply a vector byte during the
-  INTA cycle (`M1` + `IORQ`), and priority with the ACIAs. RomWBW's HBIOS
-  can use a periodic tick, so match its expectations (IM 1 vs IM 2, tick
-  rate) before fixing the register layout.
-- Port window: a free window (`$D0`-`$DF`, `$E0`-`$EF` or `$F0`-`$FE`); then
-  record it in `HARDWARE.md`.
-- Reset: whether a Z80 reset clears the timer (it should not outlive the
-  program that enabled it) while the SSP monitor-only reset leaves it alone.
-- Verification: a GHDL bench for one-shot, periodic, acknowledge,
-  overflow, and the masked-`INT` case; then a short Z80 test program under
-  `testing/`, like `testing/timertest.asm`.
+Verified in simulation: `sim/run_interval_timer.sh` (unit bench, exact
+periods, ACK before/with/after an expiry, mutants killed) and
+`sim/run_itimer_z80.sh` (a Z80 program in modes 0 and 1 through the real
+`MicrocomputerZ80CPM` fabric: wake from `HALT`, interrupts held while `DI`,
+OVERFLOW, one-shot, IE as a mask).
+
+Remaining:
+- Full build timing report.
+- Wire the ACIA interrupt outputs (`n_int1`, `n_int2`) into `n_INT` (an AND
+  with `n_int_itimer`) once RomWBW's ACIA driver is checked against it. They are
+  still unconnected.
+- RomWBW HBIOS: use the timer as the system tick (platform driver work).
 
 ## Next milestone: RomWBW port
 

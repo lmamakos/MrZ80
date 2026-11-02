@@ -289,6 +289,9 @@ architecture struct of MicrocomputerZ80CPM is
 	signal n_fpSubsysCS				: std_logic :='1';   -- FrontPanel_Subsystem 8-port window at 0xA0..0xA7
 	signal n_mmuCS					: std_logic :='1';   -- MMU 16-port window at 0xB0..0xBF
 	signal n_timerCS				: std_logic :='1';   -- BenchTimer 16-port window at 0xC0..0xCF
+	signal n_itimerCS				: std_logic :='1';   -- IntervalTimer 4-port window at 0xD0..0xD3
+	signal itimerDataOut			: std_logic_vector(7 downto 0);
+	signal n_int_itimer				: std_logic :='1';   -- IntervalTimer interrupt request (active low)
 	signal n_rtcCS					: std_logic :='1';   -- DS12887 RTC index/data pair at 0x70/0x71
 
 	-- DS12887 RTC plumbing (index/data port pair)
@@ -554,16 +557,15 @@ ssp_alt            <= t80_alt;
 ssp_would_boundary <= t80_would_boundary;
 ssp_t80_reg        <= cpuDbgRegisters;
 
--- The interrupt and bus-request inputs are tied inactive for the moment;
--- future cleverness awaits. n_int1/n_int2 (the io1/io2 interrupt outputs)
--- are currently unconnected and would be the natural source for n_INT.
-n_INT   <= '1';
+-- The bus-request input is driven by the SSP. INT comes from the IntervalTimer
+-- ($D0-$D3); the Z80 runs in interrupt mode 1 and software polls the sources.
+-- n_int1/n_int2 (the io1/io2 ACIA interrupt outputs) are still unconnected;
+-- they would be ANDed in here.
+n_INT   <= n_int_itimer;
 -- R39 single-step interrupt mask (owner ruling): while the SSP step
 -- sequencer is armed (ssp_int_hold), INT is forced inactive for the T80.
--- The source stays n_INT='1' until a real time/interrupt device lands, but
--- the gating point exists and is exercised by the benches from M4 onward:
--- a 50-100 Hz clock tick must never hijack a single-step trace (it would
--- INT-acknowledge instead of executing the stepped instruction).
+-- This is what keeps an IntervalTimer tick from hijacking a single-step trace
+-- (it would INT-acknowledge instead of executing the stepped instruction).
 n_INT_ssp <= '1' when ssp_int_hold = '1' else n_INT;   -- held INACTIVE (active-low)
 n_NMI   <= '1';
 n_BUSRQ <= ssp_busrq_n;
@@ -1006,6 +1008,27 @@ timer1 : entity work.BenchTimer
 	);
 
 -- ____________________________________________________________________________________
+-- INTERVAL TIMER GOES HERE
+
+-- Ports $D0-$D3: INTERVAL (16 bits, ms), CONTROL/STATUS, COMMAND/STATUS.
+-- Drives n_INT (Z80 interrupt mode 1) while EXPIRED and IE are set. Cleared
+-- by a Z80 reset (reset_n_internal). See IntervalTimer.vhd.
+itimer1 : entity work.IntervalTimer
+	generic map (
+		CLK_HZ => 50000000
+	)
+	port map (
+		clk     => clk,
+		reset_n => reset_n_internal,
+		io_cs   => not n_itimerCS,
+		wr_n    => n_ioWR,
+		addr    => cpuAddress(1 downto 0),
+		din     => cpuDataOut,
+		dout    => itimerDataOut,
+		int_n   => n_int_itimer
+	);
+
+-- ____________________________________________________________________________________
 -- DS12887 REAL-TIME CLOCK GOES HERE
 
 -- Ports $70/$71, AT-style index/data pair:
@@ -1092,6 +1115,7 @@ n_fpLatchCS <= '0' when cpuAddress(7 downto 0) = x"FF" and (n_ioWR='0' or n_ioRD
 n_fpSubsysCS <= '0' when cpuAddress(7 downto 3) = "10100" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 8 Bytes $A0-$A7 (front-panel subsystem)
 n_mmuCS <= '0' when cpuAddress(7 downto 4) = "1011" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 16 Bytes $B0-$BF (MMU)
 n_timerCS <= '0' when cpuAddress(7 downto 4) = "1100" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 16 Bytes $C0-$CF (benchmark timers)
+n_itimerCS <= '0' when cpuAddress(7 downto 2) = "110100" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 4 Bytes $D0-$D3 (interval timer)
 
 n_rtcCS <= '0' when cpuAddress(7 downto 1) = "0111000" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 2 Bytes $70-$71 (DS12887 RTC index/data)
 
@@ -1125,6 +1149,7 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
                  fpLatchDataOut      when (n_fpLatchCS = '0') else
                  fpSubsysDataOut     when (n_fpSubsysCS = '0') else
                  timerDataOut        when (n_timerCS = '0') else
+                 itimerDataOut       when (n_itimerCS = '0') else
                  rtcDataOut          when (n_rtcCS = '0') else
                  mmu_dataOut         when (mmu_io_cs = '1' and cpuAddress(3 downto 0) /= "1100") else
                  internalRam1DataOut when (mmu_req_mem_out = '1' and phys_in_blockram = '1') else

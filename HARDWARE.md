@@ -186,6 +186,7 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 | `0xA0`-`0xA7` | 8     | Front-panel subsystem control window (`n_fpSubsysCS`). See Front-panel I/O register map below.            |
 | `0xB0`-`0xBF` | 16    | MMU register window (`n_mmuCS`). 4 frame-mapping low bytes at `+0..+3` (Z2-compatible), 4 high bytes at `+4..+7`, direct-access pointer at `+8..+11` (little-endian), direct-access data port at `+12`. |
 | `0xC0`-`0xCF` | 16    | Benchmark timers (`n_timerCS`, `BenchTimer`). Four 32-bit snapshot channels: ch0/ch1 1 ms/tick, ch2/ch3 1 µs/tick. See below. |
+| `0xD0`-`0xD3` | 4     | Interval timer and interrupt source (`n_itimerCS`, `Components/TIMER/IntervalTimer.vhd`). Drives the Z80 `INT` pin (interrupt mode 1). See below. |
 | `0xFF`        | 1     | Front-panel data latch (R/W). Software writes drive the 8-bit transparent capture chain; reads return the last-written value. |
 
 ### Storage: SPI SD card (`0x88`) and HPS image block device (`0x90`)
@@ -580,6 +581,83 @@ CamelFORTH (embedded kernels `camel80.bin` / `camelf.bin`): `MS@ ( -- ud )`
 returns channel 0 (ms) and `US@ ( -- ud )` channel 2 (µs), each latched at
 the start of the word, as an unsigned double (low cell, high cell on top).
 Channels 1 and 3 are not used by the kernel.
+
+### Interval timer window detail (`0xD0`-`0xD3`)
+
+`Components/TIMER/IntervalTimer.vhd`. Counts milliseconds from the 50 MHz
+system clock (independent of the CPU clock and wait states) and raises a
+**level** interrupt request every INTERVAL ms. It is the only source wired
+to the Z80 `INT` pin so far (the two ACIAs' interrupt outputs are not
+connected). Use Z80 **interrupt mode 1**: the CPU takes `RST 38h`, and the
+handler polls this device's STATUS (and any other device's) to find the
+source. Mode 0, the reset default, also works: the interrupt-acknowledge
+read floats to `FFh`, which is `RST 38h`. A Z80 reset clears the timer.
+While the SSP single-step sequencer is armed `INT` is masked at the CPU; the
+timer keeps counting and EXPIRED stays set.
+
+| Port | Write                       | Read                       |
+|------|-----------------------------|----------------------------|
+| `D0` | INTERVAL, low byte          | INTERVAL, low byte         |
+| `D1` | INTERVAL, high byte         | INTERVAL, high byte        |
+| `D2` | CONTROL (levels)            | STATUS                     |
+| `D3` | COMMAND (one-shot strobes)  | STATUS (same as `D2`)      |
+
+INTERVAL is 16 bits of milliseconds (1 = every ms, 0 counts as 1; up to
+65535 ms). It may be changed while running.
+
+CONTROL (each write sets IE and AUTO, and acts on RUN):
+
+| Bit | Name | Meaning |
+|-----|------|---------|
+| 0 | RUN  | 1 = start counting from 0 if stopped (no effect if already running); 0 = stop and clear the count |
+| 1 | IE   | 1 = EXPIRED drives `INT` |
+| 2 | AUTO | 1 = restart on expiry (periodic, no drift); 0 = one-shot, stops on expiry |
+
+COMMAND (nothing is stored; write 1 to act):
+
+| Bit | Name   | Meaning |
+|-----|--------|---------|
+| 0 | RESET  | clear the count to 0; a running timer keeps running and counts a full interval |
+| 1 | ACK    | clear EXPIRED, which releases the interrupt request |
+| 2 | CLROVF | clear OVERFLOW |
+
+STATUS:
+
+| Bit | Name     | Meaning |
+|-----|----------|---------|
+| 0 | EXPIRED  | set when the interval elapses; stays set until ACK |
+| 1 | OVERFLOW | set when it expires again while EXPIRED is still set (a missed tick); stays set until CLROVF |
+| 2 | RUNNING  | counting (a one-shot clears it on expiry) |
+| 3 | INTREQ   | this timer is asserting `INT` (EXPIRED and IE) |
+| 4 | IE       | as written to CONTROL |
+| 5 | AUTO     | as written to CONTROL |
+| 7:6 | | 0 |
+
+Stopping (RUN = 0) keeps EXPIRED and OVERFLOW. An ACK in the same clock as an
+expiry leaves EXPIRED set (the new expiry is kept) without OVERFLOW.
+
+```
+        IM   1
+        LD   A,10         ; 10 ms
+        OUT  (0D0h),A
+        XOR  A
+        OUT  (0D1h),A
+        LD   A,07h        ; RUN + IE + AUTO
+        OUT  (0D2h),A
+        EI
+; handler at 0038h:
+        IN   A,(0D2h)     ; STATUS
+        AND  08h          ; INTREQ: ours?
+        ...
+        LD   A,02h        ; ACK
+        OUT  (0D3h),A
+```
+
+Tests: `sim/run_interval_timer.sh` (unit bench) and `sim/run_itimer_z80.sh`
+(Z80 program through the real fabric, modes 0 and 1); both in `sim/Makefile`.
+On hardware: section 6 of `testing/timertest.asm` (after the BenchTimer tests)
+times the interval timer against the BenchTimer microsecond counter and tests
+interrupt modes 0 and 1.
 
 ### Real-time clock window detail (`0x70`-`0x71`)
 

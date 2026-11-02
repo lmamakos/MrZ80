@@ -48,6 +48,7 @@ FILES=(
     Components/FRONTPANEL/FP_RAM_Store.vhd
     Components/FRONTPANEL/FrontPanel_Subsystem.vhd
     Components/TIMER/BenchTimer.vhd
+    Components/TIMER/IntervalTimer.vhd
     ssp/rtl/z80_bus_mux.vhd
     ssp/rtl/ssp_tramp.vhd ssp/rtl/ssp_mem_client.vhd
     sim/MicrocomputerZ80CPM_sim.vhd
