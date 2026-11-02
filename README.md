@@ -146,7 +146,7 @@ without the escape byte, on the serial port or, with **SSP Console** = Video,
 on the monitor's own screen and the keyboard:
 
 ```
-MRZ80 SSP MONITOR  ? = HELP
+MrZ80 SSP MONITOR  ? = HELP
 .R
 PC=00E9 SP=FFFE AF=0044 BC=0000 DE=0000 HL=00C3
 ```

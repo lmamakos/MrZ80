@@ -62,7 +62,7 @@ printf 'abc' | run A +OM=0 +OSDENTER_AT=1000000 +OSDVID=1 \
     +MAXCYCLES=8000000 +IDLE=100000000
 has   "OSD entry seen"                        events '\[p1a-vdu @[0-9]+\] OSD enter \(video=1\)'
 has   "SSP screen shown"                      events 'show -> 1'
-has   "banner on the video terminal"          video  'MRZ80 SSP MONITOR'
+has   "banner on the video terminal"          video  'MrZ80 SSP MONITOR'
 has   "E listing on the video terminal"       video  '^0000: C3 00 01 03 04 05 06 07 '
 has   "keys echoed on the video terminal"     video  'E 0 8'
 has   "G gives the screen back"               events 'show -> 0'
@@ -76,7 +76,7 @@ echo "--- Part B: OSD entry, serial console, OM off"
 TAG=B
 printf 'E 0 8\r' | run B +OM=0 +OSDENTER_AT=1000000 +OSDVID=0 +RXAT=2000000 \
     +MAXCYCLES=12000000 +IDLE=3000000
-has   "banner on serial"                      serial 'MRZ80 SSP MONITOR'
+has   "banner on serial"                      serial 'MrZ80 SSP MONITOR'
 has   "E listing on serial"                   serial '^0000: C3 00 01 03 04 05 06 07 '
 hasnt "SSP screen never shown"                events 'show -> 1'
 [ -s "$WORK/B.vdu" ] && miss "video terminal got bytes" || ok "video terminal got nothing"
@@ -87,7 +87,7 @@ n=$(guest_rx); [ "${n:-0}" -eq 0 ] && ok "operator bytes kept from the Z80 (gues
 echo "--- Part C: serial escape with SSP Console = Video"
 TAG=C
 printf '\x1dE 0 8\r' | run C +OM=1 +OSDVID=1 +MAXCYCLES=12000000 +IDLE=3000000
-has   "banner on serial"                      serial 'MRZ80 SSP MONITOR'
+has   "banner on serial"                      serial 'MrZ80 SSP MONITOR'
 has   "E listing on serial"                   serial '^0000: C3 00 01 '
 hasnt "SSP screen never shown"                events 'show -> 1'
 [ -s "$WORK/C.vdu" ] && miss "video terminal got bytes" || ok "video terminal got nothing"

@@ -356,7 +356,7 @@ experience, *improved in every dimension the FPGA makes possible*.
    acknowledges. The console silently hands over to the monitor:
 
 ```
-MRZ80 SSP MONITOR  ? = HELP
+MrZ80 SSP MONITOR  ? = HELP
 .R
 PC=00E9 SP=FFFE AF=0044 BC=0000 DE=0000 HL=00C3
 IX=0000 IY=0000 AF'=0000 BC'=0000 DE'=0000 HL'=0000

@@ -108,7 +108,7 @@ sys.exit(0 if r - e >= 200 else 1)
 PYEOF
 f=$(fetches); [ "${f:-0}" -gt 0 ] && ok "guest ran during the mount ($f fetches)" || miss "guest did not run during the mount"
 romcmp "MROM == mounted image (all lanes, 0x00000..0x1FFFF)" "$WORK/imgA.bin"
-con "monitor boots from the mounted image"  'MRZ80 SSP MONITOR'
+con "monitor boots from the mounted image"  'MrZ80 SSP MONITOR'
 con "E reads guest memory"                  '^0000: C3 00 01 '
 no_err
 
@@ -118,7 +118,7 @@ TAG=B
 { printf '\x1d'; printf 'E 0 8\r'; printf '\x01'; printf '\x1d'; printf '1 2 + .\r'; } \
   | run B +ROM="$APPHEX" +OM=1 +MNT="$WORK/imgB.bytes" +MNT_LEN=$LEN_B \
       +MNT_AT=4000000 +PAUSE=5000000
-con "monitor ran before the mount"          'MRZ80 SSP MONITOR'
+con "monitor ran before the mount"          'MrZ80 SSP MONITOR'
 ev  "guest parked when the download starts" '\[p1a-mnt @[0-9]+\] start .*parked=1'
 ev  "park released by the mount"            'end .* busrq_n=1 '
 ev  "bridge reset by the mount (console back to the guest)" 'restart .*console_own=0'
@@ -126,7 +126,7 @@ ev  "guest not reset by the mount"          'end .* z_reset_n=1'
 f=$(fetches); [ "${f:-0}" -gt 0 ] && ok "guest ran during the mount ($f fetches)" || miss "guest did not run during the mount"
 romcmp "MROM == short image + zero tail (clear sweep)" "$WORK/imgB.bin"
 con "bare Mecrisp REPL after the mount"     '1 2 \+ \. 3 '
-grep -aq 'MRZ80 SSP MONITOR' <(sed -n '/1 2 + ./,$p' "$WORK/B.console") \
+grep -aq 'MrZ80 SSP MONITOR' <(sed -n '/1 2 + ./,$p' "$WORK/B.console") \
   && miss "monitor still present after the mount" || ok "monitor gone after the mount"
 no_err
 

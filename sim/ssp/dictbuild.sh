@@ -105,7 +105,7 @@ grep -av '^\[p1a\]' "$WORK/console_cold.log" | tr '\r' '\n' > "$WORK/cold_norm.l
 rc=0
 expect() { grep -aEq "$1" "$WORK/cold_norm.log" && echo "  ok: /$1/" \
            || { echo "  MISSING: /$1/"; rc=1; }; }
-expect '(MRZ80|MrZ80) SSP MONITOR'
+expect 'MrZ80 SSP MONITOR'
 expect '^0000: C3 00 01 '
 expect '^0010: '
 grep -aqi 'not found' "$WORK/cold_norm.log" && { echo "  FAIL: unknown word at cold boot"; rc=1; }
