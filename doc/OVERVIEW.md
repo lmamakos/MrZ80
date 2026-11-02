@@ -593,7 +593,8 @@ follow it.
 | CamelFORTH standalone & CP/M, custom instructions, RAM-disk blocks | Working |
 | CP/M 2.2/3.0 boot images | Working |
 | RomWBW (HBIOS + multi-boot) | **MVP** — HBIOS and the multi-boot environment come up and run; the MrZ80 HBIOS platform driver and tuning under a real workload are the remaining work |
-| AY-3-8910 PSG audio (possibly a stereo pair) | Roadmap |
+| AY-3-8910 / YM2149 PSG audio: a stereo pair, one per channel (`REQUIREMENTS.md` item 6) | Roadmap |
+| Programmable millisecond interval timer and `INT` source (`REQUIREMENTS.md` item 7) | Roadmap |
 | SSP monitor: escape/park/E/D/G/R | Proven on hardware |
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
 | SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | Working on hardware (owner, 2026-11-01 and 2026-11-02) |

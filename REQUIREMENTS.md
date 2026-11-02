@@ -617,6 +617,93 @@ Remaining:
   custom-instruction kernels, and record the baseline numbers (replaces the
   stopwatch figures in item 4) before starting item 4.1.
 
+### 6. Planned: stereo PSG audio (two YM2149 instances) — not started
+
+Noted 2026-11-02 (owner). Two YM2149/AY-3-8910 sound chips, one per stereo
+channel, so "chiptunes" player applications can use six voices with hard
+left/right placement. Roadmap entry in `doc/OVERVIEW.md` (§ "Room to grow").
+
+- **Basis:** [jotego/jt49](https://github.com/jotego/jt49) (Verilog, YM2149
+  compatible, tested against an AY-3-8910 model for periods, noise and all 16
+  envelope shapes), unless something better turns up; evaluate alternatives
+  before committing (e.g. the YM2149 modules in other MiSTer cores) on
+  accuracy, size and licence. jt49 is **GPL-3.0**; the repository's own
+  licence terms (README "License") must be reconciled before it is vendored.
+  Vendor it unchanged (as `ssp/fw/mecrisp/multitask.fs` was) and add its
+  `.qip`/files to `MrZ80.qsf` per `AGENTS.md`.
+- **Interface:** `jt49` (simple ports) or `jt49_bus` (AY-3-8910 `BDIR`/`BC1`
+  bus, includes the two 8-bit I/O ports). `clk_en` must never be held at 1
+  (at least one idle clock between enables), and the chip needs an input
+  clock of about 1-2 MHz equivalent: derive `clk_en` from the 50 MHz `clk`,
+  not from the CPU clock enable, so the pitch is independent of CPU speed.
+- **Outputs:** per-channel `A`/`B`/`C` (8-bit) and the mixed `sound` (10-bit)
+  from each instance. Left and right instances feed `AUDIO_L`/`AUDIO_R` in
+  `MrZ80.sv` (currently tied to 0; `AUDIO_S` unsigned, `CLK_AUDIO` is
+  24.576 MHz), so a clock-domain crossing, scaling to 16 bits and a DC block
+  or mix with `AUDIO_MIX` are needed. Per-channel A/B/C panning (ABC vs ACB
+  stereo, as on the ZX Spectrum 128K / Atari ST) is a design choice to make.
+- **Z80 I/O:** a port window is needed (free windows: `$D0`-`$DF`,
+  `$E0`-`$EF`, `$F0`-`$FE`; decide when starting, then record it in
+  `HARDWARE.md`). Open: one register-select/data pair per chip (the usual
+  AY style) vs. a combined window, and whether a write to a register is
+  mirrored to both chips for mono compatibility.
+- **Software:** a CamelFORTH/CP/M player (PT3/YM-style register-dump
+  player) and an OSD or build option for the stereo mix. Verification: a
+  GHDL/Verilator bench comparing register writes to expected waveform
+  samples; no audio hardware in simulation, so the final check is by ear.
+
+### 7. Planned: programmable interval timer / interrupt source — not started
+
+Noted 2026-11-02 (owner). A real-time interval timer that interrupts the Z80
+every *n* milliseconds, as the first real source for `n_INT`, which is tied
+inactive today (`MicrocomputerZ80CPM.vhd`; `n_int1`/`n_int2` from the two
+ACIAs are also unconnected). It is separate from the free-running benchmark
+timers (`$C0`-`$CF`, item 5) and from the DS12887 calendar RTC (`$70`/`$71`).
+
+Required behaviour:
+
+- **Interval register:** holds *n* milliseconds (width to decide; 16 bits
+  gives up to about 65 s). Counted from the 50 MHz `clk`, so it is
+  independent of CPU speed and not stopped by CPU waits.
+- **Control register (write):** enable interrupt (IE), start/enable the
+  counter, reset the counter, and the options below. Control bits are
+  written, not just read back.
+- **Auto-restart option:** when set, the counter reloads and runs again on
+  expiry (periodic tick); when clear it is one-shot.
+- **Status register (read):**
+  - *expired*: set when the count reaches the interval;
+  - *overflow*: set when the counter expires **again before the previous
+    expiry was acknowledged**, i.e. a missed tick.
+- **Acknowledge:** a control bit written as 1 clears the *expired* indication
+  and withdraws the interrupt request. Whether it also clears *overflow*
+  (one bit or a separate one) is to be decided; the owner wants to be able to
+  clear the indication independently of resetting the counter.
+- **Interrupt request:** `INT` is asserted while *expired* is set and IE is
+  set, and released by the acknowledge (level, not a pulse).
+
+Integration points and open questions to settle when starting:
+
+- Combine with the ACIA interrupts into one open-drain-style `n_INT`
+  (`n_INT <= n_int1 and n_int2 and n_timer`). The ACIA lines would also need
+  to be checked first: they are unconnected today and may not match RomWBW's
+  expectations.
+- The existing single-step mask `n_INT_ssp` (`ssp_int_hold`) already gates
+  this line, so a tick cannot hijack `S`; the timer must keep counting while
+  masked and show *expired*/*overflow* afterwards. Check behaviour while the
+  Z80 is parked at the SSP monitor (counter continues; request held off).
+- Interrupt mode: IM 1 needs nothing more (the Z80 takes `RST 38h`); IM 2
+  needs the timer (or a vector register) to supply a vector byte during the
+  INTA cycle (`M1` + `IORQ`), and priority with the ACIAs. RomWBW's HBIOS
+  can use a periodic tick, so match its expectations (IM 1 vs IM 2, tick
+  rate) before fixing the register layout.
+- Port window: a free window (`$D0`-`$DF`, `$E0`-`$EF` or `$F0`-`$FE`); then
+  record it in `HARDWARE.md`.
+- Reset: whether a Z80 reset clears the timer (it should not outlive the
+  program that enabled it) while the SSP monitor-only reset leaves it alone.
+- Verification: a GHDL bench for one-shot, periodic, acknowledge,
+  overflow, and the masked-`INT` case; then a short Z80 test program under
+  `testing/`, like `testing/timertest.asm`.
+
 ## Next milestone: RomWBW port
 
 Once the three items above are resolved (reliable sustained memory access,
