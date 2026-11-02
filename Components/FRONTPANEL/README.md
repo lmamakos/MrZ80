@@ -273,13 +273,22 @@ registers).
 |---|---|
 | `TOTAL_WIDTH` | bits captured |
 | `HOLD_CYCLES` | how long a captured 1 stays asserted |
-| `STRETCH_MASK` | per-bit enable: 1 = stretched, 0 = transparent |
+| `STRETCH_MASK` | per-bit enable: 1 = stretched, 0 = transparent. Same width as `TOTAL_WIDTH`; read **MSB first** like the data (the leftmost character is the mask for the top bit, the rightmost for bit 0) |
 
-A VHDL-2008 `if-generate` emits a hold counter only for bits with
-`STRETCH_MASK(i) = '1'`, so cost scales with stretched bits, not chain
-width. Stretching makes brief pulses (interrupts, strobes) visible to
-the eye. Use this entity only where stretching (or mixed blocks) are
-actually needed.
+A VHDL-2008 `if-generate` emits a hold counter only for bits with the
+mask set, so cost scales with stretched bits, not chain width.
+Stretching makes brief pulses (interrupts, strobes) visible to the eye.
+Every bit is watched on every `clk`, so a pulse one clock wide is caught;
+the hold does not depend on the panel's refresh rate. Use this entity only
+where stretching (or mixed blocks) are actually needed.
+
+The mask is written as a bit-string literal (`"00000011"`,
+`x"0000_FF00"`, `b"...1111_1111_0000_0000"`). A literal given to an
+unconstrained generic is *ascending* (`0 to N-1`), which once made the
+entity read it backwards and stretch the wrong bits; the entity now
+re-bases it to `(N-1 downto 0)`, so a literal reads the natural way and a
+`downto` constant gives the same result. `sim/run_universal_chain.sh`
+guards this.
 
 ### Example wiring
 

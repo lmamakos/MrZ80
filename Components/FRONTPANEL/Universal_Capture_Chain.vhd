@@ -40,8 +40,12 @@
 --
 -- The STRETCH_MASK generic is declared unconstrained but an
 -- elaboration-time assertion enforces that its length equals
--- TOTAL_WIDTH. Callers should supply a downto-direction literal so
--- bit 0 of the mask corresponds to bit 0 of combined_data.
+-- TOTAL_WIDTH. Its direction does not matter: the mask is copied into a
+-- (TOTAL_WIDTH-1 downto 0) constant by position, so the LEFTMOST element
+-- (the first character of a literal such as b"0000_1111_...") is the mask for
+-- combined_data's MSB and the rightmost is bit 0, however the caller declared
+-- it. (A bit-string literal given to an unconstrained generic is ascending,
+-- 0 to N-1, so indexing the generic directly would read it backwards.)
 -- =====================================================================
 
 library ieee;
@@ -70,6 +74,9 @@ entity Universal_Capture_Chain is
 end entity;
 
 architecture rtl of Universal_Capture_Chain is
+    -- STRETCH_MASK re-based to (TOTAL_WIDTH-1 downto 0), MSB first. Always
+    -- index this, never the generic, so bit i of the mask is bit i of the data.
+    constant MASK_N      : std_logic_vector(TOTAL_WIDTH-1 downto 0) := STRETCH_MASK;
     signal shift_reg     : std_logic_vector(TOTAL_WIDTH-1 downto 0);
     signal captured_bits : std_logic_vector(TOTAL_WIDTH-1 downto 0);
 
@@ -86,7 +93,7 @@ begin
 
     ---------------------------------------------------------------------
     -- Per-bit capture logic, emitted by a VHDL-2008 if-generate so that
-    -- only the bits with STRETCH_MASK(i) = '1' synthesize a counter.
+    -- only the bits with MASK_N(i) = '1' synthesize a counter.
     -- Transparent bits collapse to a single FF (or even a wire, after
     -- output-register optimization) feeding captured_bits(i).
     ---------------------------------------------------------------------
@@ -94,7 +101,7 @@ begin
 
         -- Stretched bit: per-bit hold counter and sticky high output
         -- until the counter expires.
-        gen_stretched : if STRETCH_MASK(i) = '1' generate
+        gen_stretched : if MASK_N(i) = '1' generate
             signal hold_count : integer range 0 to HOLD_CYCLES := 0;
         begin
             process(clk, reset)
@@ -122,7 +129,7 @@ begin
         -- Transparent bit: captured_bits(i) follows combined_data(i)
         -- through one register (so the timing matches the stretched
         -- path and shift_reg sees consistent data on latch).
-        gen_transparent : if STRETCH_MASK(i) = '0' generate
+        gen_transparent : if MASK_N(i) = '0' generate
         begin
             process(clk, reset)
             begin

@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu lint-ssp seam-check ssp-map p1a p1a-vcd dict-rtl smoke-p1a dl-path vdu terminal mrom-install tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core interval-timer itimer-z80 cycle-golden engine-golden fw-rom fw-rom-check
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu lint-ssp seam-check ssp-map p1a p1a-vcd dict-rtl smoke-p1a dl-path vdu terminal mrom-install tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core interval-timer itimer-z80 universal-chain cycle-golden engine-golden fw-rom fw-rom-check
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -107,6 +107,10 @@ interval-timer:
 
 itimer-z80:
 	$(ROOT)/sim/run_itimer_z80.sh
+
+# Front-panel Universal_Capture_Chain: STRETCH_MASK must pick the intended bits (GHDL, seconds)
+universal-chain:
+	$(ROOT)/sim/run_universal_chain.sh
 
 # R-42: z80_bus_mux + real T80s + engine model (GHDL)
 integ-mux:

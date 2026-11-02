@@ -53,6 +53,7 @@ architecture sim of tb_itimer_z80 is
     signal probe_bram_wren : std_logic;
     signal probe_n_int     : std_logic;
     signal chain_end       : std_logic_vector(31 downto 0);
+    signal chain_raw       : std_logic_vector(31 downto 0);
 
     signal sh_fail : std_logic_vector(7 downto 0) := x"FF";
     signal sh_got  : std_logic_vector(7 downto 0) := (others => '0');
@@ -142,6 +143,8 @@ begin
     -- Bit 15 = timer INT request, 14/13 = ACIA INT outputs, 12 = INT at the CPU,
     -- 11:8 = /WR /RD /MREQ /IORQ, 7:0 = fpLatch; 31:16 are reserved zeros.
     chain_end       <= << signal .tb_itimer_z80.dut.fpChainEnd.captured_bits : std_logic_vector(31 downto 0) >>;
+    -- ...and the raw inputs it is fed, to prove the stretched bits are HELD.
+    chain_raw       <= << signal .tb_itimer_z80.dut.fpChainEnd.combined_data : std_logic_vector(31 downto 0) >>;
 
     preload: process
         file f       : char_file_t open read_mode is BIN;
@@ -218,8 +221,21 @@ begin
     chain_watch: process(clk_sys)
         variable seen_tmr, seen_cpu, seen_wr, seen_rd, seen_mreq, seen_iorq : boolean := false;
         variable bad_acia, bad_rsvd : boolean := false;
+        -- Consecutive clocks each bit has been lit while its raw input is low:
+        -- only a hold counter can do that (a registered copy lags by one clock).
+        type cnt_t is array (15 downto 8) of natural;
+        variable held   : cnt_t := (others => 0);
+        variable stretched : std_logic_vector(15 downto 8) := (others => '0');
     begin
         if rising_edge(clk_sys) then
+            for i in 15 downto 8 loop
+                if chain_raw(i) = '0' and chain_end(i) = '1' then
+                    held(i) := held(i) + 1;
+                    if held(i) >= 100 then stretched(i) := '1'; end if;
+                else
+                    held(i) := 0;
+                end if;
+            end loop;
             if chain_end(15) = '1' then seen_tmr  := true; end if;
             if chain_end(12) = '1' then seen_cpu  := true; end if;
             if chain_end(11) = '1' then seen_wr   := true; end if;
@@ -235,6 +251,21 @@ begin
                 assert seen_rd   report "FAIL: tb_itimer_z80: capture chain 281 (/RD) never lit"       severity failure;
                 assert seen_mreq report "FAIL: tb_itimer_z80: capture chain 282 (/MREQ) never lit"     severity failure;
                 assert seen_iorq report "FAIL: tb_itimer_z80: capture chain 283 (/IORQ) never lit"     severity failure;
+                -- Bits that go idle for >= 100 clocks must be HELD through the idle
+                -- stretch: /IORQ (8), /WR (11), INT_CPU (12), INT_TMR (15).  /MREQ
+                -- (9) and /RD (10) toggle every few clocks even while the CPU waits
+                -- in HALT, so they have no idle gap long enough to show a hold;
+                -- they share the same generate branch and only need to be seen.
+                for i in 8 to 12 loop
+                    if i /= 9 and i /= 10 then
+                        assert stretched(i) = '1'
+                            report "FAIL: tb_itimer_z80: capture chain bit " & integer'image(i)
+                                 & " is not pulse-stretched" severity failure;
+                    end if;
+                end loop;
+                assert stretched(15) = '1'
+                    report "FAIL: tb_itimer_z80: capture chain bit 15 (timer INT) is not pulse-stretched"
+                    severity failure;
                 assert not bad_acia report "FAIL: tb_itimer_z80: capture chain 277/278 (ACIA INT, unwired) lit" severity failure;
                 assert not bad_rsvd report "FAIL: tb_itimer_z80: capture chain 260-275 (reserved) lit" severity failure;
             end if;
