@@ -36,6 +36,65 @@ allows the core to be used remotely).
 The original MultiComp design and much of its software are by **Grant Searle**
 — see [Grant's MULTICOMP pick-and-mix computer](http://searle.x10host.com/Multicomp/).
 
+### Earlier MiSTer port and contributors
+
+This repository descends from the MiSTer MultiComp port,
+[MiSTer-devel/MultiComp_MiSTer](https://github.com/MiSTer-devel/MultiComp_MiSTer)
+(the `upstream` remote). Besides the people named above, the git history of that
+line of work also records commits by **Mario Smit** (Nov 2020: new `sys`
+framework and configuration, serial through the UART) and **honupata** (2018:
+edits to `MicrocomputerZ80CPM.vhd` and the README).
+
+### Third-party code and sources
+
+Parts of this core and its software come from other people's projects. Each
+file keeps its original copyright and licence notice; look there for the exact
+terms before reusing it.
+
+**HDL in the FPGA design**
+
+| Component | Author / source | Where |
+|---|---|---|
+| T80 Z-80 CPU | **Daniel Wallner** (2001-2002), with fixes by **Mike Johnson**. [OpenCores T80](https://opencores.org/projects/t80). Extended here with the custom `ED` instructions, clock enable, boundary parking and the register debug vector. | `Components/Z80/` |
+| 16K paged MMU | **William R. Sowerbutts** (2013-2014), from his *socz80* Z80 FPGA computer. [sowerbutts.com/socz80](https://sowerbutts.com/socz80/). Extended with physical addressing, a direct-access window and the block-RAM page. | `Components/MMU/MMU.vhd` |
+| SDRAM controller | **Sorgelig** (2015-2019), modified by **Stan Hodge** (Oct 2021). Taken from the [MiSTer CoCo3 core](https://github.com/MiSTer-devel/CoCo3_MiSTer) (`rtl/sdram/sdram2.sv`). Parts derive from the [Hamsterworks Simple SDRAM Controller](http://hamsterworks.co.nz/mediawiki/index.php/Simple_SDRAM_Controller). | `Components/SDRAM/sdram2.sv` |
+| SPI SD-card controller | Adapted from a design by **Steven J. Merrifield** (2008); read states derived from the Apple II emulator by **Stephen Edwards**; Grant Searle's 2013 modifications; SDHC support and 25 MHz SPI clock by **Rienk Koolstra**. | `Components/SDCARD/sd_controller.vhd` |
+| ACIA UART and VGA text terminal | **Grant Searle** (2013-2014), MultiComp. Reworked here for RomWBW (6850 master reset, VT100 key sequences). | `Components/UART/`, `Components/TERMINAL/` |
+| MiST-to-MiSTer lineage of the top level | Based on Grant Searle's MultiComp and **WiSo**'s MiST port write-up: [part 1](https://ws0.org/building-your-own-custom-computer-with-the-mist-fpga-board-part-1/), [part 2](https://ws0.org/building-your-own-custom-computer-with-the-mist-fpga-board-part-2/). | `MrZ80.sv` |
+| MiSTer framework | **Alexey Melnikov (Sorgelig)** and the MiSTer-devel contributors, including **Till Harbaum**, **Ludvig Strigeus** (hq2x), **Kitrinx** (mt32pi), **Grabulosaure** (video_freak) and **bellwood420** (f2sdram terminator). [Main_MiSTer](https://github.com/MiSTer-devel/Main_MiSTer), [Template_MiSTer](https://github.com/MiSTer-devel/Template_MiSTer). Maintained externally and never modified here. | `sys/` |
+| Intel/Altera generated IP | PLL and block-RAM/ROM wrappers produced by Quartus MegaWizard under Intel's licence. | `rtl/`, `Components/INTERNALRAM/`, `Components/TERMINAL/` |
+
+**System Support Processor cores** (vendored verbatim; hashes and pinned
+revisions are in `Components/RISCV/PROVENANCE.md`)
+
+| Component | Author / source | Licence |
+|---|---|---|
+| FemtoRV32 "gracilis" (the SSP CPU) | **Bruno Levy**, [BrunoLevy/learn-fpga](https://github.com/BrunoLevy/learn-fpga) | BSD-3-Clause (`LICENSE.learn-fpga`) |
+| PicoRV32 (kept as a fallback core) | **Claire Xenia Wolf (Clifford Wolf)**, [YosysHQ/picorv32](https://github.com/YosysHQ/picorv32) | ISC (file header) |
+
+**Software and firmware**
+
+| Component | Author / source | Where |
+|---|---|---|
+| CamelFORTH for the Z80 | **Bradford J. Rodriguez**, GPLv3. [camelforth.com](http://www.camelforth.com/), [papers](http://www.bradrodriguez.com/papers/). Extended here (`DEFER`/`IS`, `CASE`/`OF`/`?OF`, `THRU`, `QUIT` recovery, custom `NEXT`). | `forth/` |
+| Mecrisp-Quintus Forth (the SSP monitor's Forth) | **Matthias Koch**, GPLv3. [mecrisp.sourceforge.net](https://mecrisp.sourceforge.net/). This repository holds a target port, and `multitask.fs` is vendored unchanged; the common core is referenced in place (Mecrisp-Quintus 1.1.2a). | `ssp/fw/` |
+| Grant Searle's BASIC/monitor and CP/M BIOS | **Grant Searle**, [MultiComp](http://searle.x10host.com/Multicomp/). | `ROMS/`, `Z80 CPM and bootloader (basmon)/` |
+| NASCOM ROM BASIC 4.7 | (C) 1978 **Microsoft**; the listing was scanned from 80-BUS NEWS (1983-84) and adapted by "PA". | `ROMS/Z80/basic.asm` |
+| CP/M 2.2 | **Digital Research**, including the published blocking/unblocking routines used by the BIOS. | `Z80 CPM and bootloader (basmon)/source/` |
+
+**Target software and tools**
+
+* **Wayne Warthen**, [RomWBW](https://github.com/wwarthen/RomWBW): the system
+  software this core exists to host. The MrZ80 platform support lives in the
+  RomWBW tree, not here.
+* **Aaron Wohl**, [um80_and_friends](https://github.com/avwohl/um80_and_friends):
+  the `um80`/`ul80` assembler and linker used for the Forth build (see
+  Building / toolchain).
+
+**Hardware references** (datasheets kept in `Hardware/Datasheets/`): the QMTech
+Cyclone V SoC dual-SDRAM board schematic, the SK6812MINI-E LED datasheet and the
+74HCT125/165 datasheets.
+
 ## What's in the core
 
 A single **T80 Z-80** CPU (the 6502 and 6809 from the original MultiComp have
