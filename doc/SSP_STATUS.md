@@ -45,7 +45,7 @@ Planning documents are not kept outside `doc/`.
 | R42 `S` shows the next instruction | **Done**, owner-checked on hardware (2026-11-02). A deferred hook keeps `S` independent of the disassembler (§17 R42) |
 | R43 MROM 128 KiB + OSD ROM mount | **Done**, owner-checked on hardware (2026-11-01): OSD mount, Reset SSP, words compiled with `compiletoflash` survive the reset. Simulation: `dl-path`, 5 mutants killed; full suite green; Quartus build reviewed (§17 R43) |
 | R44 video console + OSD entry; terminal + ACIA work for RomWBW | **Done**, owner-checked on hardware (2026-11-02). Simulation: `vdu`, `terminal` (14 mutants killed); Quartus build reviewed (§17 R44) |
-| R45 monitor colours; LF-scroll fix; build tooling | **Done in simulation** (`smoke-p1a`, `vdu`, `terminal`): operator input bright green, monitor output bright blue (`col-*` in `monitor.fs`); terminal LF at the bottom row now blanks the whole new line; `make -C ssp/fw` builds the image and factory ROM. Hardware check pending (§1.2) |
+| R45 monitor colours; LF-scroll fix; build tooling | LF-scroll fix **done, on hardware** (part of the owner's R44 test, 2026-11-02). Monitor colours **done in simulation** (`smoke-p1a`, `vdu`, `terminal`): operator input bright green, monitor output bright blue (`col-*` in `monitor.fs`); hardware check pending. `make -C ssp/fw` builds the image and factory ROM |
 
 ### 1.2 What is on hardware
 
@@ -58,10 +58,11 @@ hardware (2026-11-01). R43 is **owner-checked on hardware** (2026-11-01): the
 OSD **SSP Monitor ROM** mount works, **Reset SSP** works, and words compiled
 into the ROM with `compiletoflash` survive the reset.
 **R44 and R42 are owner-checked on hardware (2026-11-02):** the video console
-and OSD entry, the Z80 terminal's keyboard, RomWBW with two consoles, and the
-mnemonic on each `S` line. **Pending (R45):** the monitor colours (input bright
-green, output bright blue, terminal restored before `G`/`F`) on both consoles,
-and the terminal's LF-scroll fix, both of which need a rebuilt bitstream/ROM.
+and OSD entry, the Z80 terminal's keyboard (with the LF-scroll fix applied),
+RomWBW with two consoles, and the mnemonic on each `S` line. **Pending (R45):**
+the monitor colours (input bright green, output bright blue, terminal restored
+before `G`/`F`) on both consoles: a mount of `build/mrz80-ssp.mrz` is enough, no
+bitstream rebuild.
 The key-break path of a long `U` is still not in the smoke. Not exercisable on
 hardware yet: real INT sources (none exist; the step-time INT mask is proven in
 simulation only). R44 Quartus build (reviewed): 14,191 ALMs (34 %), 345/553
@@ -241,6 +242,67 @@ Owner priorities from P1a first light (R35), with status:
 - Remaining P1b scope (`SSP_DESIGN.md` §15): `PR`/mailbox, reset stretcher,
   watchdog completion (§5), ODT skin, `MPKG` (deferred, §5).
 - Bridge board design (OQ-09) runs in parallel.
+
+### 4.1 Deferred and unscheduled (owner decisions, 2026-11-02)
+
+| Item | Decision | Revisit when |
+|---|---|---|
+| **Watchdog completion** (`WDG_PARK` release/demote, D-13/R-24) | **Deferred, and the solution changes shape:** a Forth multitasker with a dedicated watchdog task that judges liveness (§4.2), instead of kicking from the key-wait loop. Until then `WDG_PARK` only latches; recovery is OSD **Reset SSP**. Background and the old options A/B/C: `SSP_DESIGN.md` §17 R45 | after the multitasker has been exercised (§4.2) |
+| **`MPKG`** (OSD index 7 source packs, R-29 "MPKG auto-eval", P2 "MPKG auto-eval polish") | **Deferred pending need:** no driver for it today; image mounts and on-board `compiletoflash` cover current use. Index 7 stays reserved; the R-29 MPKG item and the P2 polish item are off the exit criteria | someone needs to extend the monitor without the toolchain |
+| **T-state / machine-cycle stepping** and T80 MC/TS/ALT export completion | **Shelved**, unscheduled | no trigger; `S` stays instruction-granular |
+
+### 4.2 Next: Forth multitasker (first step: integrate Mecrisp's own)
+
+Mecrisp-Quintus ships a cooperative multitasker, `common/multitask.txt` (120
+lines of Forth; `multitask-debug.txt` adds a `tasks` listing and needs
+`dictionary-tools.txt`). Round-robin list of tasks; `task:`, `activate`,
+`background`, `stop`, `wake`, `idle`, `insert`, `remove`, `catch`/`throw`,
+`multitask`/`singletask`; a task switch happens only in `pause`, which runs the
+`hook-pause` vector (`nop` by default). Probed on the qemu kernel (2026-11-02, no
+repo change): it compiles clean in both RAM and `compiletoflash` mode with no
+kernel change (all primitives it uses exist), and a counter task ran once per
+`pause` from the main task.
+
+To integrate and test, in this order:
+1. Get the module into the build: it lives in the Mecrisp tree (referenced in place,
+   not vendored), so `ssp_appsrc.py` needs an include form for `$MECRISP/common/...`
+   (today `\ @include` takes repo-relative paths only) and `ssp/fw/Makefile` the same
+   dependency.
+2. Make the kernel call `pause` where it waits: `serial_key` in `ssp/fw/terminal.s`
+   is a busy poll (and the `WDG_PARK_KICK` loop) and `serial_emit` waits on
+   `tx_ready`; with `pause` in those loops other tasks run while the monitor sits
+   at the prompt. Measure the cost per poll.
+3. Test with a heartbeat task and a watchdog task on the qemu lane, then on the
+   p1a lane (the real bridge registers), then on hardware.
+4. Only then design the watchdog task: what it samples (each task's progress
+   counter, bridge `STATUS`, the monitor's command loop), what it kicks
+   (`WDG_RUN_KICK`/`WDG_PARK_KICK`), and what happens when the check fails.
+
+Design points to carry into it: a **cooperative** scheduler cannot run the watchdog
+task while the task being watched is stuck in a loop without `pause`, so the
+hardware timeout (`WDG_PARK_T`) remains the backstop and the task's value is that it
+kicks only on evidence of correct operation (all tasks checked in), not merely
+because the key-wait loop is reached. A **preemptive** variant needs a timer
+interrupt, and the firmware is polled (D-27); Mecrisp has a preemptive example
+(`gd32vf103cb/multitasking-essentials`) and a FemtoRV interrupt file. Treat
+preemption as a later question. Per-task stacks are 128 cells each by default
+(`stackspace`) in RV RAM (64 KiB).
+
+### 4.3 Breakpoints: status
+
+**Nothing is built beyond register slots** (the plan puts breakpoints in P2,
+`SSP_DESIGN.md` §8, D-25, R-41). Present: `BP0..BP3` (EN + 16-bit address),
+`BP_SKIP`, IRQ bits and `HALT_REASON=2` in the register map, all inert; the
+reset-vector trampoline (`ssp_tramp.vhd`) is the existing data-mux injection
+mechanism that would be generalised. Not present: any address compare, the
+`JR $` injection (`18 FE`) at a matching M1, the resume-skip logic, monitor
+commands, tests. Open items: OQ-05 (BP inside the `$0000..$0002` trampoline
+window), OQ-23 (BP on a prefix byte, interrupt accepted at the injected `JR`,
+`BP_SKIP` resume; fallback is stop-after with a corrected PC), the panel BP-clear
+gesture (OQ-18, P2 panel), step-over and conditional breakpoints (P3). A design
+question not yet written down: the slots hold 16-bit *logical* addresses, so under
+banked RomWBW a breakpoint also matches the same logical address in another bank.
+
 - P2 and later: see `SSP_DESIGN.md` §15 (panel engine, breakpoints and
   step-over, `ssp_sd` background reads, …).
 
@@ -250,8 +312,8 @@ Owner priorities from P1a first light (R35), with status:
 
 | # | Question | Blocks |
 |---|---|---|
-| — | WDG_PARK expiry semantics: should expiry also demote the console and release the firmware hold (D-13), or only latch `park_dead_l` as now? Background and options: `SSP_DESIGN.md` §17 R45 | P1b (watchdog completion) |
-| — | `MPKG` (OSD index 7, Forth source packs): build it, or retire it now that on-board `compiletoflash` and image mounts exist? Background: `SSP_DESIGN.md` §17 R45 | P1b scope |
+| — | **Deferred (2026-11-02):** `WDG_PARK` expiry semantics. Reshaped around a Forth multitasker with a watchdog task (§4.1, §4.2) | the multitasker work |
+| — | **Deferred (2026-11-02):** `MPKG`. Pending need (§4.1) | a user who needs it |
 | OQ-24 | Physical-access command surface: modal `PHY`/`LOG` (current default) vs explicit physical verbs | M3 FW surface (no RTL impact) |
 | — | `U` UX (R41): default count $10 and a pointer shared with `E`/`D` (a bare `U` continues after the last `E`/`D`/`U`) -- keep, or give `U` its own pointer? | nothing (FW only) |
 | OQ-10 | Exact "Reset System" scope | P1b |

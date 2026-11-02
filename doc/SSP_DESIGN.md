@@ -2831,3 +2831,22 @@ setup depend on the OSD. Lean: (A), since the release lands on an instruction
 boundary and costs nothing the human did not already lose by hanging the monitor,
 with the kicks added first and a hardware test of a deliberate hang (`F`, then
 `begin again`).
+
+*R45 addendum (same day, owner rulings).* The LF-scroll fix was part of the build
+the owner tested on hardware (R44 passed with it). **`WDG_PARK` completion is
+deferred and its solution reshaped:** instead of completing the bridge-side release
+(options A/B/C above), the monitor firmware will run a Forth multitasker with a
+dedicated watchdog task, which can sample whether the monitor is really working
+(task progress, bridge status) rather than whether the key-wait loop was reached.
+The first step is to integrate the multitasker from the Mecrisp-Quintus
+distribution (`common/multitask.txt`, cooperative round-robin, switching in `pause`
+through `hook-pause`) and test with it; the watchdog task is designed afterwards.
+Until then `WDG_PARK` only latches `park_dead_l` and **Reset SSP** is the recovery.
+R-24's release/demote half is therefore not part of the current exit criteria. A
+cooperative scheduler cannot run the watchdog task while the watched task is stuck
+in a loop that never calls `pause`; the hardware timeout stays as the backstop (a
+preemptive scheduler would need the timer interrupt, which the polled firmware, D-27,
+does not use). **`MPKG` is deferred pending need** (no driver for it today); OSD
+index 7 stays reserved, and R-29's "MPKG auto-eval" and P2's "MPKG auto-eval polish"
+leave the exit criteria. Tracked in `doc/SSP_STATUS.md` §4.1-§4.3.
+

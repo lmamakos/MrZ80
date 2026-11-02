@@ -550,8 +550,8 @@ bridge and the kernel runs whatever dictionary is in the ROM.
   holds of the Z80 are capped at ~4 ms by a hardware watchdog. A *parked* Z80
   waiting at a hung monitor prompt is not yet released automatically: the way
   out is the OSD's **Reset SSP**, which restarts the monitor and leaves the Z80
-  and its memory untouched. (Making the park watchdog release it too is an open
-  design decision.)
+  and its memory untouched. (Replacing this with a watchdog task inside the
+  monitor's own Forth, once it can multitask, is the planned direction.)
 * **Transparency by default.** Without the OSD's **SSP Serial Escape**
   (`OM`), no byte value on the wire has special meaning — WordStar `^K`
   sequences and binary uploads are safe. Only an enabled, single configurable
