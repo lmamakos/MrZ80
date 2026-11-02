@@ -2890,3 +2890,9 @@ task and a task writing `WDG_PARK_KICK`, 100 laps = 100 beats, tasks run during 
 `smoke-p1a`, `vdu`, `dl-path` lanes. **Not done:** `multitask-debug.txt`, a `tasks`
 monitor command, `pause` in the monitor's long loops, and any hardware check.
 
+R46 addendum: owner-checked on hardware (2026-11-02). The monitor colours work as
+specified. At the `F` prompt `task:` and `multitask` echo normally, and a background
+task toggling Z80 port `FF` every 500 ms (`delay-ms` on `SSP_TICK_US`, then `m-io!`;
+the engine needs the Z80 parked) runs with terminal output staying smooth. On the model
+the toggles were 500.015 ms apart. Not made a smoke test (owner).
+

@@ -45,8 +45,8 @@ Planning documents are not kept outside `doc/`.
 | R42 `S` shows the next instruction | **Done**, owner-checked on hardware (2026-11-02). A deferred hook keeps `S` independent of the disassembler (§17 R42) |
 | R43 MROM 128 KiB + OSD ROM mount | **Done**, owner-checked on hardware (2026-11-01): OSD mount, Reset SSP, words compiled with `compiletoflash` survive the reset. Simulation: `dl-path`, 5 mutants killed; full suite green; Quartus build reviewed (§17 R43) |
 | R44 video console + OSD entry; terminal + ACIA work for RomWBW | **Done**, owner-checked on hardware (2026-11-02). Simulation: `vdu`, `terminal` (14 mutants killed); Quartus build reviewed (§17 R44) |
-| R46 cooperative multitasker (vendored Mecrisp `multitask.txt`) | **Done in simulation** (`smoke-p1a` Part I; qemu): kernel waits call `pause`; `up`/`boot-task` survive a cold boot. Hardware check pending; the watchdog task is next (§4.2) |
-| R45 monitor colours; LF-scroll fix; build tooling | LF-scroll fix **done, on hardware** (part of the owner's R44 test, 2026-11-02). Monitor colours **done in simulation** (`smoke-p1a`, `vdu`, `terminal`): operator input bright green, monitor output bright blue (`col-*` in `monitor.fs`); hardware check pending. `make -C ssp/fw` builds the image and factory ROM |
+| R46 cooperative multitasker (vendored Mecrisp `multitask.txt`) | **Done**, owner-checked on hardware (2026-11-02): `F`, `task:`, `multitask` echo fine, and a 500 ms port-`FF` blink task leaves terminal output smooth. Simulation: `smoke-p1a` Part I; qemu. The watchdog task is next (§4.2) |
+| R45 monitor colours; LF-scroll fix; build tooling | LF-scroll fix **done, on hardware** (part of the owner's R44 test, 2026-11-02). Monitor colours **done**, owner-checked on hardware (2026-11-02): operator input bright green, monitor output bright blue (`col-*` in `monitor.fs`). `make -C ssp/fw` builds the image and factory ROM |
 
 ### 1.2 What is on hardware
 
@@ -60,12 +60,11 @@ OSD **SSP Monitor ROM** mount works, **Reset SSP** works, and words compiled
 into the ROM with `compiletoflash` survive the reset.
 **R44 and R42 are owner-checked on hardware (2026-11-02):** the video console
 and OSD entry, the Z80 terminal's keyboard (with the LF-scroll fix applied),
-RomWBW with two consoles, and the mnemonic on each `S` line. **Pending (R45):**
-the monitor colours (input bright green, output bright blue, terminal restored
-before `G`/`F`) on both consoles: a mount of `build/mrz80-ssp.mrz` is enough, no
-bitstream rebuild. **Pending (R46):** the multitasker on the board: `F`, then
-the Part I lines (`task:`, `multitask`, a heartbeat task, `lap`); a keyboard that
-still echoes cleanly with a task running.
+RomWBW with two consoles, and the mnemonic on each `S` line. R45 monitor colours and R46 multitasker are
+owner-checked too (2026-11-02, mount of `build/mrz80-ssp.mrz`, no bitstream
+rebuild): colours as specified; `task:`/`multitask` at the `F` prompt, and a
+background task toggling Z80 port `FF` every 500 ms (via `m-io!`, Z80 parked) with
+terminal output unaffected.
 The key-break path of a long `U` is still not in the smoke. Not exercisable on
 hardware yet: real INT sources (none exist; the step-time INT mask is proven in
 simulation only). R44 Quartus build (reviewed): 14,191 ALMs (34 %), 345/553
@@ -284,7 +283,8 @@ starts single-task; nothing changes until someone runs `multitask`.
 - **Not done:** `multitask-debug.txt`'s `tasks` listing (needs `dictionary-tools.txt`);
   no monitor command knows about tasks; the monitor's own long loops (`S` trace, long
   `E`/`U` listings, the engine waits) do not call `pause`, so tasks stall during them.
-  Hardware check pending (mount `build/mrz80-ssp.mrz`, `F`, run the Part I lines).
+  A blink task (500 ms `delay-ms` on `SSP_TICK_US`, `m-io!` to port `FF`) measured
+  500.015 ms per toggle on the model and worked on hardware; it needs the Z80 parked.
 
 **Next: design the watchdog task.** What it samples (each task's progress counter,
 bridge `STATUS`, the monitor's command loop), what it kicks (`WDG_RUN_KICK` /
