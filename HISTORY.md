@@ -3446,3 +3446,44 @@ hardware. `example_profiles.yaml` (new) describes the development panel; `profil
 from it; `profiles.toml`/`example_profiles.toml` deleted. `test_fpprofile.py` rewritten: 57 tests
 covering range/subset semantics, spans, overlaps, blanks, colour precedence, the boolean-key trap, TOML
 sniffing, encode/decode and the CLI, all passing; `sim/run_frontpanel.sh` unchanged and passing.
+
+### Interrupt lamps on the capture chain, and `Universal_Capture_Chain` read its mask backwards
+
+**Interrupt lamps.** `fpChainEnd` gained four stretched bits at chain 276-279, ahead of the
+bus strobes: `INT_TMR` (`not n_int_itimer`), `INT_IO1` / `INT_IO2` (the two ACIA `n_int`
+outputs, still unconnected to the CPU) and `INT_CPU` (`not n_INT_ssp`, `INT` after the SSP
+single-step mask). Reserved filler shrank to 260-275. `SIGNAL-CAPTURES.md`, the front-panel
+README, `profile.yaml` / `example_profiles.yaml` (new `INT_TMR` ... `INTS` symbols, placed at
+row 6 columns 12-15) and both `.fpp` files were updated. The first version of the new
+`combined_data` left `n_WR` un-inverted (the other three strobes had `not`), which would have
+lit the `/WR` lamp permanently at idle; fixed before it reached hardware.
+
+**The bug.** On hardware the timer lamp never showed while the CPU ran, although the pending
+interrupt showed when the CPU was parked in the SSP monitor. The hold counters were not
+holding. `STRETCH_MASK` is a bit-string literal given to an *unconstrained* generic, and such a
+literal is ascending (`0 to N-1`, checked in GHDL: `M'left=0`, `M(8)='0'`, `M(20)='1'`). The
+entity indexed the generic directly, `STRETCH_MASK(i)`, so the mask was mirrored: the intended
+bits 8-15 stayed transparent and bits 16-23 (the reserved zeros) were "stretched". A transparent
+bit is only sampled at the 62.5 Hz refresh, so a ~20 us timer pulse every 20 ms was almost never
+seen; a parked CPU leaves the request asserted as a level, which is why that did show. The
+original `x"0000_0F00"` mask and the README example `"00000011"` had the same flaw, so the bus
+strobes had never been stretched either. The stretcher itself was never the problem: it watches
+every bit on every `clk`, independent of the refresh rate.
+
+**The fix.** `Universal_Capture_Chain` copies the generic into a `(TOTAL_WIDTH-1 downto 0)`
+constant (`MASK_N`) by position and indexes only that, so the leftmost character of a literal is
+the mask for the top bit however the caller declared it. `MicrocomputerZ80CPM.vhd` needed no
+change. Quartus analysis and synthesis pass and build hold counters for exactly bits 8-15 of
+`fpChainEnd`.
+
+**Why it was missed.** The first capture-chain check in `sim/tb_itimer_z80.vhd` only asked
+whether each bit was ever lit, which a transparent bit satisfies. It now requires the stretched
+bits to stay lit while their raw input is low (`/IORQ`, `/WR`, `INT_CPU`, `INT_TMR`; `/MREQ` and
+`/RD` toggle every few clocks even in HALT, so they are only required to light) and fails on the
+old entity. New `sim/tb_universal_chain.vhd` (`sim/run_universal_chain.sh`, `make -C sim
+universal-chain`, 81 checks) covers an ascending literal, a `downto` constant and the README
+8-bit example, hold expiry, and that unmasked bits (including the old mirror-image indices) are
+not stretched; it fails on the old entity.
+
+Expect the timer lamps to look steadily on while RomWBW runs: its 50 Hz tick (20 ms) is shorter
+than the ~50 ms hold. Needs a full FPGA compile and reload to see on hardware.
