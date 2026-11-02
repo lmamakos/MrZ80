@@ -1,6 +1,6 @@
 # SSP_STATUS — state, plans and hand-off for the System Support Processor
 
-Updated: **2026-11-01** · Branch `r24-p1b`, merged into `main` locally (not
+Updated: **2026-11-02** · Branch `r24-p1b`, merged into `main` locally (not
 pushed) after R43: R39–R40, R41 (monitor `U`, shared Z-80 disassembler), R42
 (`S` shows the next instruction) and R43 (128 KiB MROM + OSD ROM mount); R44 (SSP
 video console, OSD entry, RomWBW second console) committed locally · Phase **P1b**; M4 (single-step) and M3 (physical
@@ -42,9 +42,10 @@ Planning documents are not kept outside `doc/`.
 | P1b M4 single-step (R39) | **Done**, owner-checked on hardware (details: `SSP_DESIGN.md` §17 R39) |
 | P1b M3 physical memory client (R40) | **Done**, owner-checked on hardware (details: `SSP_DESIGN.md` §9.2 "as landed", §17 R40) |
 | R41 monitor `U` (unassemble) | **Done**, owner-checked on hardware (2026-11-01). Shared source with CamelFORTH: `forth/disasm/` (§17 R41) |
-| R42 `S` shows the next instruction | **Done in simulation** (smoke Part F); hardware check pending. A deferred hook keeps `S` independent of the disassembler (§17 R42) |
+| R42 `S` shows the next instruction | **Done**, owner-checked on hardware (2026-11-02). A deferred hook keeps `S` independent of the disassembler (§17 R42) |
 | R43 MROM 128 KiB + OSD ROM mount | **Done**, owner-checked on hardware (2026-11-01): OSD mount, Reset SSP, words compiled with `compiletoflash` survive the reset. Simulation: `dl-path`, 5 mutants killed; full suite green; Quartus build reviewed (§17 R43) |
-| R44 video console + OSD entry; terminal + ACIA work for RomWBW | **Done in simulation** (`vdu`, `terminal`; 14 mutants killed; full suite green); Quartus build reviewed (§17 R44). Hardware check pending (§1.2) |
+| R44 video console + OSD entry; terminal + ACIA work for RomWBW | **Done**, owner-checked on hardware (2026-11-02). Simulation: `vdu`, `terminal` (14 mutants killed); Quartus build reviewed (§17 R44) |
+| R45 monitor colours; LF-scroll fix; build tooling | **Done in simulation** (`smoke-p1a`, `vdu`, `terminal`): operator input bright green, monitor output bright blue (`col-*` in `monitor.fs`); terminal LF at the bottom row now blanks the whole new line; `make -C ssp/fw` builds the image and factory ROM. Hardware check pending (§1.2) |
 
 ### 1.2 What is on hardware
 
@@ -56,16 +57,12 @@ monitor on the 128 KiB map, window `0x5000..0x20000`). The owner confirmed `U` o
 hardware (2026-11-01). R43 is **owner-checked on hardware** (2026-11-01): the
 OSD **SSP Monitor ROM** mount works, **Reset SSP** works, and words compiled
 into the ROM with `compiletoflash` survive the reset.
-**Owner check pending for R44:** (1) OSD **SSP Console** = Video, **Enter SSP
-Monitor**: the green monitor screen replaces the Z80's, the keyboard works,
-`G` brings the Z80's screen back unchanged; with Serial, the monitor works on
-the serial port with **SSP Serial Escape** off. (2) The keyboard on the Z80's
-terminal: Esc, arrows, F-keys (e.g. in a VT100 editor under RomWBW).
-(3) RomWBW `~/RomWBW/Binary/MRZ80_std.rom`: the boot log lists `ACIA0`
-(IO=0x82) and `ACIA1` (IO=0x80), and pressing a key on the video keyboard at
-the loader prompt moves the console there.
-**Owner check pending for R42:** the mnemonic on each `S` line on hardware; the
-key-break path of a long `U` is still not in the smoke. Not exercisable on
+**R44 and R42 are owner-checked on hardware (2026-11-02):** the video console
+and OSD entry, the Z80 terminal's keyboard, RomWBW with two consoles, and the
+mnemonic on each `S` line. **Pending (R45):** the monitor colours (input bright
+green, output bright blue, terminal restored before `G`/`F`) on both consoles,
+and the terminal's LF-scroll fix, both of which need a rebuilt bitstream/ROM.
+The key-break path of a long `U` is still not in the smoke. Not exercisable on
 hardware yet: real INT sources (none exist; the step-time INT mask is proven in
 simulation only). R44 Quartus build (reviewed): 14,191 ALMs (34 %), 345/553
 M10K (62 %), 49 % of block-RAM bits; no negative slack; clk_sys setup slack
@@ -233,11 +230,16 @@ Owner priorities from P1a first light (R35), with status:
   **done**, owner-checked on hardware (R41); `S` shows the next instruction (R42).
 - **(e)** MROM 128 KiB + OSD ROM mount with monitor-only reset → **done**,
   owner-checked on hardware (R43). `MPKG` deferred.
-- **(f)** SSP console on video + keyboard, OSD entry (D-19) → **done in
-  simulation** (R44); hardware check pending (§1.2).
-- Remaining P1b scope (`SSP_DESIGN.md` §15): `PR`/mailbox, reset stretcher, T80s MC/TS/ALT export
-  completion (needed for MCYCLE/TSTATE stepping via `freeze_any`), ODT skin,
-  real ANSI SGR colours (the `col-*` stubs in `monitor.fs`).
+- **(f)** SSP console on video + keyboard, OSD entry (D-19) → **done**,
+  owner-checked on hardware (R44).
+- **(g)** Monitor colours → **done in simulation** (R45): operator input bright
+  green (`ESC[1;32m`), everything the monitor prints bright blue (`ESC[1;34m`),
+  `ESC[0m` before the console is handed back.
+- **Shelved (owner, 2026-11-02): T-state / machine-cycle stepping** and the T80
+  MC/TS/ALT export completion it needs (`freeze_any`). Deferred to an
+  unscheduled later time; `S` stays instruction-granular.
+- Remaining P1b scope (`SSP_DESIGN.md` §15): `PR`/mailbox, reset stretcher,
+  watchdog completion (§5), ODT skin, `MPKG` (deferred, §5).
 - Bridge board design (OQ-09) runs in parallel.
 - P2 and later: see `SSP_DESIGN.md` §15 (panel engine, breakpoints and
   step-over, `ssp_sd` background reads, …).
@@ -248,7 +250,8 @@ Owner priorities from P1a first light (R35), with status:
 
 | # | Question | Blocks |
 |---|---|---|
-| — | WDG_PARK expiry semantics: should expiry also demote the console and release the firmware hold (D-13), or only latch `park_dead_l` as now? | P1b (watchdog completion) |
+| — | WDG_PARK expiry semantics: should expiry also demote the console and release the firmware hold (D-13), or only latch `park_dead_l` as now? Background and options: `SSP_DESIGN.md` §17 R45 | P1b (watchdog completion) |
+| — | `MPKG` (OSD index 7, Forth source packs): build it, or retire it now that on-board `compiletoflash` and image mounts exist? Background: `SSP_DESIGN.md` §17 R45 | P1b scope |
 | OQ-24 | Physical-access command surface: modal `PHY`/`LOG` (current default) vs explicit physical verbs | M3 FW surface (no RTL impact) |
 | — | `U` UX (R41): default count $10 and a pointer shared with `E`/`D` (a bare `U` continues after the last `E`/`D`/`U`) -- keep, or give `U` its own pointer? | nothing (FW only) |
 | OQ-10 | Exact "Reset System" scope | P1b |

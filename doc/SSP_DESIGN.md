@@ -2756,3 +2756,78 @@ history. The Verilator model and its lanes (`make p1a`, `smoke-p1a`, `tramp-p1a`
 (qemu compile check + the dictionary build, writes `ssp/fw/build/mrz80-ssp.mrz`
 for the OSD mount); its input preparation moved to `tools/ssp_appsrc.py`, shared
 with `dictbuild.sh`. Documented in `doc/OVERVIEW.md` §6.
+
+R45 **Owner review, monitor colours, tooling (2026-11-02).** R42 and R44 passed on
+hardware. **Decisions:** (i) monitor colours: what the operator types is bright
+green (`ESC[1;32m`), everything the monitor prints (banner, prompt, responses) is
+bright blue (`ESC[1;34m`); `col-input` is applied inside `m-line-in` so `D`'s value
+prompts are green too; `col-reset` (`ESC[0m`) is sent before the console is handed
+back (`G`, before the drain) and before the `F` message, never after the hand-over.
+The old `col-prompt` stub is gone (the prompt is monitor output). (ii) T-state /
+machine-cycle stepping and the T80 MC/TS/ALT export it needs are **shelved**, no
+schedule. (iii) `MPKG` and the `WDG_PARK` completion are still open; background
+below. **Built:** the colours in `monitor.fs`; terminal fix (LF on the bottom row
+blanked the new line only from the cursor column: Mecrisp's `cr` is LF then CR,
+so the old top line's first columns showed); `tools/ssp_image.py` and
+`ssp/fw/Makefile` (`image`, `rom`, `check`, `install`); `p1a_dictbuild.sh` ->
+`dictbuild.sh`, `dict-p1a` -> `dict-rtl`, `mecrisp-ssp-p1a-app.*` ->
+`mecrisp-ssp-app.*`. **Verification:** `smoke-p1a` (colour checks on the raw stream,
+console checks on the SGR-stripped stream; the F4 sovereignty test now finds the
+second step's kick in a probe run instead of a hard-coded RV-reset cycle, which the
+longer prompt had moved), `vdu`, `dl-path`, `terminal` (new section H: SGR 1;34 /
+1;32 / 0 reach the attribute register) green.
+
+*`MPKG` background.* D-21 (R1) made "code is data" the lifecycle: an OSD-loaded ROM
+image (index 6) and an OSD-loaded FORTH source pack (index 7), text staged in a
+reserved RV RAM region (trailer `'FPAK'`, length, name) and `EVAL`'d by a boot scan;
+the same "eval a buffer" primitive was to back serial paste/XModem (P2). Source
+rather than a binary dictionary because Mecrisp dictionary links are absolute
+(the release-hex rule): a binary dictionary is only valid against the exact kernel
+bytes, text survives kernel rebuilds and stays human-editable (R18: packs are
+source-only, binary dictionaries are the build system's product). D-32 then made
+packs the persistence story for a RAM-only dictionary. R43 changed the premise:
+on-board `compiletoflash` works (words survive **Reset SSP**), and an image mount
+carries a whole new dictionary at hardware addresses with no per-boot compile, so
+MPKG was deferred and index 7 left reserved. What MPKG would still add is
+*operator extension without a toolchain*: drop a text file on the SD card and pick
+it. Costs: the OSD index 7 download path into RV RAM (a clone of the R43 mount
+path: ioctl routing, RV-held-in-reset, a RAM staging region the RV can read), a boot
+scan and `evaluate` loop in firmware, a failure mode where a bad pack breaks every
+boot, and the packs' words living in the RAM dictionary (lost at each monitor reset,
+so re-`EVAL`ed every time at ~170k cycles per line). Today's loop for a
+user-visible change is `make -C ssp/fw` (about 3.5 minutes, needs the RISC-V
+binutils, Verilator and qemu) then a mount. Options: (a) keep deferred, reserved
+(no cost; remove MPKG from the P1b/R-29 exit criteria and from P2 "MPKG auto-eval
+polish"); (b) retire it (delete D-21's pack half and the index-7 reservation); (c)
+build it. Lean: (a), revisit if someone without the toolchain needs to extend the
+monitor; the open item is whether R-29's "MPKG auto-eval" stays an exit criterion.
+
+*`WDG_PARK` background.* D-13: two tiers. `WDG_RUN` guards transient holds (WAIT
+asserts, sequencer busy) and auto-releases at ~1.3 ms in the RTL (design band
+~4 ms); its expiry drops `rv_ctrl_ok`, which releases the Z80, ends the console
+hand-over and ends any step, so that tier is complete and exercised. `WDG_PARK`
+guards a park that only the firmware is holding (`CTRL.bit1`, no hardware stop
+latch): by D-13/§6.9 expiry should demote the console (`console_own<-0`), drop
+`panel_lock`, reset the lamp page, release the Z80 (`z_busreq_n<-1`), latch
+`park_deadL`, flag a lamp and raise IRQ; hardware STOP/BP parks never arm it. As
+built (found R30, left for an owner ruling) expiry only latches `park_dead_l`
+(`STATUS.WDG_DEAD`) and the Z80 stays parked with the console on the monitor.
+Time base: 0.4 s in the RTL (`WDG_PARK_T`), the spec says ~1.3 s. Liveness is
+"the kernel's key-wait loop is running": `serial_key` writes `WDG_PARK_KICK` while it
+polls, so a person at the prompt never trips it; no other loop kicks. Why it
+matters more since R44: with the monitor on the video console, a hung monitor hides
+the Z80's screen and keyboard as well as holding the CPU. Today the recovery is the
+OSD's **Reset SSP**, which restarts only the monitor (proven on hardware, R43). Options:
+(A) implement D-13 as written (release + demote, as R-24 specifies), which needs
+`WDG_PARK_KICK` added to every long firmware loop (`S` trace, long `E`/`U`
+listings, the engine waits), because a legitimate long command would otherwise be
+cut off mid-run after 0.4 s with the Z80 restarting wherever it was parked, and a
+decision on 0.4 s vs 1.3 s; (B) demote the console only and keep the Z80 parked
+(the screen and keyboard come back, the CPU stays frozen for a human to escape or
+reset): safer for a mid-command expiry, less automatic; (C) keep today's latch-only
+behaviour and document **Reset SSP** as the recovery, which needs no RTL or firmware
+change but leaves `R-24`'s release/demote half unmet and makes a headless or remote
+setup depend on the OSD. Lean: (A), since the release lands on an instruction
+boundary and costs nothing the human did not already lose by hanging the monitor,
+with the kicks added first and a hardware test of a deliberate hang (`F`, then
+`begin again`).

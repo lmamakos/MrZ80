@@ -545,10 +545,13 @@ bridge and the kernel runs whatever dictionary is in the ROM.
 
 ### Engineering underneath (because you'll appreciate it)
 
-* **Sovereignty and watchdogs.** The Z80 owns the console at power. If the
-  monitor firmware ever dies or wedges, hardware watchdogs demote it and the
-  Z80 machine carries on — a broken debugger can never brick a running
-  computer. Transient monitor holds of the Z80 are capped at ~4 ms.
+* **Sovereignty and watchdogs.** The Z80 owns the console at power, and the
+  hardware escape works even with the monitor firmware dead. Transient monitor
+  holds of the Z80 are capped at ~4 ms by a hardware watchdog. A *parked* Z80
+  waiting at a hung monitor prompt is not yet released automatically: the way
+  out is the OSD's **Reset SSP**, which restarts the monitor and leaves the Z80
+  and its memory untouched. (Making the park watchdog release it too is an open
+  design decision.)
 * **Transparency by default.** Without the OSD's **SSP Serial Escape**
   (`OM`), no byte value on the wire has special meaning — WordStar `^K`
   sequences and binary uploads are safe. Only an enabled, single configurable
@@ -559,7 +562,7 @@ bridge and the kernel runs whatever dictionary is in the ROM.
   trace; pending sources stay visible.
 * **Roadmap:** breakpoints with stop-before-execute (the hardware injects a
   self-loop at the matched opcode so `PC` is exactly the breakpoint), a
-  16-entry jump-history ring, T-state and machine-cycle stepping, and
+  16-entry jump-history ring, and
   integration with the switch panel and lamp pages (profile 7 is reserved by
   design for the monitor's own lamps). A mailbox at Z80 ports `$D0`–`$D3` is
   reserved as the seed of HBIOS cooperation — the RomWBW world talking to the
@@ -568,7 +571,7 @@ bridge and the kernel runs whatever dictionary is in the ROM.
 **Status today:** the full escape → park → examine/deposit → resume cycle has
 been proven on hardware, as has transparency with the SSP disabled. The later
 commands — `I`/`O`, `MAP`, single-step `S`, the `U` unassembler (and the
-mnemonic on each `S` line, simulation-checked so far), and physical
+mnemonic on each `S` line), and physical
 examine/deposit under `PHY` — each passed a simulation campaign (including
 mutation testing, and checks against the real T80 and the real SDRAM fabric)
 and then a check on the bench. It's a live development, and §7 says how to
@@ -593,11 +596,13 @@ follow it.
 | AY-3-8910 PSG audio (possibly a stereo pair) | Roadmap |
 | SSP monitor: escape/park/E/D/G/R | Proven on hardware |
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
-| SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | `U` working on hardware (owner, 2026-11-01); `S` mnemonic verified in simulation |
-| SSP: breakpoints, T-state/machine-cycle stepping, BRAM-page physical access, panel integration | Roadmap |
+| SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | Working on hardware (owner, 2026-11-01 and 2026-11-02) |
+| SSP: breakpoints, BRAM-page physical access, panel integration | Roadmap |
+| SSP: T-state/machine-cycle stepping | Shelved: no schedule |
 | SSP: monitor ROM (128 KB) loaded from the OSD, no FPGA rebuild; words compiled into it survive Reset SSP | Working on hardware (owner, 2026-11-01). Forth source packs from the OSD: not planned for now |
-| SSP on its own screen + keyboard; OSD "Enter SSP Monitor" | Working in simulation; hardware check pending |
-| RomWBW with two consoles (serial + screen/keyboard) via the stock ACIA driver | ROM builds; hardware check pending |
+| SSP on its own screen + keyboard; OSD "Enter SSP Monitor" | Working on hardware (owner, 2026-11-02) |
+| SSP monitor colours: your input bright green, the monitor's output bright blue | Working in simulation; hardware check pending |
+| RomWBW with two consoles (serial + screen/keyboard) via the stock ACIA driver | Working on hardware (owner, 2026-11-02) |
 | Legacy Grant Searle BASIC/monitor (`basmon`) | Still available as a bootable `.BIN` |
 
 ## 8. Room to grow
