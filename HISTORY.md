@@ -3487,3 +3487,56 @@ not stretched; it fails on the old entity.
 
 Expect the timer lamps to look steadily on while RomWBW runs: its 50 Hz tick (20 ms) is shorter
 than the ~50 ms hold. Needs a full FPGA compile and reload to see on hardware.
+
+### RomWBW system tick from the IntervalTimer (`itim.asm`), and the `ACIAINTS` switch
+
+RomWBW (`~/RomWBW`, platform `PLT_MRZ80`) now keeps time. It had run with `INTMODE=0`, so there
+was no periodic interrupt, no `HB_TICKS`/`HB_SECS` and no boot timeout. The IntervalTimer
+(`Components/TIMER/IntervalTimer.vhd`, ports `$D0`-`$D3`, the only source on the Z80 `INT` pin)
+now supplies the tick. RomWBW commit `45cc5590`.
+
+- **A new module, `Source/HBIOS/itim.asm`, not conditional code in `hbios.asm`.** Every RomWBW
+  tick source (`sctim.asm`, `ctc.asm`, `ez80tmr.asm`) is its own module with PREINIT and INIT
+  phases, and `hbios.asm` only includes it under a config switch, so `itim.asm` follows
+  `sctim.asm`. The wiring is one `#IF (ITIMENABLE) #INCLUDE "itim.asm"` block in `hbios.asm`, a
+  `TM_ITIM` system-timer type in `std.asm` (the keyboard drivers test `SYSTIM`), and
+  `ITIMENABLE` / `ITIMIO` (`$D0`) in `cfg_MASTER.asm`, `cfg_TEMPLATE.asm` and `cfg_MRZ80.asm`
+  (enabled there, with `INTMODE=1`).
+- **PREINIT** stops the timer and acknowledges anything pending first, because a Z80 reset clears
+  the timer but an HBIOS restart in place does not. It then probes the device by writing different
+  patterns to the two INTERVAL bytes and reading them back (an empty bus cannot return both), and
+  hooks `ITIM_INT` into the IM1 call list. **INIT** programs INTERVAL = `1000 / TICKFREQ` ms and
+  starts the timer periodic (RUN + IE + AUTO, so no drift), printing `ITIM: IO=0xD0
+  INTERVAL=20MS` or `NOT PRESENT`. **`ITIM_INT`** tests STATUS bit 3 (INTREQ), returns "not
+  handled" if it is not set, otherwise writes ACK (releasing the level request before the return)
+  and chains to `HB_TIMINT`. The build errors if `INTMODE` is not 1 or `TICKFREQ` does not divide
+  1000 (so 60 Hz is impossible; the default 50 Hz is 20 ms), checked with a 60 Hz config. A missed
+  tick (interrupts masked for more than one interval) sets the sticky OVERFLOW bit but is not made
+  up, so `HB_TICKS` would lag slightly.
+- **The `ACIAINTS` problem, found from the build log.** With `INTMODE=1` the stock ACIA driver
+  switches to interrupt-driven receive: it takes characters only from its interrupt handler into a
+  ring buffer, and its "character waiting?" test looks only at that buffer. On the MrZ80 that cannot
+  work. The ACIAs' `n_int` outputs are not connected to `INT`, and the IM1 call list is walked only
+  until a handler claims the interrupt, so the 50 Hz timer would claim every one. The console would
+  have printed but never received. The build had printed `ACIA: IO=130, INTERRUPTS ENABLED`, which
+  was missed at first. A new `ACIAINTS` setting in `acia.asm` uses interrupt-driven receive only
+  when `ACIAINTS` is TRUE and `INTMODE` is 1. It defaults to TRUE in `cfg_MASTER.asm`, so every
+  other platform is unchanged (an RC2014 ROM built with and without the change is byte-identical),
+  and `cfg_MRZ80.asm` sets it FALSE, so the ACIAs are polled exactly as under `INTMODE=0` (the ACIA
+  module drops from 752 to 520 bytes). Set it back to TRUE when the ACIA interrupt outputs are one
+  day wired to `INT`. The other `INTMODE==1` users (DS12RTC, MD, romldr) only bracket bank copies
+  with DI/EI and needed nothing.
+- **Hardware result (owner):** the `ITIM` banner at boot, SYSGET TIMER advancing at 50 Hz, console
+  input on both consoles, and HPS / SD transfers with interrupts enabled all passed.
+- **Stale RomWBW `AGENTS.md` corrected:** it still said 512K RAM / 8 RAM-disk banks (the build
+  reports 2048 KB RAM, 64 RAM banks, 48 of them the 1536 KB RAM disk, 16 ROM banks of which 12 are
+  the 384 KB ROM disk, 11 application banks) and "no RTC driver" (the stock DS12RTC driver on
+  `$70` has been in use).
+
+**`doc/OVERVIEW.md` section 9, "RomWBW on the MrZ80"** records the MrZ80-specific parts of the
+port in one place: build and loading (`ROM_PLATFORM=MRZ80 ROM_CONFIG=std bash Build.sh`; the 512 KB
+`MRZ80_std.rom` is the `.BIN` the core loads), the `MM_Z2` memory layout and why no enable write is
+needed, a table of every driver with its ports (ACIA consoles, MD, `mrz80sd.asm` HPS and SPI-SD
+disks including the `MRZ80SD1BLKS` caveat, DS12RTC, FP LEDs, ITIM), the tick design and limits, the
+`ACIAINTS` gotcha, and status. "Where to read more" became section 10, and the stale "HBIOS
+platform driver is still to be written" text and the status rows were updated.
