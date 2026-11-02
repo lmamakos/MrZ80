@@ -87,6 +87,7 @@ signals:
   DATA:   ["24..31"]                  # D7..D0
   LATCH:  ["0..7"]                    # port $FF latch, bit 7 first
   FLAGS:  [280, 281, 282, 283]       # WR RD MREQ IORQ (stretched)
+  INTS:   ["276..279"]               # timer, ACIA 1, ACIA 2, CPU INT (stretched)
   STATUS: ["LATCH[7..4]", FLAGS]      # subset of an earlier symbol + more
 ```
 
@@ -424,6 +425,7 @@ signals:
   IY: ["176..191"]
   PC: ["192..207"]
   SP: ["208..223"]
+  INTS: ["276..279"]                      # timer, ACIA 1, ACIA 2, CPU INT (stretched)
   STROBES: ["280..283"]                   # WR RD MREQ IORQ (stretched)
   PTRS: [IX, IY]                           # composed of earlier symbols
 
@@ -458,6 +460,7 @@ profile.0:               # one-frame overview of bus + registers
       signals: [PC, SP]
     - start: [7, 0]
       signals:
+        - INTS
         - STROBES
         - {sig: LATCH, on: teal}           # second latch copy, recoloured
 

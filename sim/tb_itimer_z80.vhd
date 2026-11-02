@@ -7,6 +7,10 @@
 -- OVERFLOW, one-shot, IE as a mask) and reports through fixed block-RAM
 -- addresses that this bench watches on the DUT's block-RAM write bus:
 --   0900h FAIL (0 = pass), 0901h DONE (0AAh), 0902h GOT, 0903h WANT.
+-- It also watches the front-panel capture chain's last segment (fpChainEnd,
+-- chain positions 260-291, see SIGNAL-CAPTURES.md): /WR dark right after reset,
+-- the timer's interrupt request and the CPU INT pin lit by the interrupts,
+-- the unwired ACIA interrupt bits and the reserved bits never lit.
 -- Run from the project root:  sim/run_itimer_z80.sh
 
 library ieee;
@@ -48,6 +52,7 @@ architecture sim of tb_itimer_z80 is
     signal probe_bram_data : std_logic_vector(7 downto 0);
     signal probe_bram_wren : std_logic;
     signal probe_n_int     : std_logic;
+    signal chain_end       : std_logic_vector(31 downto 0);
 
     signal sh_fail : std_logic_vector(7 downto 0) := x"FF";
     signal sh_got  : std_logic_vector(7 downto 0) := (others => '0');
@@ -133,6 +138,10 @@ begin
     probe_bram_data <= << signal .tb_itimer_z80.dut.bram_data    : std_logic_vector(7 downto 0)  >>;
     probe_bram_wren <= << signal .tb_itimer_z80.dut.bram_wren    : std_logic >>;
     probe_n_int     <= << signal .tb_itimer_z80.dut.n_INT_ssp    : std_logic >>;
+    -- fpChainEnd's per-bit (stretched / transparent) output, before the shifter.
+    -- Bit 15 = timer INT request, 14/13 = ACIA INT outputs, 12 = INT at the CPU,
+    -- 11:8 = /WR /RD /MREQ /IORQ, 7:0 = fpLatch; 31:16 are reserved zeros.
+    chain_end       <= << signal .tb_itimer_z80.dut.fpChainEnd.captured_bits : std_logic_vector(31 downto 0) >>;
 
     preload: process
         file f       : char_file_t open read_mode is BIN;
@@ -188,6 +197,46 @@ begin
             if sim_done and n > 0 then
                 report "INT asserted " & integer'image(n) & " times";
                 n := 0;
+            end if;
+        end if;
+    end process;
+
+    -- Capture chain: the /WR bit is a stretched, active-high copy of the strobe,
+    -- so it must be dark just after reset while the bus is idle (the CPU's
+    -- first write is several microseconds away).  A missing inversion makes it
+    -- light the moment reset ends.
+    chain_wr_idle: process
+    begin
+        wait until N_RESET = '1';
+        wait for 1 us;
+        assert chain_end(11) = '0'
+            report "FAIL: tb_itimer_z80: capture chain /WR lit while idle after reset"
+            severity failure;
+        wait;
+    end process;
+
+    chain_watch: process(clk_sys)
+        variable seen_tmr, seen_cpu, seen_wr, seen_rd, seen_mreq, seen_iorq : boolean := false;
+        variable bad_acia, bad_rsvd : boolean := false;
+    begin
+        if rising_edge(clk_sys) then
+            if chain_end(15) = '1' then seen_tmr  := true; end if;
+            if chain_end(12) = '1' then seen_cpu  := true; end if;
+            if chain_end(11) = '1' then seen_wr   := true; end if;
+            if chain_end(10) = '1' then seen_rd   := true; end if;
+            if chain_end(9)  = '1' then seen_mreq := true; end if;
+            if chain_end(8)  = '1' then seen_iorq := true; end if;
+            if chain_end(14) = '1' or chain_end(13) = '1' then bad_acia := true; end if;
+            if chain_end(31 downto 16) /= x"0000" then bad_rsvd := true; end if;
+            if sim_done then
+                assert seen_tmr  report "FAIL: tb_itimer_z80: capture chain 276 (timer INT) never lit" severity failure;
+                assert seen_cpu  report "FAIL: tb_itimer_z80: capture chain 279 (CPU INT) never lit"   severity failure;
+                assert seen_wr   report "FAIL: tb_itimer_z80: capture chain 280 (/WR) never lit"       severity failure;
+                assert seen_rd   report "FAIL: tb_itimer_z80: capture chain 281 (/RD) never lit"       severity failure;
+                assert seen_mreq report "FAIL: tb_itimer_z80: capture chain 282 (/MREQ) never lit"     severity failure;
+                assert seen_iorq report "FAIL: tb_itimer_z80: capture chain 283 (/IORQ) never lit"     severity failure;
+                assert not bad_acia report "FAIL: tb_itimer_z80: capture chain 277/278 (ACIA INT, unwired) lit" severity failure;
+                assert not bad_rsvd report "FAIL: tb_itimer_z80: capture chain 260-275 (reserved) lit" severity failure;
             end if;
         end if;
     end process;

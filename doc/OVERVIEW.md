@@ -218,8 +218,11 @@ What the LED string can show, straight out of the shipped core:
 
 Bus strobes last microseconds — invisible at 60 Hz. So the capture hardware
 **stretches** selected pulses: a `/RD` or `/WR` glows for about 50 ms, long
-enough to see. Reading memory makes the data lamps shimmer with your program's
-traffic; a HALT lights the halt lamp. This is honest instrumentation, at
+enough to see, and so do four interrupt lamps (the interval timer's request,
+the two UARTs' interrupt outputs, and `INT` as the CPU sees it). Reading memory
+makes the data lamps shimmer with your program's traffic; a HALT lights the
+halt lamp. (RomWBW ticks the timer every 20 ms, faster than the hold, so its
+interrupt lamps simply glow while it runs.) This is honest instrumentation, at
 blinky-light speed.
 
 Programmatic control lives at `$A0`–`$A7`: global brightness (classic `scale8`

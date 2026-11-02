@@ -24,7 +24,10 @@
 #   160..175 IX       176..191 IY        192..207 PC       208..223 SP
 #   224..251 mmu_phys_addr[27:0]
 #   252..259 WR RD INT NMI BUSRQ M1 HALT BUSAK (active-high)
-#   260..279 tied 0
+#   260..275 tied 0
+#   276..279 INT_TMR INT_IO1 INT_IO2 INT_CPU: timer request, ACIA INT outputs
+#            (video terminal, serial; not wired to the CPU), INT at the T80
+#            (all stretched)
 #   280..283 WR RD MREQ IORQ strobes (stretched)
 #   284..291 fpLatch again (bit 7 first)
 #   292..383 headroom, reads 0 (no segment wired)
@@ -60,6 +63,11 @@ signals:                 # named chain groups; a definition may reference
   RD:     [281]
   MREQ:   [282]
   IORQ:   [283]
+  INT_TMR: [276]      # IntervalTimer request (stretched ~50 ms)
+  INT_IO1: [277]      # video-terminal ACIA INT output (not wired to the CPU)
+  INT_IO2: [278]      # serial ACIA INT output (not wired to the CPU)
+  INT_CPU: [279]      # INT at the T80, after the SSP single-step mask
+  INTS:   ["276..279"]   # all four, left to right
   INTREQ: [254]
   NMI:    [255]
   BUSREQ: [256]
@@ -125,6 +133,10 @@ profile.0:               # "everything in one frame" overview
     - start: [5,16]
       signals: [PC]
 
+    - start: [6,12]
+      signals: [INTS]    # timer, ACIA 1, ACIA 2, CPU INT (stretched)
+      on: orange
+
     - start: [6,16]
       signals: [IORQ]
     - start: [6,17]
@@ -143,6 +155,7 @@ profile.0:               # "everything in one frame" overview
       off: '#005000'
     - start: [6,23]
       signals: [INTREQ]
+
     - start: [6,24]
       signals: [DATA]
       on: green
@@ -185,6 +198,9 @@ profile.1:               # "everything in one frame" overview
     - start: [5,16]
       signals: [PC]
 
+    - start: [6,12]
+      signals: [INTS]
+      on: red
     - start: [6,16]
       signals: [IORQ]
       on: red
@@ -225,6 +241,8 @@ profile.2:
     - start: [0, 0]
       signals: [LATCH]   # (dir omitted: defaults to right)
 
+    - start: [6,12]
+      signals: [INTS]
     - start: [6,16]
       signals: [IORQ]
     - start: [6,17]
@@ -255,6 +273,9 @@ profile.3:
     - start: [0, 0]
       signals: [LATCH]   # (dir omitted: defaults to right)
 
+    - start: [6,12]
+      signals: [INTS]
+      on: red
     - start: [6,16]
       signals: [IORQ]
       on: red

@@ -207,8 +207,9 @@ in [`doc/t80_reg_debug_vector.md`](../../doc/t80_reg_debug_vector.md).
 | 24–31 | data bus `D7..D0` (bus contents; CPU-driven during writes) |
 | 32–223 | CPU registers (exact order in the next table) |
 | 224–251 | `mmu_phys_addr[27:0]` — MMU physical address, bit 27 first |
-| 252–259 | CPU control, active-high: `/WR` `/RD` `/INT` `/NMI` `/BUSRQ` `/M1` `/HALT` `/BUSAK` (`/INT`, `/NMI`, `/BUSRQ` currently tied inactive) |
-| 260–279 | reserved, tied 0 |
+| 252–259 | CPU control, active-high: `/WR` `/RD` `/INT` `/NMI` `/BUSRQ` `/M1` `/HALT` `/BUSAK` (`/INT` is the IntervalTimer's request, unmasked and unstretched; `/NMI` and `/BUSRQ` currently tied inactive) |
+| 260–275 | reserved, tied 0 |
+| 276–279 | Interrupts — **stretched**: `INT_TMR` (IntervalTimer request), `INT_IO1` (video-terminal ACIA INT output), `INT_IO2` (serial ACIA INT output), `INT_CPU` (`INT` at the T80, after the SSP single-step mask). The two ACIA outputs are not wired to the CPU, so this is the only place they show |
 | 280–283 | `/WR` `/RD` `/MREQ` `/IORQ` — **stretched** (glow ≈ 50 ms per pulse) |
 | 284–291 | `fpLatch` again (bit 7 first) |
 
@@ -239,9 +240,14 @@ Notes:
 * The wired chain is 292 bits but `CHAIN_BITS => 384`: positions
   292–383 exist and read 0 (shifted in from the far `chain_in = '0'`),
   giving headroom for added segments. An identity profile map exposes
-  bits 0–255 only — the upper control bits at 256–291 (upper CPU
-  control, reserved filler, and the `fpLatch` echo) need a profile that
-  maps them explicitly (maps are 16-bit).
+  bits 0–255 only — the upper bits at 256–291 (upper CPU control, the
+  interrupt bits at 276–279, the stretched strobes at 280–283, and the
+  `fpLatch` echo) need a profile that maps them explicitly (maps are
+  16-bit).
+* Stretched bits (276–283) hold for `HOLD_CYCLES` (≈ 50 ms) after each
+  pulse, so a pulse train faster than that stays lit. RomWBW's 50 Hz tick
+  (20 ms) therefore makes `INT_TMR` and `INT_CPU` look steadily on; the
+  transparent `/INT` at 254 is the raw level and is too brief to see.
 
 ## Capture-chain components
 

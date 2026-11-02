@@ -934,7 +934,7 @@ fpChainCPUctl :  entity work.Transparent_Capture_Chain
 fpChainEnd :  entity work.Universal_Capture_Chain
 	generic map (
 		TOTAL_WIDTH => 32,
-                STRETCH_MASK => x"0000_0F00"
+                STRETCH_MASK => b"0000_0000_0000_0000_1111_1111_0000_0000"
 	)
 	port map (
 		clk           => clk,
@@ -942,10 +942,11 @@ fpChainEnd :  entity work.Universal_Capture_Chain
 		latch         => fpChainLatch,
 		shift_en      => fpChainShiftEn,
 
-		combined_data => x"0000_0" &    -- 20 bits
-                                 not n_WR & not n_RD & not n_MREQ & not n_IORQ &  -- 4 bits
-                                 fpLatch,       -- 8 bits
-
+		combined_data =>
+                    b"0000_0000_0000_0000" &                      -- 16 bit
+                    not n_int_itimer & not n_int1 & not n_int2 & not n_INT_ssp & -- 4 bits
+                    not n_WR & not n_RD & not n_MREQ & not n_IORQ &  -- 4 bits
+                    fpLatch,                                     -- 8 bits
 		chain_in      => '0',
 		chain_out     => fpChainEndOut
 	);

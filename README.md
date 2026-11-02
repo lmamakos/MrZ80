@@ -115,9 +115,10 @@ lamps, so it shows the entire machine.
 
 Highlights of the current build:
 
-* A **384-bit capture chain** feeds the panel; brief pulses (bus and interrupt
-  strobes `/RD`, `/WR`, `/MREQ`, `/IORQ`) are **stretched** so they're visible to
-  the eye.
+* A **384-bit capture chain** feeds the panel; brief pulses (the bus strobes
+  `/RD`, `/WR`, `/MREQ`, `/IORQ` and the four interrupt lines — timer request,
+  the two ACIA interrupt outputs, and `INT` at the CPU) are **stretched** so
+  they're visible to the eye.
 * **8 programmable profiles**, each independently mapping LEDs to signal bits
   with per-LED ON/OFF colours — one profile can paint all the registers, another
   the buses. Switch them from software or **live from the OSD** (invisible to

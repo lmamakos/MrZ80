@@ -25,7 +25,10 @@
 #   160..175 IX       176..191 IY        192..207 PC       208..223 SP
 #   224..251 mmu_phys_addr[27:0]
 #   252..259 WR RD INT NMI BUSRQ M1 HALT BUSAK (active-high)
-#   260..279 tied 0
+#   260..275 tied 0
+#   276..279 INT_TMR INT_IO1 INT_IO2 INT_CPU (stretched): the IntervalTimer
+#            request, the two ACIA INT outputs (not wired to the CPU) and
+#            INT as the T80 sees it
 #   280..283 WR RD MREQ IORQ strobes (stretched)
 #   284..291 fpLatch again (bit 7 first)
 #   292..383 headroom, reads 0 (no segment wired)
@@ -55,6 +58,7 @@ signals:                 # named chain groups; a definition may reference
   IY:     ["176..191"]
   PC:     ["192..207"]
   SP:     ["208..223"]
+  INTS:   ["276..279"]   # timer, ACIA 1, ACIA 2, CPU INT (hardware-stretched)
   STROBES: ["280..283"]  # WR RD MREQ IORQ (hardware-stretched)
   PTRS:   [IX, IY]                # composed of earlier symbols
   ALU_HDR: ["REG_AF[7..0]"]       # positional subset: A's 8 bits, MSB first
@@ -95,6 +99,7 @@ profile.0:               # "everything in one frame" overview
       signals: [PC, SP]              # 32 cells
     - start: [7, 0]
       signals:
+        - INTS                       # the four stretched interrupt lamps
         - STROBES                    # the four stretched bus strobes
         - {sig: "LATCH", on: teal}  # second latch copy, recoloured
 
