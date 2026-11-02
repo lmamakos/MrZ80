@@ -288,7 +288,7 @@ interrupt, and the firmware is polled (D-27); Mecrisp has a preemptive example
 preemption as a later question. Per-task stacks are 128 cells each by default
 (`stackspace`) in RV RAM (64 KiB).
 
-### 4.3 Breakpoints: status
+### 4.3 Breakpoints: status and decisions
 
 **Nothing is built beyond register slots** (the plan puts breakpoints in P2,
 `SSP_DESIGN.md` §8, D-25, R-41). Present: `BP0..BP3` (EN + 16-bit address),
@@ -296,15 +296,29 @@ preemption as a later question. Per-task stacks are 128 cells each by default
 reset-vector trampoline (`ssp_tramp.vhd`) is the existing data-mux injection
 mechanism that would be generalised. Not present: any address compare, the
 `JR $` injection (`18 FE`) at a matching M1, the resume-skip logic, monitor
-commands, tests. Open items: OQ-05 (BP inside the `$0000..$0002` trampoline
-window), OQ-23 (BP on a prefix byte, interrupt accepted at the injected `JR`,
-`BP_SKIP` resume; fallback is stop-after with a corrected PC), the panel BP-clear
-gesture (OQ-18, P2 panel), step-over and conditional breakpoints (P3). A design
-question not yet written down: the slots hold 16-bit *logical* addresses, so under
-banked RomWBW a breakpoint also matches the same logical address in another bank.
+commands, tests.
 
-- P2 and later: see `SSP_DESIGN.md` §15 (panel engine, breakpoints and
-  step-over, `ssp_sd` background reads, …).
+**Decided (owner, 2026-11-02, `SSP_DESIGN.md` D-42):**
+- Execute (fetch), data **read** and data **write** breakpoints, any combination per
+  slot (a type mask).
+- **Always physical.** The monitor accepts a logical address and translates it through
+  the current MMU map when the breakpoint is set (or takes a physical one in `PHY`
+  mode); the hardware compares the MMU's physical output for each Z80 memory cycle.
+  No false hits from other banks; a page mapped twice matches through either frame.
+- Fetch breakpoints stop **before** execution (self-loop injection); data breakpoints
+  stop **after** the accessing instruction (the access cannot be undone). Z80 CPU
+  cycles only. Translation is not redone when the MMU map changes.
+- Proposed register layout `BPn = {X, W, R, EN, ADDR[27:0]}` (32 bits; change
+  `ssp_regs.csv` and regenerate when implementing; the CSV still says 16-bit).
+
+**To build:** the compare and injection RTL at the CPM boundary (after the MMU) with
+hit latches (address, type); resume-skip; firmware commands (set from a logical or
+physical address, list showing both, clear, continue past a hit, hit report); the
+R-41 bench against the real T80 and MMU, plus mutation testing. **Open (OQ-25):**
+physical address timing for the fetch injection, the exact tap, OQ-05 restated
+physically, `S` versus watch hits, a hit during a step or `G aaaa`. Later: panel
+breakpoint gestures (OQ-18, P2), step-over and conditional breakpoints (P3).
+**Order:** the multitasker (§4.2) first; breakpoints are not yet scheduled against it.
 
 ---
 
