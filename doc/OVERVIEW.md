@@ -181,13 +181,13 @@ Image → the Z80 runs it. CP/M and the standalone CamelFORTH kernel boot this
 way, and the **RomWBW port exists as an MVP — a minimum viable product**:
 HBIOS and the multi-boot environment come up on the banked-memory MMU and the
 block devices and run. What "viable, not yet luxurious" means today: the
-MrZ80 **HBIOS platform driver** is still to be written, and the banked paths
-RomWBW leans on need measuring and tuning under a real workload. The memory
+banked paths RomWBW leans on need measuring and tuning under a real workload
+(the MrZ80 HBIOS platform and its drivers now exist; §9 records them). The memory
 underneath them is not the problem — SDRAM runs within 0.7% of block RAM (§8),
 and RomWBW's hot banks can be placed in block RAM by programming the MMU. One
 RomWBW ROM multi-boots the family — CP/M 2.2 and 3.0, ZSDOS, Z-System,
 CamelFORTH, N8DOS, and the other HBIOS-aware guests.
-See §7 for the status snapshot.
+See §9 for the RomWBW port and §7 for the status snapshot.
 
 ---
 
@@ -584,7 +584,7 @@ follow it.
 
 ## 7. Status at a glance
 
-*As of 2026-11-01.*
+*As of 2026-11-02.*
 
 | Area | State |
 |------|-------|
@@ -595,9 +595,9 @@ follow it.
 | Front panel: switch panel + LED-driver PCB, hardware panel engine | PCB design upcoming; panel engine spec'd (P2) |
 | CamelFORTH standalone & CP/M, custom instructions, RAM-disk blocks | Working |
 | CP/M 2.2/3.0 boot images | Working |
-| RomWBW (HBIOS + multi-boot) | **MVP** — HBIOS and the multi-boot environment come up and run; the MrZ80 HBIOS platform driver and tuning under a real workload are the remaining work |
+| RomWBW (HBIOS + multi-boot) | **MVP** — the MrZ80 HBIOS platform (MMU, consoles, ROM/RAM disks, HPS and SD disks, RTC, front-panel LEDs) comes up and runs; the 50 Hz interval-timer tick driver is built but awaiting a hardware check, and tuning under a real workload remains (§9) |
 | AY-3-8910 / YM2149 PSG audio: a stereo pair, one per channel (`REQUIREMENTS.md` item 6) | Roadmap |
-| Programmable millisecond interval timer and Z80 `INT` source, ports `$D0`-`$D3` (`REQUIREMENTS.md` item 7) | Working on hardware (owner, 2026-11-02) |
+| Programmable millisecond interval timer and Z80 `INT` source, ports `$D0`-`$D3` (`REQUIREMENTS.md` item 7) | Working on hardware (owner, 2026-11-02); RomWBW tick driver `itim.asm` written 2026-11-02, hardware check pending (§9) |
 | SSP monitor: escape/park/E/D/G/R | Proven on hardware |
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
 | SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | Working on hardware (owner, 2026-11-01 and 2026-11-02) |
@@ -652,7 +652,134 @@ there's a place for it.
   Forth… On a machine whose hardware is reconfigurable by design, the line
   between user and designer is thin on purpose.
 
-## 9. Where to read more
+## 9. RomWBW on the MrZ80
+
+RomWBW is the reason the MrZ80 has an MMU, so it deserves a section of its own.
+The port lives in a fork of the RomWBW tree (`~/RomWBW`, platform id
+`PLT_MRZ80`). This section is the one place that records what is MrZ80-specific
+in that fork: how it is built, how it maps onto the hardware, which drivers it
+uses, and the decisions and gotchas that came out of bringing it up. (The RomWBW
+tree's own `AGENTS.md` carries the same facts from the RomWBW side.)
+
+### Building and loading it
+
+```
+cd ~/RomWBW/Source/HBIOS
+ROM_PLATFORM=MRZ80 ROM_CONFIG=std bash Build.sh      # -> Binary/MRZ80_std.rom (+ .upd, .com)
+```
+
+`MRZ80_std.rom` **is** the `.BIN` the core loads: pick it as the **Boot Rom
+Image** in the OSD and the machine boots RomWBW. It is 512 KB: four 32 KB HBIOS
+banks (HBIOS, loader/OS, apps, utilities) followed by a 384 KB ROM disk. There
+is also an `MRZ80_debug` configuration that turns HBIOS diagnostics and driver
+tracing up and waits five seconds before booting, for bring-up.
+
+Configuration is RomWBW's usual cascade: `cfg_MASTER.asm` defines every setting,
+`cfg_MRZ80.asm` holds the MrZ80 defaults, and `Config/MRZ80_std.asm` /
+`MRZ80_debug.asm` are the builds. Override with `.SET` in a config file, never
+by editing the master.
+
+### Memory
+
+| | |
+|--|--|
+| **MMU** | RomWBW's stock `MM_Z2` memory manager, unmodified. Frame registers `MPGSEL_0..3` are ports `$B0`–`$B3`. The Z2 "MMU enable" write is skipped for this platform because the MrZ80 MMU is always on, and `MPGENA` is pointed at `$BD`, a reserved write-ignored port, as belt and braces. |
+| **ROM** | `ROMSIZE=512`: the `.BIN` the core preloads into SDRAM at physical address 0. The core starts the Z80 at `$0000` with the boot ROM already disabled, so RomWBW never writes the `$38` ROM-disable port. |
+| **RAM** | `RAMSIZE=2048`: the SDRAM directly above the ROM image. |
+| **Banks** | 16 ROM banks (12 are the 384 KB ROM disk), 64 RAM banks (48 are the 1536 KB RAM disk), 11 application banks. The common top 32 KB is the last two pages of RAM. |
+| **CPU** | `CPUOSC=10000000`, fixed speed (50 MHz ÷ 5). |
+
+### Drivers and ports
+
+Everything is a stock RomWBW driver except the block device and the timer.
+
+| Function | Ports | RomWBW driver and notes |
+|----------|-------|-------------------------|
+| Console 0, serial | `$82`/`$83` | Stock **ACIA** (6850) driver, unit 0, the boot console (`BOOTCON=0`). The `bufferedUART` follows the 6850 master-reset semantics the driver's detection relies on. The baud rate is set in the OSD, so `DEFSERCFG` is report-only. |
+| Console 1, screen and keyboard | `$80`/`$81` | Stock **ACIA** driver, unit 1 (the VGA terminal). `AUTOCON` lets a key pressed on either console at the loader prompt take the console. |
+| ROM and RAM disks | MMU | Stock **MD** driver. |
+| Disk, HPS image | `$90`–`$97` | **`mrz80sd.asm`** (`MRZ80SDENABLE`), unit 1 of that driver: the mounted image, with size registers. 512-byte blocks moved with `INIR`/`OTIR`. |
+| Disk, SPI SD card | `$88`–`$8F` | `mrz80sd.asm`, unit 2 (`MRZ80SDCNT=2`). It has no size registers, so the capacity comes from `MRZ80SD1BLKS` (default `$FFFFFF`, 8 GB). **Set it no larger than the real card**: a read past the end of the card hangs the controller until reset. Status bit 4 is "init busy" and stays set with no card; the driver times out and reports no media. |
+| Clock/calendar | `$70`/`$71` | Stock **DS12RTC** driver for the DS12887 (`DS12RTC_BASE=$70`), seeded from the MiSTer Linux host at power-up. |
+| Front panel LEDs | `$FF` | Stock **FP** driver on the output latch (`FPLED_IO=$FF`): HBIOS progress codes and disk activity show on the LEDs. |
+| System tick | `$D0`–`$D3` | **`itim.asm`** (`ITIMENABLE`, `ITIMIO`), described next. |
+
+### The system tick: `itim.asm`
+
+HBIOS keeps time with a periodic interrupt that increments `HB_TICKS`, rolls
+into `HB_SECS`, and feeds SYSGET TIMER, the boot timeout and the drivers that
+check `SYSTIM`. On the MrZ80 that interrupt comes from the **IntervalTimer**
+(`Components/TIMER/IntervalTimer.vhd`, §2 and `HARDWARE.md`), the only source
+wired to the Z80 `INT` pin.
+
+**Why a separate file.** Every RomWBW tick source (`sctim.asm`, `ctc.asm`,
+`ez80tmr.asm`) is its own HBIOS module with PREINIT and INIT phases, and
+`hbios.asm` only includes it under a config switch. `itim.asm` follows that
+pattern, so the register spec, probe code and handler stay out of the 9,700-line
+`hbios.asm`. The hook-up is one `#IF (ITIMENABLE) #INCLUDE "itim.asm"` block in
+`hbios.asm`, a `TM_ITIM` system-timer type in `std.asm`, and the
+`ITIMENABLE`/`ITIMIO` settings in `cfg_MASTER.asm`, `cfg_TEMPLATE.asm` and
+`cfg_MRZ80.asm`.
+
+**How it works.**
+
+* **PREINIT** stops the timer and acknowledges anything pending first, because a
+  Z80 reset clears the timer but an HBIOS restart in place does not. It then
+  probes the device by writing different patterns to the two INTERVAL bytes and
+  reading them back (an empty bus cannot return both). If the timer is there it
+  adds `ITIM_INT` to HBIOS's interrupt-mode-1 call list.
+* **INIT** programs INTERVAL = `1000 / TICKFREQ` ms and starts the timer
+  **periodic** (RUN + IE + AUTO), so ticks do not drift. It prints
+  `ITIM: IO=0xD0 INTERVAL=20MS`, or `NOT PRESENT` with no hardware.
+* **`ITIM_INT`** checks STATUS bit 3 (INTREQ). If it is not set the interrupt is
+  somebody else's and the handler returns "not handled" so the next entry in the
+  list gets its turn. Otherwise it writes ACK (COMMAND bit 1), which releases the
+  level request before the return, and chains to `HB_TIMINT`.
+
+**Settings.** `INTMODE=1`, `TICKFREQ=50` (20 ms), `ITIMIO=$D0`. `TICKFREQ` must
+divide 1000 because the interval is a whole number of milliseconds (10, 20, 25,
+40, 50, 100 …); 60 Hz is not possible. The module refuses to assemble with
+`INTMODE` other than 1 or with a `TICKFREQ` that does not divide 1000.
+
+**Limits.** If interrupts stay masked for more than one interval the timer sets
+its sticky OVERFLOW status bit, but the missed tick is not made up, so
+`HB_TICKS` would lag a little. While the SSP single-step sequencer is armed `INT`
+is masked at the CPU, so ticks are not delivered during a trace; the timer keeps
+counting and the next interrupt arrives when stepping ends.
+
+### Gotcha: the ACIAs must stay polled
+
+Turning on `INTMODE=1` for the timer has a side effect that is easy to miss.
+RomWBW's ACIA driver ties **interrupt-driven receive** to `INTMODE`: with
+`INTMODE=1` it reads characters only from its interrupt handler, into a ring
+buffer, and its "character waiting?" test looks only at that buffer. On the
+MrZ80 that cannot work, for two reasons: the ACIAs' interrupt outputs are not
+connected to `INT`, and RomWBW walks the interrupt-mode-1 call list only until a
+handler claims the interrupt, so the 50 Hz timer would claim every one. The
+result would be a console that prints but never receives.
+
+The fix is a new setting, **`ACIAINTS`**, in `acia.asm`: interrupt-driven receive
+is used only when `ACIAINTS` is TRUE *and* `INTMODE` is 1. It defaults to TRUE in
+`cfg_MASTER.asm`, so every other platform builds exactly as before (RC2014's ROM
+is byte-identical with and without the change), and `cfg_MRZ80.asm` sets it
+FALSE. The ACIAs are then polled exactly as they were under `INTMODE=0`. When
+the ACIA interrupt outputs are one day wired to `INT`, set it back to TRUE.
+
+Related and worth knowing: with `INTMODE=1`, HBIOS and CP/M applications run with
+interrupts enabled, so page zero needs the RST 38h vector in every bank.
+RomWBW's boot loader and CBIOS already arrange that; bare-metal code you load as
+a `.BIN` is not affected unless it executes `EI`.
+
+### Status and what is next
+
+| Item | State |
+|------|-------|
+| HBIOS platform: MMU, two ACIA consoles, ROM/RAM disks, HPS and SPI-SD disks, DS12887 clock, front-panel LEDs | Working on hardware (the two-console boot, owner, 2026-11-02) |
+| Interval-timer tick (`itim.asm`, `ACIAINTS=FALSE`) | Builds and assembles correctly; **not yet run on hardware**. Things to check: the `ITIM: … INTERVAL=20MS` line at boot, SYSGET TIMER advancing at 50 Hz, console input still working, and the first HPS/SD transfers with interrupts enabled |
+| ACIA interrupt outputs wired to `INT`, `ACIAINTS=TRUE` | Not planned yet; an HDL change |
+| Sound device driver | Waits on the PSG hardware (§8) |
+
+## 10. Where to read more
 
 | Document | Contents |
 |----------|----------|
@@ -666,6 +793,7 @@ there's a place for it.
 | [`doc/SSP_PANEL_UX.md`](SSP_PANEL_UX.md) | The classic switch-panel user-experience spec |
 | [`HISTORY.md`](../HISTORY.md) / [`REQUIREMENTS.md`](../REQUIREMENTS.md) | Design rationale, development log, requirements and roadmap |
 | [`AGENTS.md`](../AGENTS.md) | Contributor guide: repository layout, build commands, toolchain |
+| `~/RomWBW/AGENTS.md`, `~/RomWBW/Source/HBIOS/itim.asm`, `mrz80sd.asm`, `cfg_MRZ80.asm` | The RomWBW side of §9: port status, drivers, configuration |
 
 *Stop-hazards are for 1978. On MrZ80 the machine glows, the Forth answers,
 and the `.` prompt is waiting.*
