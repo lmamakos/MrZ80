@@ -51,9 +51,11 @@ runmodel() { # $1 = tag, rest = plusargs; stdin = operator input
   grep -aE '^\[tb-tx @[0-9]+\] byte' "$WORK/$tag.events.log" \
     | sed -E 's/.*byte ([0-9a-f]+) .*/\1/' \
     | python3 -c "
-import sys
+import re, sys
 out = ''.join(chr(int(l, 16)) for l in sys.stdin.read().split())
-print(out.replace('\r', '\n'))" > "$WORK/$tag.norm.log"
+open(sys.argv[1], 'w').write(out)                  # raw, colour sequences kept
+print(re.sub(r'\x1b\[[0-9;]*m', '', out).replace('\r', '\n'))" \
+      "$WORK/$tag.raw.log" > "$WORK/$tag.norm.log"   # norm: SGR stripped
 }
 check() { # $1 = description, $2 = grep -E pattern on the console of $TAG
   if grep -aEq "$2" "$WORK/$TAG.norm.log"; then echo "  ok: $1"; else
@@ -61,6 +63,9 @@ check() { # $1 = description, $2 = grep -E pattern on the console of $TAG
 ev() {    # $1 = description, $2 = grep -E pattern on the event log of $TAG
   if grep -aEq "$2" "$WORK/$TAG.events.log"; then echo "  ok: $1"; else
     echo "  MISSING: $1 (/$2/)"; fail=1; fi; }
+raw() {   # $1 = description, $2 = grep -P pattern on the RAW console of $TAG (colour sequences kept)
+  if grep -aPzq "$2" "$WORK/$TAG.raw.log"; then echo "  ok: $1"; else
+    echo "  MISSING: $1 (raw /$2/)"; fail=1; fi; }
 absent() { # $1 = description, $2 = pattern that must NOT appear on the console
   if grep -aEq "$2" "$WORK/$TAG.norm.log"; then echo "  FAIL: $1 (/$2/)"; fail=1; else
     echo "  ok: $1"; fi; }
@@ -139,6 +144,10 @@ n_pc5=$(grep -ac '^PC=5000 ' "$WORK/A.norm.log")
   || { echo "  FAIL: expected two PC=5000 R lines (G aaaa, then plain G), got $n_pc5"; fail=1; }
 check "G 300: R after the restart shows PC=0300"     '^PC=0300 '
 check "F leaves to Forth"                            '^FORTH'
+raw   "colour: the banner is bright blue"            '\x1b\[1;34m[\r\n]+MrZ80 SSP MONITOR'
+raw   "colour: typed input is bright green"          '\.\x1b\[1;32mE '
+raw   "colour: responses go back to bright blue"     '\x1b\[1;32m[^\x1b]*\x1b\[1;34m[\r\n]+[0-9A-F]{4}: '
+raw   "colour: G resets the terminal before the hand-over" 'GO[\r\n]+\x1b\[0m'
 check "STATUS.RV_ALIVE (bit 20) set: the core is seen reading" '^[$]2000000[cC] @ hex\. cr 00[13579bdfBDF][0-9a-fA-F]{5} *$'
 ev    "G aaaa writes CTRL = 133 (arm + vent while parked)"   'p1a-ctrl .*CTRL <= 133 '
 ev    "G aaaa writes CTRL = 030 (release, hold dropped, console back)" 'p1a-ctrl .*CTRL <= 030 '
@@ -384,18 +393,26 @@ check "monitor alive after BREAK: R works"            '^PC=50'
 # ---- F4: sovereignty.  The OSD RV-reset hatch (rv_rst_n low) mid-step: the sequence is
 # abandoned, the Z80 released, and int_hold must DROP with it -- a dead RV may never leave
 # INT masked on a running Z80 (review B8).
-TAG=F4
-{
+# The reset must land inside the hang of the second step, and that moves with every change
+# in what the monitor prints: a probe run (no reset) finds when the second step kicks, the
+# real run resets 300k clocks after it (the hang lasts 3M, the step timeout 1M).
+f4_session() {
   printf '\x1d'
   printf 'D 5000\r00\r00\r00\r00\rC3\r00\r50\r.\r'
   printf 'G 5000\r'
   printf '\x1d'
   printf 'S\r'
   printf 'S\r'                                      # hangs in the re-park (BFM)
-} | ALLOW_SILENT=1 runmodel F4 +OM=1 +LINEWAIT=2 +QUIET=150000 +STEPHANG=3 +STEPHANG_CLKS=3000000 +RVRST +RVRST_AT=4000000 +IDLE=6000000
-python3 - "$WORK/F4.events.log" <<'PYEOF'
+}
+TAG=F4
+f4_session | ALLOW_SILENT=1 runmodel F4p +OM=1 +LINEWAIT=2 +QUIET=150000 +STEPHANG=3 +STEPHANG_CLKS=3000000 +IDLE=6000000
+kick2=$(sed -nE 's/^\[p1a-step @([0-9]+)\] kick.*/\1/p' "$WORK/F4p.events.log" | sed -n 2p)
+[[ "$kick2" =~ ^[0-9]+$ ]] || { echo "  FAIL: F4 probe: no second step kick"; fail=1; kick2=4000000; }
+RVRST_AT=$((kick2 + 300000))
+f4_session | ALLOW_SILENT=1 runmodel F4 +OM=1 +LINEWAIT=2 +QUIET=150000 +STEPHANG=3 +STEPHANG_CLKS=3000000 +RVRST +RVRST_AT=$RVRST_AT +IDLE=6000000
+python3 - "$WORK/F4.events.log" "$RVRST_AT" <<'PYEOF'
 import re, sys
-RVRST_AT = 4000000
+RVRST_AT = int(sys.argv[2])
 ev = open(sys.argv[1], errors="replace").read()
 ih = [(int(m.group(1)), m.group(2)) for m in
       re.finditer(r"\[p1a-step @(\d+)\] int_hold -> ([01])", ev)]

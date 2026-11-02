@@ -14,6 +14,8 @@
 --   F  the serial ACIA (bufferedUART) honours a master reset the same way
 --   G  scrolling: LF on the bottom row with the cursor mid-line (as Mecrisp's
 --      LF CR does) must blank the whole new bottom line
+--   H  the SGR sequences the SSP monitor sends for colour: ESC[1;34m bright
+--      blue, ESC[1;32m bright green, ESC[0m default
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -79,6 +81,7 @@ begin
         alias z80_cursor is << signal .tb_terminal.z80term.cursorHoriz : integer range 0 to 79 >>;
         alias vdu_cursor is << signal .tb_terminal.vdu.term.cursorHoriz : integer range 0 to 79 >>;
         alias z80_start is << signal .tb_terminal.z80term.startAddr : integer range 0 to 2000 >>;
+        alias z80_att is << signal .tb_terminal.z80term.dispAttWRData : std_logic_vector(7 downto 0) >>;
         alias z80_ram is << signal .tb_terminal.z80term.GEN_2KRAM.dispCharRam.ram : ram2k_t >>;
 
         procedure check(ok : boolean; msg : string) is
@@ -331,6 +334,14 @@ begin
                   "G: new bottom line col " & integer'image(i) & " blank, got " & to_hstring(z80_ram(zrow + i)));
         end loop;
         check(z80_cursor = 0, "G: CR after the scroll leaves the cursor in column 0");
+
+        -- H: the monitor's colour sequences ---------------------------------------
+        z80_put(ESC & "[1;34m", 50);
+        check(z80_att(3 downto 0) = "1100", "H: ESC[1;34m = bright blue text, got " & to_hstring(z80_att));
+        z80_put(ESC & "[1;32m", 50);
+        check(z80_att(3 downto 0) = "1010", "H: ESC[1;32m = bright green text, got " & to_hstring(z80_att));
+        z80_put(ESC & "[0m", 50);
+        check(z80_att(3) = '0', "H: ESC[0m back to the default (not bold), got " & to_hstring(z80_att));
 
         wait for 1 us;
         if fails = 0 then

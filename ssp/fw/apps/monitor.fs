@@ -63,15 +63,14 @@ SSP_CTRL_ESC_BREAK_EN
 0 variable m-stepn                          \ last step count (bare-CR repeat)
 
 \ ---- output ------------------------------------------------------------------
-\ Color API (M1 stubs -- they deliberately emit nothing yet).  Planned: ANSI
-\ SGR sequences choosing the prompt colour (col-prompt), the key-echo colour
-\ while a command line is typed (col-input), the command-response colour
-\ (col-output), and the terminal default (col-reset).  Call sites are already
-\ wired in the command loop; implementing the words is then a local change.
-: col-prompt ( -- ) ;   \ planned: ESC [ 36 m   (cyan prompt)
-: col-input  ( -- ) ;   \ planned: ESC [ 37 m   (bright white echo)
-: col-output ( -- ) ;   \ planned: ESC [ 32 m   (green responses)
-: col-reset  ( -- ) ;   \ planned: ESC [ 0 m    (terminal default)
+\ Colour: what the operator types is bright green, everything the monitor prints
+\ (banner, prompt, responses) is bright blue.  ANSI SGR, bold + colour so both are
+\ legible on a black background (the video terminal and serial terminals alike).
+\ col-reset returns the terminal to its default: it must be sent BEFORE the console
+\ is handed back (G drops console_own; see m-go) or the Z80 inherits our colour.
+: col-input  ( -- )  27 emit ." [1;32m" ;
+: col-output ( -- )  27 emit ." [1;34m" ;
+: col-reset  ( -- )  27 emit ." [0m" ;
 : m-h1 ( u -- )  $F and dup 10 < if 48 else 55 then + emit ;
 : m-h2 ( u -- )  dup 4 rshift m-h1 m-h1 ;
 : m-h3 ( u -- )  dup 8 rshift m-h1 m-h2 ;
@@ -118,7 +117,7 @@ SSP_CTRL_ESC_BREAK_EN
 : m-console? ( -- f )  SSP_STATUS @ SSP_STATUS_FW_CONSOLE_OK and ;
 
 \ ---- line input and parsing ---------------------------------------------------
-: m-line-in ( -- )  m-line 120 accept m-len !  0 m-pos ! ;
+: m-line-in ( -- )  col-input m-line 120 accept m-len !  0 m-pos !  col-output ;
 : m-getc ( -- c )  m-pos @ m-len @ u< if m-pos @ m-line + c@ else 0 then ;
 : m-adv ( -- )  1 m-pos +! ;
 : m-spaces ( -- )  begin m-getc 32 = while m-adv repeat ;
@@ -438,7 +437,7 @@ SSP_CTRL_ESC_BREAK_EN
 : m-go ( -- )
   m-spaces m-getc 0= if                         \ G : continue
     m-need-park 0= if exit then
-    ." GO" cr m-drain
+    ." GO" cr col-reset m-drain
     m-c-cont SSP_CTRL !
     1 m-state ! exit
   then
@@ -446,7 +445,7 @@ SSP_CTRL_ESC_BREAK_EN
   0 m-arg $FFFF and m-a !  m-end                \ G aaaa
   m-bad @ if m-q exit then
   m-need-park 0= if exit then
-  ." GO " m-a @ m-h4 cr m-drain
+  ." GO " m-a @ m-h4 cr col-reset m-drain
   m-a @ SSP_TRAMP_ADDR !
   m-c-arm SSP_CTRL !
   m-c-go  SSP_CTRL !
@@ -486,18 +485,17 @@ SSP_CTRL_ESC_BREAK_EN
   dup [char] f = if drop 2 m-state ! exit then     \ f
   dup 63 = over 104 = or if drop m-help exit then   \ ? h
   drop m-q ;
-: m-banner ( -- )  col-output cr ." MrZ80 SSP MONITOR  ? = HELP" cr col-reset ;
+: m-banner ( -- )  col-output cr ." MrZ80 SSP MONITOR  ? = HELP" cr ;
 
 : mon ( -- )
   begin
     begin m-console? until                    \ the operator's escape
     m-banner
     0 m-state !
-    begin col-prompt ." ." col-input
-          m-line-in
-          col-output cr m-cmd col-reset
+    begin ." ." m-line-in
+          cr m-cmd
           m-state @ until
-    m-state @ 2 = if ." FORTH  (TYPE MON TO RETURN TO THE MONITOR)" cr exit then
+    m-state @ 2 = if col-reset ." FORTH  (TYPE MON TO RETURN TO THE MONITOR)" cr exit then
     begin m-console? 0= until                 \ Z80 has the console again
   again ;
 

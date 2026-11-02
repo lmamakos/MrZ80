@@ -45,11 +45,17 @@ w = sys.argv[1]
 t = open(w + ".out", "rb").read().decode("latin-1")
 ev = re.compile(r"\[p1a[^]]*\][^\r\n]*\n?")
 open(w + ".events", "w").write("\n".join(m.group(0).rstrip("\n") for m in ev.finditer(t)) + "\n")
-open(w + ".serial", "w").write(ev.sub("", t).replace("\r", "\n"))
-open(w + ".video", "w").write(open(w + ".vdu", "rb").read().decode("latin-1").replace("\r", "\n"))
+sgr = re.compile(r"\x1b\[[0-9;]*m")                   # colour sequences: kept in *.raw, stripped in the rest
+ser = ev.sub("", t)
+vid = open(w + ".vdu", "rb").read().decode("latin-1")
+open(w + ".serial.raw", "w").write(ser)
+open(w + ".video.raw", "w").write(vid)
+open(w + ".serial", "w").write(sgr.sub("", ser).replace("\r", "\n"))
+open(w + ".video", "w").write(sgr.sub("", vid).replace("\r", "\n"))
 PYEOF
 }
 has()  { grep -aEq "$3" "$WORK/$TAG.$2" && ok "$1" || miss "$1 (/$3/ in $2)"; }
+rawhas(){ grep -aPzq "$3" "$WORK/$TAG.$2" && ok "$1" || miss "$1 (raw /$3/ in $2)"; }
 hasnt(){ grep -aEq "$3" "$WORK/$TAG.$2" && miss "$1 (/$3/ in $2)" || ok "$1"; }
 guest_rx() { sed -nE 's/.* guest_rx=([0-9]+).*/\1/p' "$WORK/$TAG.info" | tail -1; }
 
@@ -66,7 +72,10 @@ has   "banner on the video terminal"          video  'MrZ80 SSP MONITOR'
 has   "E listing on the video terminal"       video  '^0000: C3 00 01 03 04 05 06 07 '
 has   "keys echoed on the video terminal"     video  'E 0 8'
 has   "G gives the screen back"               events 'show -> 0'
-hasnt "nothing from the monitor on serial"    serial 'MRZ80|0000:'
+rawhas "video terminal: banner bright blue"    video.raw '\x1b\[1;34m[\r\n]+MrZ80 SSP MONITOR'
+rawhas "video terminal: typed keys bright green" video.raw '\.\x1b\[1;32mE 0 8'
+rawhas "video terminal: reset sent before G hands back" video.raw 'GO[\r\n]+\x1b\[0m'
+hasnt "nothing from the monitor on serial"    serial 'MrZ80|0000:'
 n=$(guest_rx); [ "${n:-0}" -eq 3 ] && ok "serial bytes still reach the Z80 (guest_rx=$n)" \
     || miss "serial bytes reach the Z80 (guest_rx=${n:-?}, expected 3)"
 hasnt "serial bytes not read by the monitor"  video  'abc'
@@ -78,6 +87,7 @@ printf 'E 0 8\r' | run B +OM=0 +OSDENTER_AT=1000000 +OSDVID=0 +RXAT=2000000 \
     +MAXCYCLES=12000000 +IDLE=3000000
 has   "banner on serial"                      serial 'MrZ80 SSP MONITOR'
 has   "E listing on serial"                   serial '^0000: C3 00 01 03 04 05 06 07 '
+rawhas "serial: banner bright blue"            serial.raw '\x1b\[1;34m[\r\n]+MrZ80 SSP MONITOR'
 hasnt "SSP screen never shown"                events 'show -> 1'
 [ -s "$WORK/B.vdu" ] && miss "video terminal got bytes" || ok "video terminal got nothing"
 n=$(guest_rx); [ "${n:-0}" -eq 0 ] && ok "operator bytes kept from the Z80 (guest_rx=0)" \
