@@ -3447,6 +3447,150 @@ from it; `profiles.toml`/`example_profiles.toml` deleted. `test_fpprofile.py` re
 covering range/subset semantics, spans, overlaps, blanks, colour precedence, the boolean-key trap, TOML
 sniffing, encode/decode and the CLI, all passing; `sim/run_frontpanel.sh` unchanged and passing.
 
+### Catch-up: project changes 2026-10-18 to 2026-11-02 that were not logged here
+
+The entries immediately below were written on 2026-11-02 from the commit log, the commit messages
+and the SSP documents, to fill a gap: nothing was added to this file between the profile-tool rework
+(2026-10-18) and 2026-11-02, a period of about 115 commits. Dates are commit dates. The SSP is logged
+round by round in `doc/SSP_DESIGN.md` section 17 and its state in `doc/SSP_STATUS.md`; the SSP entry
+here is a summary and points there rather than repeating them.
+
+### Documentation and build housekeeping (2026-10-22 to 2026-10-27)
+
+- The README was refocused on what the core is now (a Z-80 MiSTer core built to host RomWBW, with the
+  "Maximum Blinkenlights" front panel as the other headline feature) instead of its MultiComp origin.
+  The reference material was split out: `HARDWARE.md` holds the authoritative memory and port maps, and
+  the README gained a documentation map. Forth install paths followed the MultiComp to MrZ80 rename.
+- A top-level `Makefile` was added: `make install` copies `output_files/MrZ80.rbf` to the MiSTer as
+  `/media/fat/_Computer/MrZ80_YYYYMMDD.rbf` (date taken at run time). `build_id.v` is stamped with the
+  synthesis date in its own commit each time. Python bytecode caches are ignored.
+- `AGENTS.md` now says not to commit ephemeral or regenerable files (simulator work directories,
+  waveform dumps, Quartus `db/` and `output_files/`) and to stage files explicitly. This followed a
+  mistake: Verilator `obj_*` build directories and a 229 MB `p1a.vcd` had been committed, so the
+  unpushed branch history was rewritten once to remove them (SSP round R26; hash map in
+  `doc/SSP_STATUS.md` section 1.5).
+- `tb_cpuregs` (2026-10-18) is a ground-truth bench for the 212-bit T80 `REG` debug export: eight
+  hand-assembled programs load known values through every architectural path (including `EX AF,AF'` and
+  an even and an odd number of `EXX`), then check each value against the fixed bit positions.
+  `doc/t80_reg_debug_vector.md` documents the full layout.
+
+### Front panel: 292-bit capture chain, profile tooling, refresh rate (2026-10-24 to 2026-11-01)
+
+- The capture chain was reworked to 292 wired bits (`CHAIN_BITS` stays 384): `fpChainEnd` then
+  `fpChainCPUctl`, `fpChainPhysAddrBus`, `fpChainRegs`, `fpChainStaticTest` and `fpChain`. It added the
+  28-bit MMU physical address, the active-high CPU control signals, a stretched `/WR` `/RD` `/MREQ`
+  `/IORQ` group and a copy of the `$FF` latch. **`SIGNAL-CAPTURES.md`** is the authoritative bit map and
+  must be updated in the same change as any chain edit. (The stretch on that group did not actually
+  work until 2026-11-02; see the `STRETCH_MASK` entry below.)
+- `fpprofile.py` gained per-signal LED colours (`signal_colors`, global and per-profile): colours attach
+  to chain signals instead of LEDs, with the cascade element, run, profile signal, global signal, profile,
+  defaults, built-in. The output stays version 2 because the colours are baked into the per-LED records,
+  so no core change was needed (with a 14-test precedence suite). A `Makefile` generates the `.fpp` files and installs them
+  on the MiSTer; `profile.yaml` describes the development panel (8 rows by 32 columns, serpentine);
+  `example_profiles.yaml` is the shipped example. `testing/fptest.asm` is a diagnostic that loads each
+  register with `AA`/`55` and holds it so the matching LED group can be checked.
+- The LED refresh rate was raised from 62.5 Hz to 75 Hz (`fpRefreshCount` compares against `666_666-1`
+  instead of `800000-1`; 11-01). The docs that still said 62.5 Hz were corrected on 2026-11-02.
+
+### SSP: the System Support Processor (2026-10-23 to 2026-11-02)
+
+A RISC-V "system support processor" with a Forth monitor, so the machine has a PDP-11-ODT-style debug
+console that can park the Z80 on an instruction boundary and examine and deposit memory, I/O and
+registers. Full detail is in `doc/SSP_DESIGN.md` (decisions D-xx, rounds in section 17) and
+`doc/SSP_STATUS.md`; this is the outline.
+
+- **Design.** An ODT design set (2026-10-23) was renamed SSP in round R13. P0 was a core bake-off
+  (FemtoRV32-gracilis, picorv32, VexRiscv shelved); **FemtoRV32-gracilis** was selected in R23 on cycle
+  benchmarks and fit reports (`ADDR_WIDTH=30`). picorv32 stays vendored as a fallback in
+  `Components/RISCV/`. Firmware is a Mecrisp-Quintus port in `ssp/fw/`; the register map is generated
+  from `ssp/regs/ssp_regs.csv` (`doc/SSP_REGS.md`, never hand-edited). `Components/Z80/T80.vhd` gained a
+  boundary-park gate (R25) so the bus is released only between instructions.
+- **P1a "first light" (R25 to R35).** `z80_bus_mux`, `ssp_tramp`, `ssp_bridge`, `ssp_uart` (128-byte RX
+  FIFO), the Verilator model lane and the GHDL integration benches (`integ-park`, `integ-mux`,
+  `integ-core`) were built and integrated into `MrZ80.sv`; first light passed on hardware (escape, park,
+  examine/deposit, resume). The factory ROM image `ssp/fw/forth_rom.mif` is a committed deliverable,
+  recommitted whenever the firmware changes.
+- **P1b monitor commands.** `E D G R F` (P1a), then `I O MAP PHY LOG` (R37), single-step **`S`** (R39:
+  a hardware one-shot in the bridge, with `INT` masked for the whole sequence through `ssp_int_hold` and
+  `n_INT_ssp`), physical SDRAM examine/deposit (R40, `ssp_mem_client`, SDRAM window only), **`U`**
+  unassemble and `S` showing the next instruction (R41, R42; one Z-80 disassembler source shared with
+  CamelFORTH, see below). Direct MMU frame taps and a `MAP_CHANGED` interrupt were shelved in R38 as
+  unnecessary for a human-scale, parked-CPU-only view.
+- **R43.** The monitor ROM grew from 64 to 128 KiB (dictionary window `0x5000..0x20000`) and can be
+  loaded from the OSD (`SSP Monitor ROM`, `.MRZ`) without an FPGA rebuild; words compiled with
+  `compiletoflash` survive **Reset SSP**. `tools/ssp_image.py` and `make -C ssp/fw` build the image and the
+  factory ROM. **R44** put the monitor on its own screen and keyboard (see the next entry). **R45**
+  coloured it (operator input bright green, monitor output bright blue). **R46** added Mecrisp's
+  cooperative multitasker (`multitask.fs`, vendored unchanged).
+- **Hardware.** Owner-checked on hardware through R46 (2026-11-02), including M3/M4, `U`, the OSD ROM
+  mount, the video console, colours and a background task blinking port `$FF`. Quartus at R44: 14,191
+  ALMs (34 %), no negative slack. Not exercisable on hardware until now: real interrupt sources (the
+  interval-timer entry below supplies one). Breakpoints, T-state stepping and the watchdog task are
+  still planned or shelved; see `doc/SSP_STATUS.md`.
+
+### Video terminal and serial port rework for RomWBW (R44, 2026-11-01)
+
+RomWBW's ACIA driver detects a chip by its 6850 master-reset behaviour, so both console devices were made
+to follow it. `SBCTextDisplayRGB` (both instances): the CPU register interface is sampled on `clk` (it
+used `n_rd`/`n_wr` as clocks); a control write with bits 1:0 = 11 gives status 00 and empties the keyboard
+buffer until the next control write; the keyboard buffer is 16 entries and drops keys when full (it was 8
+and wrapped); Esc sends `1B` (was `03`); the arrows, Home/End, Ins, Page Up/Down and F1-F12 send
+VT100/xterm sequences (the arrows used to send keypad digits). The serial `bufferedUART` got the same
+status behaviour. A second, SSP-private terminal (`ssp/rtl/ssp_vdu.vhd`) lets the SSP monitor use the
+screen and keyboard: OSD **Enter SSP Monitor** and **SSP Console** (Serial or Video) select it, and the
+Z80 terminal's screen, escape state and unread keys are untouched while it is shown. A line feed on the
+bottom row now blanks the whole recycled line (`d6f89ad`). Benches: `make -C sim vdu` and `terminal` (14
+mutants killed). On hardware (owner, 2026-11-02), RomWBW runs with two consoles: serial is ACIA unit 0
+and the screen and keyboard are unit 1.
+
+### CamelFORTH, the shared disassembler and emulator wrappers (2026-10-22 to 2026-11-02)
+
+- Kernel: ANS `DEFER`/`IS` and a `dodoer` code action; a `NOT` word; `QUIT` now discards a half-built
+  definition (an error inside `:` used to leave the hidden word as `LATEST`, and `WORDS` then printed
+  dictionary bytes as its name); for the bootable build the stacks, TIB and user area moved to the top of
+  the first 32K (`$ENDADDR` `4000h` to `8000h`) because the dictionary was running into them once the
+  block buffers and editor blocks were loaded, overwriting `DP`/`LATEST`/`STATE`. The CP/M build is
+  unchanged. `doc/custom-forth-instructions.md` documents the custom `NEXT`/`PUSHIX`/`POPIX` instructions.
+- Blocks: `OF` now drops the selector (every matched `CASE` branch used to leave it), `?OF` tests the
+  flag rather than a copy of the selector, and `THRU` keeps nothing on the stack across `LOAD`, so a
+  definition may span blocks (it used to crash with "Spurious interrupt / RST 38"). Found by reproducing
+  the crash with the Python Z-80 emulator running the real block-load path.
+- **`forth/disasm/z80dis.fth`** is the single hand-edited Z-80 disassembler, shared unchanged by CamelFORTH
+  (generated blocks 30-49) and the SSP monitor (spliced in by `sim/ssp/dictbuild.sh`). It decodes every
+  documented and undocumented instruction and the custom ones, and replaced hand-maintained blocks that
+  a new assemble-it-back round-trip test (`make -C forth/disasm check`) showed to be wrong in many
+  places (for example every opcode decoded as x=0, and `IM 1`/`IM 2` printed as 2/3).
+- **`tools/z80sim.py`** boots the bootable kernel in the Python `z80` emulator with the console and
+  RAM-disk MMU ports modelled, so a whole session takes seconds; **`tools/qforth.py`** drives the SSP
+  firmware's Mecrisp REPL under `qemu-system-riscv32`. `AGENTS.md` documents both, their limits, and the
+  porting facts that bit us (Mecrisp is case-insensitive, CamelFORTH is case-sensitive; Camel blocks are
+  16 lines by 64 columns evaluated one line at a time).
+
+### Interval timer and Z80 interrupt source at ports `$D0`-`$D3` (2026-11-02)
+
+The first real source for `n_INT`, which had been tied inactive. `Components/TIMER/IntervalTimer.vhd`
+counts milliseconds from the 50 MHz clock (independent of CPU speed and wait states) and raises a level
+interrupt every INTERVAL ms. It is separate from the free-running benchmark timers (`$C0`-`$CF`) and the
+DS12887 RTC (`$70`/`$71`). Requirement item 7 in `REQUIREMENTS.md`; register detail in `HARDWARE.md`.
+
+- **Decisions (owner).** Z80 interrupt mode 1 with the handler polling the sources; mode 0 also works
+  (the acknowledge read floats to `FFh`, which is `RST 38h`); no mode 2 or vector register.
+- **Registers.** INTERVAL is 16 bits of milliseconds on two ports (1 = every ms, 0 counts as 1). CONTROL
+  (RUN, IE, AUTO) and COMMAND (RESET, ACK, CLROVF strobes) are on separate ports so an acknowledge never
+  restates the levels. STATUS (EXPIRED, OVERFLOW, RUNNING, INTREQ, IE, AUTO) reads from either. `INT` is
+  EXPIRED and IE, released by ACK; OVERFLOW (a second expiry before ACK) is sticky until CLROVF. Periodic
+  mode restarts on expiry with no drift. A Z80 reset clears it. `n_INT` now comes from the timer and the
+  SSP single-step mask `n_INT_ssp` still gates it; the ACIAs' interrupt outputs remain unconnected.
+- **Verification.** `sim/run_interval_timer.sh` is a unit bench (exact periods, ACK before, with and after
+  an expiry, mutants killed). `sim/run_itimer_z80.sh` runs a Z-80 program in modes 0 and 1 through the real
+  `MicrocomputerZ80CPM` fabric: wake from `HALT`, interrupts held while `DI`, OVERFLOW, one-shot, IE as a
+  mask. On hardware, section 6 of `testing/timertest.asm` passed (owner, 2026-11-02): it times the timer
+  against the BenchTimer microsecond counter and checks both interrupt modes.
+- **Still to do at the time:** the full build timing report, wiring the ACIA interrupt outputs into `n_INT`,
+  and using the timer as RomWBW's system tick (done the same day; see the `itim.asm` entry below).
+- The same commit round recorded a planned stereo PSG (two YM2149 instances, `REQUIREMENTS.md` item 6),
+  not started.
+
 ### Interrupt lamps on the capture chain, and `Universal_Capture_Chain` read its mask backwards
 
 **Interrupt lamps.** `fpChainEnd` gained four stretched bits at chain 276-279, ahead of the
@@ -3464,7 +3608,7 @@ holding. `STRETCH_MASK` is a bit-string literal given to an *unconstrained* gene
 literal is ascending (`0 to N-1`, checked in GHDL: `M'left=0`, `M(8)='0'`, `M(20)='1'`). The
 entity indexed the generic directly, `STRETCH_MASK(i)`, so the mask was mirrored: the intended
 bits 8-15 stayed transparent and bits 16-23 (the reserved zeros) were "stretched". A transparent
-bit is only sampled at the 62.5 Hz refresh, so a ~20 us timer pulse every 20 ms was almost never
+bit is only sampled at the 75 Hz refresh, so a ~20 us timer pulse every 20 ms was almost never
 seen; a parked CPU leaves the request asserted as a level, which is why that did show. The
 original `x"0000_0F00"` mask and the README example `"00000011"` had the same flaw, so the bus
 strobes had never been stretched either. The stretcher itself was never the problem: it watches
