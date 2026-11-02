@@ -82,7 +82,7 @@ M10K (62 %), 49 % of block-RAM bits; no negative slack; clk_sys setup slack
 - Firmware: Mecrisp-Quintus port in `ssp/fw/`; monitor in
   `ssp/fw/apps/monitor.fs` (`E D G R I O MAP PHY LOG S U F ?`). monitor.fs may
   contain `\ @include <repo-relative file>` lines, expanded by
-  `sim/ssp/p1a_dictbuild.sh` (used for the shared disassembler core).
+  `sim/ssp/dictbuild.sh` (used for the shared disassembler core).
 - Verification: Verilator lanes in `sim/ssp/`, GHDL lanes in `sim/`
   (commands in §7).
 
@@ -125,7 +125,7 @@ M10K (62 %), 49 % of block-RAM bits; no negative slack; clk_sys setup slack
 | Area | State |
 |---|---|
 | Cores | FemtoRV32-gracilis (selected) and picorv32 (fallback, no longer simulated: the P0 stub lanes were retired R43) in `Components/RISCV/`, provenance in `PROVENANCE.md` |
-| Firmware base | Mecrisp-Quintus 1.1.2a port in `ssp/fw/` (no flash device; 128 KiB MROM whose window `0x5000..0x20000` is the `compiletoflash` dictionary, D-32/D-35 rev R43). Kernel source referenced in place from `~/mecrisp-quintus` (GPLv3; compliance per H-3/R16). Build: `cd ssp/fw && make` → `ssp/fw/build/mecrisp-ssp.hex` (build dir git-ignored). Dictionary build (D-35): `make -C sim dict-p1a` → `ssp/fw/build/mecrisp-ssp-p1a-app.hex`; factory image `make -C sim fw-rom` → committed `ssp/fw/forth_rom.mif` (D-38) |
+| Firmware base | Mecrisp-Quintus 1.1.2a port in `ssp/fw/` (no flash device; 128 KiB MROM whose window `0x5000..0x20000` is the `compiletoflash` dictionary, D-32/D-35 rev R43). Kernel source referenced in place from `~/mecrisp-quintus` (GPLv3; compliance per H-3/R16). Build: `cd ssp/fw && make` → `ssp/fw/build/mecrisp-ssp.hex` (build dir git-ignored). Dictionary build (D-35): `make -C sim dict-rtl` → `ssp/fw/build/mecrisp-ssp-app.hex`; factory image `make -C sim fw-rom` → committed `ssp/fw/forth_rom.mif` (D-38) |
 | SSP RTL | `ssp_top.v` (core + MROM/RV RAM + decoder + bridge + UART + console mux), `ssp_bridge.v` (register file, park controller, D-30 sequencer for FW mem/IO kicks, WDG×2, `TICK_US`, R39 step sequencer), `ssp_uart.v` (8N1, 128-byte RX FIFO, escape recognizer, OQ-22 byte relay), `z80_bus_mux.vhd` and `ssp_tramp.vhd` (instantiated in the CPM core since R33) |
 | T80 changes (R25) | `T80.vhd`/`T80_Pack.vhd`/`T80s.vhd`: `would_boundary` export + boundary park gate (BusAck only when the next state is M1; prefix-gated). Wired since R33: `n_BUSRQ <= ssp_busrq_n`; `FREEZE_req_n` is a dead port (R28 finding). With the SSP idle the core is unchanged (P-B) |
 | GHDL integration benches | `integ-park` (R-40: every park on an instruction boundary vs an unparked reference), `integ-mux` (R-42: mux + real T80 + engine model), `integ-core` (R-42 against the real SDRAM/BRAM/MMU fabric), `cycle-golden` + `engine-golden` (engine strobes == real T80, per T-state; committed `sim/ssp/golden_cycles.txt`), `tramp` (`G aaaa` vs the real T80, 176 checks) |
@@ -328,7 +328,7 @@ address-mode independence (R37). Full open-question list: `SSP_DESIGN.md` §14.
   larger dictionary exposed it. It now checks `R` against the last step line
   (relative). Do not reintroduce absolute PCs for a free-running loop.
 - **Forth definition order:** Mecrisp needs every word defined before it is
-  used. `dict-p1a` reports a forward reference as `not found` (R39 review B6).
+  used. `dict-rtl` reports a forward reference as `not found` (R39 review B6).
 - **Both simulation halves stub the seam:** a wiring or polarity bug at the
   `ssp_top` ↔ CPM boundary (R39 B1/B2) is invisible to the Verilator *and*
   GHDL lanes. Check top-level connectivity explicitly.
@@ -360,12 +360,14 @@ make -C sim p1a-vcd               # traced twin, +VCD -> sim/ssp/p1a.vcd
 make -C sim tramp                 # G aaaa: ssp_tramp vs the REAL T80 (GHDL, 176 checks)
 make -C sim tramp-p1a             # G aaaa: FW-side handshake on the p1a lane
 make -C sim uart-fifo             # ssp_uart RX FIFO unit bench, depths 8 and 128 (iverilog)
-make -C sim dict-p1a smoke-p1a    # monitor dictionary build (~3.5 min) + operator-session smoke (~4.5 min)
+make -C sim dict-rtl smoke-p1a    # monitor dictionary build (~3.5 min) + operator-session smoke (~4.5 min)
 make -C sim dl-path               # OSD ROM mount (R43, R-29), ~10 s
 make -C sim vdu                   # SSP video console + OSD entry (R44), ~10 s
 make -C sim terminal              # video terminal + ssp_vdu + ACIA master reset (GHDL, R44), ~5 s
 make -C sim fw-rom                # rebuild + regenerate the committed factory ROM (.mif)
 make -C sim mrom-install          # scp the monitor ROM image to the MiSTer as mrz80-ssp.mrz
+tools/ssp_image.py                # check + build the monitor ROM image for OSD mounting -> ssp/fw/build/mrz80-ssp.mrz (~3.5 min)
+tools/ssp_image.py --check        # qemu compile check of monitor.fs only (~2 s); --install also scp's the image
 make -C sim integ-park integ-mux cycle-golden   # GHDL, real T80 (seconds each)
 make -C sim engine-golden         # real bridge engine vs the golden T80 waveforms
 
@@ -661,7 +663,7 @@ smoke and dictionary-build scripts.
    does **not** store memory writes (only I/O writes are captured). Back
    engine reads/writes with a real 64K array (it can start from the same
    pattern) so a modify/examine round trip is testable.
-6. Write `sim/ssp/p1a_dictbuild.sh` and `sim/ssp/p1a_smoke.sh`, cloned from
+6. Write `sim/ssp/dictbuild.sh` and `sim/ssp/p1a_smoke.sh`, cloned from
    `sim/ssp/dictbuild_stub.sh` and `sim/ssp/smoke_stub.sh` (D-35
    `compiletoflash` capture via `+DUMP=`; artifacts in their own name space —
    do not overwrite the P0 goldens). The smoke should script: escape, `E`
@@ -672,7 +674,7 @@ smoke and dictionary-build scripts.
 7. Add an **OM-off transparency** case (`+OM=0`): every byte, including
    `ESC_CHAR`, must reach the Z80 (BFM `guest_rx_count`), no park (R-43).
 
-**Exit:** `make -C sim smoke-p1a dict-p1a` PASS; R-43, R-46 (polled FW, IRQ
+**Exit:** `make -C sim smoke-p1a dict-rtl` PASS; R-43, R-46 (polled FW, IRQ
 tied off) and R-23 demonstrated on the p1a lane; `lint-ssp`,
 `smoke-gracilis`, `dict-gracilis` still PASS.
 

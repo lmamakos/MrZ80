@@ -8,7 +8,7 @@
 
 ROOT := $(CURDIR)/..
 
-.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu lint-ssp seam-check ssp-map p1a p1a-vcd dict-p1a smoke-p1a dl-path vdu terminal mrom-install tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
+.PHONY: regmap regmap-check sync fw smoke-qemu dict-qemu lint-ssp seam-check ssp-map p1a p1a-vcd dict-rtl smoke-p1a dl-path vdu terminal mrom-install tramp tramp-p1a uart-fifo integ-park mem-client integ-mux integ-core cycle-golden engine-golden fw-rom fw-rom-check
 regmap:
 	python3 $(ROOT)/tools/ssp_regmap.py
 
@@ -119,8 +119,8 @@ uart-fifo:
 
 # P1a dictionary build (monitor.fs into the p1a model; separate artifact
 # name space -- P0 goldens untouched)
-dict-p1a: p1a
-	$(ROOT)/sim/ssp/p1a_dictbuild.sh
+dict-rtl: p1a
+	$(ROOT)/sim/ssp/dictbuild.sh
 
 smoke-p1a: p1a
 	$(ROOT)/sim/ssp/p1a_smoke.sh
@@ -141,16 +141,16 @@ dl-path: p1a
 
 # Factory ROM (D-38): rebuild the monitor dictionary and regenerate the MIF
 # the MROM instance loads.  Recommit ssp/fw/forth_rom.mif when it changes.
-fw-rom: dict-p1a
-	python3 $(ROOT)/tools/bin2mif.py $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
-	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
+fw-rom: dict-rtl
+	python3 $(ROOT)/tools/bin2mif.py $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
+	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
 
-# R43: copy the monitor ROM image (the last dict-p1a build, 128 KiB) to the
+# R43: copy the monitor ROM image (the last dict-rtl build, 128 KiB) to the
 # MiSTer, where the OSD "SSP Monitor ROM" item (FC6, .MRZ) can mount it
 mrom-install:
-	test -f $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin
-	scp $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin mister:/media/fat/games/MrZ80/mrz80-ssp.mrz
+	test -f $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin
+	scp $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin mister:/media/fat/games/MrZ80/mrz80-ssp.mrz
 
-# Drift check only (needs a prior dict-p1a build)
+# Drift check only (needs a prior dict-rtl build)
 fw-rom-check:
-	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-p1a-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768
+	python3 $(ROOT)/tools/bin2mif.py --check $(ROOT)/ssp/fw/build/mecrisp-ssp-app.bin $(ROOT)/ssp/fw/forth_rom.mif 32768

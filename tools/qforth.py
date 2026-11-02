@@ -7,7 +7,7 @@ SAME Mecrisp kernel and source files as the silicon image, but with an
 ns16550 console and everything in DRAM.  What it does NOT have: the SSP
 bridge registers (SSP_*), the Z-80, the 4.3k-cycles-per-byte UART timing
 or the MROM/dictionary windows.  Anything touching SSP_* must be tested on
-the Verilator p1a lane (make -C sim p1a dict-p1a smoke-p1a, AGENTS.md).
+the Verilator p1a lane (make -C sim p1a dict-rtl smoke-p1a, AGENTS.md).
 
 Input is paced one byte at a time, waiting for the kernel's echo: qemu
 delivers a burst into the 16-byte ns16550 FIFO faster than Mecrisp drains
@@ -23,7 +23,7 @@ Command line (lines are sent in command-line order):
     -e LINE         send LINE
     -f FILE         send each line of FILE
     --strip         drop blank lines and full-line `\\` comments from -f
-                    files (what sim/ssp/p1a_dictbuild.sh does)
+                    files (what sim/ssp/dictbuild.sh does)
     --check         exit 1 if any line ended without `ok.` (an error such
                     as `foo not found.` or `Stack underflow`)
   e.g.  tools/qforth.py --build -e ': sq dup * ;' -e '7 sq .'

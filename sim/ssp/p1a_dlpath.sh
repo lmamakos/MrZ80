@@ -14,15 +14,15 @@
 #         second escape the bare Mecrisp REPL answers (no monitor any more).
 # Part C  SSP Monitor Off (+OSD_OK=0): a mount still lands byte for byte.
 #
-# Needs the monitor image from p1a_dictbuild.sh (built here if missing).
+# Needs the monitor image from dictbuild.sh (built here if missing).
 
 set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT" || exit 1
 MODEL=${MODEL:-sim/ssp/obj_p1a/ssp_p1a}
 BUILD=ssp/fw/build
-APPBIN=$BUILD/mecrisp-ssp-p1a-app.bin
-APPHEX=$BUILD/mecrisp-ssp-p1a-app.hex
+APPBIN=$BUILD/mecrisp-ssp-app.bin
+APPHEX=$BUILD/mecrisp-ssp-app.hex
 KBIN=$BUILD/mecrisp-ssp.bin
 KHEX=$BUILD/mecrisp-ssp.hex
 WORK=/tmp/opencode/p1a-dlpath; mkdir -p "$WORK"
@@ -31,8 +31,8 @@ ROM_LEN=131072
 [ -x "$MODEL" ] || { echo "FAIL: model missing -- run: make -C sim p1a"; exit 1; }
 make -C ssp/fw ssp >/dev/null || { echo "FAIL: fw build"; exit 1; }
 if [ ! -f "$APPBIN" ] || [ "$(stat -c %s "$APPBIN")" -ne $ROM_LEN ]; then
-  echo "(building the monitor dictionary: sim/ssp/p1a_dictbuild.sh)"
-  sim/ssp/p1a_dictbuild.sh > "$WORK/dictbuild.log" 2>&1 \
+  echo "(building the monitor dictionary: sim/ssp/dictbuild.sh)"
+  sim/ssp/dictbuild.sh > "$WORK/dictbuild.log" 2>&1 \
     || { echo "FAIL: dictionary build"; tail -15 "$WORK/dictbuild.log"; exit 1; }
 fi
 

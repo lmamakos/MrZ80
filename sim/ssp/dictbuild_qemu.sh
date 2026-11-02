@@ -2,7 +2,7 @@
 # sim/ssp/dictbuild_qemu.sh -- D-35 build-pipeline rehearsal on qemu.
 #
 # Flow (the qemu lane of the dictionary build; the authoritative run is
-# sim/ssp/p1a_dictbuild.sh on the p1a model, hardware-true addresses, same
+# sim/ssp/dictbuild.sh on the p1a model, hardware-true addresses, same
 # script shape):
 #   1. build the FW qemu variant (dict window 0x8000_5000..0x8002_0000,
 #      "rom" = writable DRAM)

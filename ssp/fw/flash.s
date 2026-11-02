@@ -6,7 +6,7 @@
 #    that sits contiguously above the kernel in the OSD-loaded image (D-35).
 #    flash!/hflash! are plain stores, and the window is writable everywhere
 #    (ssp_top accepts RV writes at DICT_BASE and up; qemu has DRAM there):
-#      * the build pipeline (sim/ssp/p1a_dictbuild.sh) runs `compiletoflash`
+#      * the build pipeline (sim/ssp/dictbuild.sh) runs `compiletoflash`
 #        on the p1a model and captures the window into the shipped MROM image;
 #      * on the board the same words extend the dictionary in place.  Those
 #        words survive an RV reset ("Reset SSP": the boot scan finds them)

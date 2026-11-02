@@ -188,14 +188,14 @@ tools/qforth.py --load /tmp/img.bin@0x80100000 -e '$80100000 c@ .'
 
 Limits: no SSP bridge registers (`SSP_*`), no Z-80, no real UART timing.
 Code that touches `SSP_*` or the monitor is tested on the Verilator lane:
-`make -C sim p1a dict-p1a smoke-p1a`. Input is paced byte-by-byte on the echo
+`make -C sim p1a dict-rtl smoke-p1a`. Input is paced byte-by-byte on the echo
 (unpaced bursts silently lose characters); an error line has no `ok.`, which
 is how `--check` detects it.
 
 ### Shared Forth source: the Z-80 disassembler
 
 `forth/disasm/z80dis.fth` is loaded unchanged by both CamelFORTH (generated
-blocks 30-49) and the SSP monitor (spliced in by `sim/ssp/p1a_dictbuild.sh` at
+blocks 30-49) and the SSP monitor (spliced in by `sim/ssp/dictbuild.sh` at
 the `\ @include` line of `ssp/fw/apps/monitor.fs`). Edit only the shared core
 and the small per-environment ports; never the generated `3x-`/`4x-disasm.fth`.
 `make -C forth/disasm check` (~6 s) assembles every disassembled line back to

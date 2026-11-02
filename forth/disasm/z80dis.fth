@@ -4,7 +4,7 @@
 \   * CamelFORTH (16-bit cells, block-loaded): forth/disasm/mkblocks.py packs
 \     it, wrapped by camel-port.fth, into blocks/3x-disasm.fth.
 \   * Mecrisp-Quintus on the SSP (32-bit cells, text-fed): sim/ssp/
-\     p1a_dictbuild.sh splices it into ssp/fw/apps/monitor.fs at the
+\     dictbuild.sh splices it into ssp/fw/apps/monitor.fs at the
 \     "\ @include forth/disasm/z80dis.fth" line.
 \ Everything that differs between the two lives in a PORT, never here.
 \ See forth/disasm/README.md for the full porting contract and the tests.

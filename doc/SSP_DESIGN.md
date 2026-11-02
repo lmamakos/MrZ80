@@ -436,7 +436,7 @@ sticky `rx_overrun`), `UART_CTRL` 0x12C (`en`, self-clearing `rx_clr`/
   tail for Mecrisp's backward dictionary-pointer scan; bytes past 128 KiB are
   dropped; at its end a 255-clock monitor-subsystem reset (core + bridge +
   UART) restarts the monitor. The Z80 is never reset and keeps its SDRAM.
-  Artifact: `ssp/fw/build/mecrisp-ssp-p1a-app.bin` (128 KiB, the bytes of
+  Artifact: `ssp/fw/build/mecrisp-ssp-app.bin` **[renamed after R44: was `mecrisp-ssp-p1a-app.bin`]** (128 KiB, the bytes of
   `forth_rom.mif`), installed as `mrz80-ssp.mrz` (`make -C sim mrom-install`).
 - **Dictionary window `[new R18, D-35]`** `0x4400..0x10000` **[R43: `0x5000..0x20000`]**: contiguous
   above the kernel. Build pipeline (§5.4.1) compiles application Forth there
@@ -2745,3 +2745,14 @@ paragraph, status rows), `doc/SSP_PANEL_UX.md` (T3 lamp meaning, §6 entry-path
 note, header), this doc's spec surfaces (goals req. 3, block diagram, OSD bit
 table, D-14/D-16/D-19 rows, R-25 bench row, OQ-15, P2/P3 phasing), and
 `AGENTS.md` (console surfaces + the two new regression lanes).
+
+*Rename addendum (2026-11-02):* names that came from the project plan rather
+than from what the thing is lost their `p1a` tag: `sim/ssp/p1a_dictbuild.sh` is
+now `sim/ssp/dictbuild.sh`, `make -C sim dict-p1a` is `dict-rtl` (the sibling of
+`dict-qemu`), and the artifacts `mecrisp-ssp-p1a-app.{bin,hex}` / `dict-p1a.{bin,hex}`
+are `mecrisp-ssp-app.*` / `dict.*`. Earlier entries above keep the old names as
+history. The Verilator model and its lanes (`make p1a`, `smoke-p1a`, `tramp-p1a`,
+`sim/ssp/p1a_*.sh`, `obj_p1a`) are not renamed. New front end `tools/ssp_image.py`
+(qemu compile check + the dictionary build, writes `ssp/fw/build/mrz80-ssp.mrz`
+for the OSD mount); its input preparation moved to `tools/ssp_appsrc.py`, shared
+with `dictbuild.sh`. Documented in `doc/OVERVIEW.md` §6.

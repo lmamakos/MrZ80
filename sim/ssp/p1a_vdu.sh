@@ -21,11 +21,11 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT" || exit 1
 MODEL=${MODEL:-sim/ssp/obj_p1a/ssp_p1a}
-APP=ssp/fw/build/mecrisp-ssp-p1a-app.hex
+APP=ssp/fw/build/mecrisp-ssp-app.hex
 WORK=/tmp/opencode/p1a-vdu; mkdir -p "$WORK"
 
 [ -x "$MODEL" ] || { echo "FAIL: model missing -- run: make -C sim p1a"; exit 1; }
-[ -f "$APP" ] || { echo "FAIL: $APP missing -- run: make -C sim dict-p1a"; exit 1; }
+[ -f "$APP" ] || { echo "FAIL: $APP missing -- run: make -C sim dict-rtl"; exit 1; }
 
 fail=0
 ok()   { echo "  ok: $1"; }

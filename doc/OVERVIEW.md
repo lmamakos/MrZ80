@@ -478,6 +478,65 @@ free: the decoder took the monitor's dictionary from 11.7 KB to 22.4 KB — whic
 is why the monitor's ROM has since doubled to 128 KB, leaving a 108 KB
 dictionary window with room to grow.
 
+### Building your own monitor
+
+The monitor is a ROM image, and making a new one takes one command:
+
+```sh
+tools/ssp_image.py                 # check, then build  ->  ssp/fw/build/mrz80-ssp.mrz
+tools/ssp_image.py --check         # just the quick compile check (about 2 seconds)
+tools/ssp_image.py -o /tmp/t.mrz   # put the image somewhere else
+tools/ssp_image.py --install       # build, then scp it to the MiSTer
+```
+
+Copy the `.mrz` to the MiSTer (`--install` puts it at
+`/media/fat/games/MrZ80/mrz80-ssp.mrz`; `--dest user@host:/path` changes
+that), pick it with the OSD's **SSP Monitor ROM** item and **Reset SSP**. The
+Z80 side keeps running throughout, and no FPGA rebuild is involved.
+
+**What goes in.**
+
+| Input | What it is |
+|-------|-----------|
+| `ssp/fw/apps/monitor.fs` | The monitor itself: every command, the banner, the prompt loop. This is the file you edit. Its `\ @include <file>` lines splice in shared source such as the Z-80 disassembler, `forth/disasm/z80dis.fth` |
+| `ssp/regs/ssp_regs.csv` | The bridge's register file, the one source for both RTL and firmware. It is generated into `ssp/fw/ssp-regs.fs`; the build picks out the `SSP_*` constants that `monitor.fs` mentions *by name*, so a register you add to the CSV is usable in Forth by its name |
+| `ssp/fw/*.s` + Mecrisp-Quintus | The Forth kernel for the RV32 core: our three board-specific assembly files plus the Mecrisp-Quintus source tree, which is referenced in place (`~/mecrisp-quintus/mecrisp-quintus-source`, or set `MECRISP`) |
+
+The tools needed are the `riscv64-unknown-elf-` binutils, `qemu-system-riscv32`,
+Verilator and Python 3.
+
+**What the build does.** First comes the **compile check**: the same kernel
+built for qemu is fed `compiletoflash` and `monitor.fs`, and any line that
+doesn't answer `ok.` (an unknown word, a stack error) stops the run in a couple
+of seconds, before the slow step. The check can't exercise the SSP registers, and
+its dictionary can't be loaded on the board, because that image is linked at qemu's
+addresses. Then the **image build** (3 to 4 minutes) types the monitor into the *actual
+SSP RTL* running in a Verilator model, at the board's real addresses. It dumps the
+ROM, checks that the kernel bytes are untouched, and boots the result once to
+prove the monitor's words are resident from power-on.
+
+**What comes out** (all under `ssp/fw/build/`, which git ignores):
+
+| Output | What it is |
+|--------|-----------|
+| `mrz80-ssp.mrz` | **The image to mount**: 128 KiB, kernel plus compiled dictionary (`-o` changes the name) |
+| `mecrisp-ssp-app.bin` / `.hex` | The same image as the build leaves it: the `.bin` is what `mrz80-ssp.mrz` is copied from, the `.hex` is what the simulator lanes load |
+| `dict.bin` / `.hex` | Just the dictionary part, from `0x5000` up, handy for diffing two builds |
+| `mecrisp-ssp.hex` / `.bin` / `.elf` | The bare kernel with an empty dictionary |
+
+The log of the slow step is `/tmp/opencode/ssp_image.log`. The image baked into
+the FPGA bitstream, `ssp/fw/forth_rom.mif`, is a separate, committed artifact:
+`make -C sim fw-rom` regenerates it from the same build for a release, while
+everyday testing never needs it.
+
+**Why this belongs in a tour.** A new monitor command is a Forth word in one
+text file. It is compiled and tested in seconds, built into a ROM image in
+minutes, and mounted from a menu while the machine it observes carries on. The
+same pipeline carries whatever else you teach the SSP, whether that is a new
+register in the CSV, a shared piece of Forth or a different monitor altogether.
+That is the sense in which the SSP is extensible: the hardware only provides the
+bridge and the kernel runs whatever dictionary is in the ROM.
+
 ### Engineering underneath (because you'll appreciate it)
 
 * **Sovereignty and watchdogs.** The Z80 owns the console at power. If the
@@ -566,8 +625,8 @@ there's a place for it.
   not etched anywhere: it is Forth source assembled into a ROM image that ships
   in the core, and even the bridge's register file is generated from one CSV so
   hardware and firmware grow together. A new monitor is a file, not an FPGA
-  build: rebuild the ROM image and load it from the OSD, and the Z80 never
-  notices. Words can even be compiled straight into the ROM's dictionary
+  build: rebuild the ROM image (`tools/ssp_image.py`, see §6) and load it from the
+  OSD, and the Z80 never notices. Words can even be compiled straight into the ROM's dictionary
   window on the running board. The pace so far — from no monitor at all to
   escape, park, examine, deposit, step, physical memory and disassembly in a
   few dozen development rounds — suggests the command set will keep getting

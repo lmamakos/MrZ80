@@ -9,7 +9,7 @@ the first byte of the Mecrisp flash-dictionary window must agree between
                    and the hex padding in ssp/fw/Makefile;
   * the RTL        ssp/rtl/ssp_top.v (decode width, MROM DEPTH, DICT_BASE),
                    MrZ80.sv (DICT_BASE override, mount address guard);
-  * the tooling    sim/ssp/p1a_dictbuild.sh, sim/ssp/dictbuild_qemu.sh
+  * the tooling    sim/ssp/dictbuild.sh, sim/ssp/dictbuild_qemu.sh
                    (ROM_LEN / DICT_OFF), the bin2mif depth in sim/Makefile.
 
 A mismatch is silent elsewhere: a dictionary built against one window and
@@ -116,7 +116,7 @@ m = find(sv, r'ssp_mnt_in_rom\s*=\s*\(ioctl_addr\[26:(\d+)\]\s*==', 'MrZ80.sv mo
 need(1 << int(m.group(1)) == ROM, 'MrZ80.sv mount guard admits %#x bytes, ROM is %#x' % (1 << int(m.group(1)), ROM))
 
 # ---- tooling -----------------------------------------------------------------
-for p in ('sim/ssp/p1a_dictbuild.sh', 'sim/ssp/dictbuild_qemu.sh'):
+for p in ('sim/ssp/dictbuild.sh', 'sim/ssp/dictbuild_qemu.sh'):
     s = rd(p)
     rlen = find(s, r'^ROM_LEN=(0x[0-9A-Fa-f]+)', p + ' ROM_LEN', re.M)
     doff = find(s, r'^DICT_OFF=(0x[0-9A-Fa-f]+)', p + ' DICT_OFF', re.M)

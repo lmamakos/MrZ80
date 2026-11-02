@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sim/ssp/p1a_smoke.sh -- P1a monitor smoke on the p1a lane (real ssp_top +
-# Z80 BFM), booting the dictionary artifact built by p1a_dictbuild.sh
+# Z80 BFM), booting the dictionary artifact built by dictbuild.sh
 # (kernel + monitor.fs, `init` runs the monitor).
 #
 # Part A (+OM=1): the operator session --
@@ -24,13 +24,13 @@ set -u
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT" || exit 1
 MODEL=${MODEL:-sim/ssp/obj_p1a/ssp_p1a}
-APP=ssp/fw/build/mecrisp-ssp-p1a-app.hex
+APP=ssp/fw/build/mecrisp-ssp-app.hex
 WORK=/tmp/opencode/p1a-smoke; mkdir -p "$WORK"
 
 [ -x "$MODEL" ] || { echo "FAIL: model missing -- run: make -C sim p1a"; exit 1; }
 if [ ! -f "$APP" ] || [ ssp/fw/apps/monitor.fs -nt "$APP" ] || [ forth/disasm/z80dis.fth -nt "$APP" ] || [ ssp/fw/terminal.s -nt "$APP" ]; then
-  echo "(building the monitor dictionary: sim/ssp/p1a_dictbuild.sh)"
-  sim/ssp/p1a_dictbuild.sh > "$WORK/dictbuild.log" 2>&1 \
+  echo "(building the monitor dictionary: sim/ssp/dictbuild.sh)"
+  sim/ssp/dictbuild.sh > "$WORK/dictbuild.log" 2>&1 \
     || { echo "FAIL: dictionary build"; tail -15 "$WORK/dictbuild.log"; exit 1; }
 fi
 
