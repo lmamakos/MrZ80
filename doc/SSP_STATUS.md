@@ -1,6 +1,6 @@
 # SSP_STATUS — state, plans and hand-off for the System Support Processor
 
-Updated: **2026-11-02** · Branch `r24-p1b`, merged into `main` locally (not
+Updated: **2026-11-02** (R46 multitasker) · Branch `r24-p1b`, merged into `main` locally (not
 pushed) after R43: R39–R40, R41 (monitor `U`, shared Z-80 disassembler), R42
 (`S` shows the next instruction) and R43 (128 KiB MROM + OSD ROM mount); R44 (SSP
 video console, OSD entry, RomWBW second console) committed locally · Phase **P1b**; M4 (single-step) and M3 (physical
@@ -45,6 +45,7 @@ Planning documents are not kept outside `doc/`.
 | R42 `S` shows the next instruction | **Done**, owner-checked on hardware (2026-11-02). A deferred hook keeps `S` independent of the disassembler (§17 R42) |
 | R43 MROM 128 KiB + OSD ROM mount | **Done**, owner-checked on hardware (2026-11-01): OSD mount, Reset SSP, words compiled with `compiletoflash` survive the reset. Simulation: `dl-path`, 5 mutants killed; full suite green; Quartus build reviewed (§17 R43) |
 | R44 video console + OSD entry; terminal + ACIA work for RomWBW | **Done**, owner-checked on hardware (2026-11-02). Simulation: `vdu`, `terminal` (14 mutants killed); Quartus build reviewed (§17 R44) |
+| R46 cooperative multitasker (vendored Mecrisp `multitask.txt`) | **Done in simulation** (`smoke-p1a` Part I; qemu): kernel waits call `pause`; `up`/`boot-task` survive a cold boot. Hardware check pending; the watchdog task is next (§4.2) |
 | R45 monitor colours; LF-scroll fix; build tooling | LF-scroll fix **done, on hardware** (part of the owner's R44 test, 2026-11-02). Monitor colours **done in simulation** (`smoke-p1a`, `vdu`, `terminal`): operator input bright green, monitor output bright blue (`col-*` in `monitor.fs`); hardware check pending. `make -C ssp/fw` builds the image and factory ROM |
 
 ### 1.2 What is on hardware
@@ -62,7 +63,9 @@ and OSD entry, the Z80 terminal's keyboard (with the LF-scroll fix applied),
 RomWBW with two consoles, and the mnemonic on each `S` line. **Pending (R45):**
 the monitor colours (input bright green, output bright blue, terminal restored
 before `G`/`F`) on both consoles: a mount of `build/mrz80-ssp.mrz` is enough, no
-bitstream rebuild.
+bitstream rebuild. **Pending (R46):** the multitasker on the board: `F`, then
+the Part I lines (`task:`, `multitask`, a heartbeat task, `lap`); a keyboard that
+still echoes cleanly with a task running.
 The key-break path of a long `U` is still not in the smoke. Not exercisable on
 hardware yet: real INT sources (none exist; the step-time INT mask is proven in
 simulation only). R44 Quartus build (reviewed): 14,191 ALMs (34 %), 345/553
@@ -86,7 +89,7 @@ M10K (62 %), 49 % of block-RAM bits; no negative slack; clk_sys setup slack
 
 ### 1.4 Known gaps
 
-- **Dictionary space and REPL speed.** The monitor dictionary is 22,412 bytes;
+- **Dictionary space and REPL speed.** The monitor dictionary is 24,244 bytes (R46);
   since R43 the window is 110,592 bytes (`0x5000..0x20000`). Mecrisp searches
   the dictionary linearly for every token, so typing in the raw Forth (`F`) is
   slower and a dictionary build takes longer (~3 min) as it grows. Monitor
@@ -251,42 +254,50 @@ Owner priorities from P1a first light (R35), with status:
 | **`MPKG`** (OSD index 7 source packs, R-29 "MPKG auto-eval", P2 "MPKG auto-eval polish") | **Deferred pending need:** no driver for it today; image mounts and on-board `compiletoflash` cover current use. Index 7 stays reserved; the R-29 MPKG item and the P2 polish item are off the exit criteria | someone needs to extend the monitor without the toolchain |
 | **T-state / machine-cycle stepping** and T80 MC/TS/ALT export completion | **Shelved**, unscheduled | no trigger; `S` stays instruction-granular |
 
-### 4.2 Next: Forth multitasker (first step: integrate Mecrisp's own)
+### 4.2 Forth multitasker (R46): integrated; watchdog task is next
 
-Mecrisp-Quintus ships a cooperative multitasker, `common/multitask.txt` (120
-lines of Forth; `multitask-debug.txt` adds a `tasks` listing and needs
-`dictionary-tools.txt`). Round-robin list of tasks; `task:`, `activate`,
-`background`, `stop`, `wake`, `idle`, `insert`, `remove`, `catch`/`throw`,
-`multitask`/`singletask`; a task switch happens only in `pause`, which runs the
-`hook-pause` vector (`nop` by default). Probed on the qemu kernel (2026-11-02, no
-repo change): it compiles clean in both RAM and `compiletoflash` mode with no
-kernel change (all primitives it uses exist), and a counter task ran once per
-`pause` from the main task.
+**Done in simulation (R46, 2026-11-02).** Mecrisp's cooperative multitasker
+(`common/multitask.txt`: round-robin list; `task:`, `activate`, `background`,
+`stop`, `wake`, `idle`, `insert`, `remove`, `catch`/`throw`, `multitask`/`singletask`)
+is **vendored unchanged** (header comment only) as `ssp/fw/mecrisp/multitask.fs` and
+pulled into the monitor dictionary by a `\ @include` in `monitor.fs`; the include
+mechanism was not extended outside the repo. A task switch happens only in `pause`,
+which runs the `hook-pause` vector; the kernel's `serial_key` and `serial_emit` waits
+(`ssp/fw/terminal.s`, bridge and qemu variants) now call `pause`, through
+`pause_safe`, which saves `x1, x5-x7, x10-x13` (callers such as `accept` keep their
+state in `x10`-`x12` across `key`/`emit`, and `pause` is a Forth word that may clobber
+them). `hook-pause` is a RAM vector reset to `nop` at every boot, so the firmware
+starts single-task; nothing changes until someone runs `multitask`.
 
-To integrate and test, in this order:
-1. Get the module into the build: it lives in the Mecrisp tree (referenced in place,
-   not vendored), so `ssp_appsrc.py` needs an include form for `$MECRISP/common/...`
-   (today `\ @include` takes repo-relative paths only) and `ssp/fw/Makefile` the same
-   dependency.
-2. Make the kernel call `pause` where it waits: `serial_key` in `ssp/fw/terminal.s`
-   is a busy poll (and the `WDG_PARK_KICK` loop) and `serial_emit` waits on
-   `tx_ready`; with `pause` in those loops other tasks run while the monitor sits
-   at the prompt. Measure the cost per poll.
-3. Test with a heartbeat task and a watchdog task on the qemu lane, then on the
-   p1a lane (the real bridge registers), then on hardware.
-4. Only then design the watchdog task: what it samples (each task's progress
-   counter, bridge `STATUS`, the monitor's command loop), what it kicks
-   (`WDG_RUN_KICK`/`WDG_PARK_KICK`), and what happens when the check fails.
+- **Cold boot:** `up` and `boot-task` (the `flashvar-here`/`nvariable`/`variable`
+  initialisation under `compiletoflash`) survive a cold boot of the shipped image
+  with no help from `init` (smoke Part I checks `up @ boot-task =` and the self-link).
+- **Test (smoke Part I, p1a lane):** from a cold boot, a heartbeat task and a task
+  that writes the park-watchdog kick register both run next to the boot task, one
+  beat per `pause` round (`lap` = 100 `pause`s gives exactly 100), they also run while
+  the monitor idles in `key`, `singletask` freezes them and `multitask` wakes them.
+  Same checks on the qemu kernel (`tools/qforth.py`).
+- **Cost:** about 500 cycles per task switch, so a `key` wait lap with two extra tasks
+  is about 1,500 cycles against 4,342 per serial character; the 128-byte RX FIFO
+  (D-41) absorbs the rest. More tasks lengthen the lap, so keep the task count small.
+  Dictionary: +1.7 KB (24,244 B used).
+- **Not done:** `multitask-debug.txt`'s `tasks` listing (needs `dictionary-tools.txt`);
+  no monitor command knows about tasks; the monitor's own long loops (`S` trace, long
+  `E`/`U` listings, the engine waits) do not call `pause`, so tasks stall during them.
+  Hardware check pending (mount `build/mrz80-ssp.mrz`, `F`, run the Part I lines).
 
-Design points to carry into it: a **cooperative** scheduler cannot run the watchdog
-task while the task being watched is stuck in a loop without `pause`, so the
-hardware timeout (`WDG_PARK_T`) remains the backstop and the task's value is that it
-kicks only on evidence of correct operation (all tasks checked in), not merely
-because the key-wait loop is reached. A **preemptive** variant needs a timer
-interrupt, and the firmware is polled (D-27); Mecrisp has a preemptive example
-(`gd32vf103cb/multitasking-essentials`) and a FemtoRV interrupt file. Treat
-preemption as a later question. Per-task stacks are 128 cells each by default
-(`stackspace`) in RV RAM (64 KiB).
+**Next: design the watchdog task.** What it samples (each task's progress counter,
+bridge `STATUS`, the monitor's command loop), what it kicks (`WDG_RUN_KICK` /
+`WDG_PARK_KICK`; today only the `serial_key` wait loop kicks `WDG_PARK_KICK`, which
+the task would replace), and what happens when the check fails. Design points: a
+**cooperative** scheduler cannot run the watchdog task while the watched task is
+stuck in a loop without `pause`, so the hardware timeout (`WDG_PARK_T`) remains the
+backstop and the task's value is that it kicks only on evidence of correct operation
+(all tasks checked in), not merely because the key-wait loop is reached. A
+**preemptive** variant needs a timer interrupt, and the firmware is polled (D-27);
+Mecrisp has a preemptive example (`gd32vf103cb/multitasking-essentials`) and a FemtoRV
+interrupt file. Treat preemption as a later question. Per-task stacks are 128 cells
+each by default (`stackspace`) plus the task header, in RV RAM (64 KiB).
 
 ### 4.3 Breakpoints: status and decisions
 
@@ -384,6 +395,14 @@ address-mode independence (R37). Full open-question list: `SSP_DESIGN.md` §14.
   (7); the array must keep its MLAB `ramstyle` hint (async head read) --
   re-measure with `bakeoff/uartfifo128` if the FIFO logic changes. Unit bench:
   `make -C sim uart-fifo`.
+- **A Forth routine called from assembly may clobber `x5-x7` and `x10-x13`.** The
+  kernel's `key`/`emit` hooks must not (`accept` holds its state in `x10`-`x12`), so
+  `serial_key`/`serial_emit` call `pause` through `pause_safe` (R46). Anything else
+  that calls Forth from a hook needs the same wrapper.
+- **`dictbuild.sh` flags only the kernel's own messages** (`not found`, `Stack
+  underflow/overflow/not balanced`, `Flash full`, `Ram full`): the word `stack` in
+  vendored source (`stackspace`, comments) is echoed back and used to trip a bare
+  `stack` match.
 - **Long scripts into Mecrisp need `+LINEWAIT=1`** (waits for each line's
   `ok.`), the monitor `+LINEWAIT=2 +QUIET=<cycles>` (TX quiet). Without them
   a slow line lets the sender run ahead and overflow the RX FIFO, which shows

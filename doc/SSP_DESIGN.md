@@ -2866,3 +2866,27 @@ implementation points are OQ-25. Order of work: the cooperative multitasker
 (`doc/SSP_STATUS.md` §4.2) comes first; breakpoints stay in P2 and are not yet
 scheduled against it.
 
+R46 **Cooperative multitasker integrated (2026-11-02).** Owner ruling: integrate
+Mecrisp's own multitasking module first and test with it; the watchdog task is
+designed afterwards (R45 addendum). **Built:** `common/multitask.txt` is vendored
+unchanged as `ssp/fw/mecrisp/multitask.fs` (the `\ @include` mechanism stays
+repo-relative; no include form reaching into the Mecrisp tree) and included by
+`monitor.fs`. `serial_key` and `serial_emit` (bridge and qemu variants) call `pause`
+in their waits via `pause_safe` in `terminal.s`, which saves `x1, x5-x7, x10-x13`
+because the callers of `key`/`emit` (`accept`: `x10`-`x12`) rely on the hooks leaving
+them alone; `hook-pause` is `nop` after every boot, so behaviour is unchanged until
+`multitask` is run. **Findings:** (i) the flash-initialised `up`/`boot-task`
+(`nvariable`, `variable` in `compiletoflash`) are correct after a cold boot of the
+shipped image, so `init` needs no setup code; (ii) a context switch costs about 500
+cycles (about 10 us), a `key` lap with two extra tasks about 1,500 cycles against 4,342
+per serial character; (iii) the dictionary grew 1.7 KB to 24,244 B; (iv) a first test
+session lost input characters mid-line: the harness, not the firmware, was at fault
+(`+LINEWAIT=2` paces on TX quiet, and compiling a line takes about 1M cycles; Forth
+sessions need `+LINEWAIT=1`, a documented hazard); (v) `dictbuild.sh` matched the bare
+word `stack` in the build echo and rejected the vendored source: it now matches the
+kernel's own messages only. **Verification:** smoke Part I (cold boot, a heartbeat
+task and a task writing `WDG_PARK_KICK`, 100 laps = 100 beats, tasks run during idle
+`key` waits, `singletask`/`multitask` freeze and wake), qemu (`qforth.py`), and the full
+`smoke-p1a`, `vdu`, `dl-path` lanes. **Not done:** `multitask-debug.txt`, a `tasks`
+monitor command, `pause` in the monitor's long loops, and any hardware check.
+
