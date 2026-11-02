@@ -483,8 +483,7 @@ SSP_CTRL_ESC_BREAK_EN
   dup [char] u = if drop m-unasm exit then         \ u
   dup [char] p = if drop m-tail-hy if m-phy exit else m-q exit then then  \ p-h-y
   dup [char] l = if drop m-tail-og if m-log exit else m-q exit then then  \ l-o-g
-  dup [char] f = if drop 2 m-state !
-	       ." mon  to restart" exit then  \ f
+  dup [char] f = if drop 2 m-state ! exit then     \ f
   dup 63 = over 104 = or if drop m-help exit then   \ ? h
   drop m-q ;
 : m-banner ( -- )  col-output cr ." MrZ80 SSP MONITOR  ? = HELP" cr col-reset ;
@@ -498,7 +497,7 @@ SSP_CTRL_ESC_BREAK_EN
           m-line-in
           col-output cr m-cmd col-reset
           m-state @ until
-    m-state @ 2 = if ." FORTH" cr exit then
+    m-state @ 2 = if ." FORTH  (TYPE MON TO RETURN TO THE MONITOR)" cr exit then
     begin m-console? 0= until                 \ Z80 has the console again
   again ;
 
