@@ -200,7 +200,7 @@ edge connector and your patience allowed.
 
 MrZ80 asks: *what if the CPU lives in an FPGA, and every internal signal is
 already visible?* Its answer is a strip of **256 WS2812/SK6812 RGB LEDs driven
-from a single FPGA pin** (the MiSTer USER header), refreshed ~62.5 times a
+from a single FPGA pin** (the MiSTer USER header), refreshed 75 times a
 second, each LED independently colored and independently mapped to *any* bit of
 the machine.
 

@@ -97,7 +97,7 @@ Total: **292 bits** (0–291). Positions 276–283 are the stretched ones.
 - **Polarity.** Active-low Z-80 control signals are inverted before capture,
   so throughout the chain a **logic 1 = the signal is asserted**.
 - **Sampling rate.** The chain is latched on the `FrontPanel_Subsystem`
-  refresh tick generated from `fpRefreshCount` (50 MHz / 800,000 = 62.5 Hz).
+  refresh tick generated from `fpRefreshCount` (50 MHz / 666,666 = 75 Hz).
 - **LED reach.** `FrontPanel_Subsystem` is instantiated with
   `NUM_LEDS => 256`, so an identity profile map exposes bits 0–255 only;
   bits 256–291 (upper CPU control signals, the four interrupt bits, the

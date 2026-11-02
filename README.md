@@ -126,7 +126,7 @@ Highlights of the current build:
 * Profiles are authored in YAML and built with
   [`Components/FRONTPANEL/tools/fpprofile.py`](Components/FRONTPANEL/tools/fpprofile.py)
   into a `.FPP` file, mounted from the OSD.
-* Global brightness control, ~62.5 Hz refresh (physical ceiling ~129 Hz).
+* Global brightness control, 75 Hz refresh (physical ceiling ~129 Hz).
 
 The subsystem is decoded at `$A0`–`$A7` with the `$FF` latch port. The full user
 guide, register map and profile-file format are in

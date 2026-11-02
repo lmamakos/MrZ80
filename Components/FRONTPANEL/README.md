@@ -20,7 +20,7 @@ documented in `../../doc/t80_reg_debug_vector.md`.
 | Latch port feeding chain bits | `$FF` (R/W, legacy IMSAI-style output latch) |
 | Capture-chain length | `CHAIN_BITS => 384` at the `FrontPanel_Subsystem` instantiation |
 | LED count | `NUM_LEDS = 256` |
-| Refresh rate | ~62.5 Hz (a `refresh_tick` every 800 000 clk at 50 MHz) |
+| Refresh rate | 75 Hz (a `refresh_tick` every 666 666 clk at 50 MHz) |
 | Simulation | `sim/tb_frontpanel.vhd` — decodes the WS2812 stream and checks every LED; run via `sim/run_frontpanel.sh` |
 
 ### Current behaviour notes
@@ -343,6 +343,6 @@ The WS2812/SK6812 bit time is fixed at 1.25 µs:
 * plus the reset low period (> 80 µs for SK6812)
 
 ⇒ one full-string update ≈ **7.76 ms**, so the physical ceiling is
-1/0.00776 ≈ **129 Hz**. The design ticks a refresh every 800 000 clk
-(~62.5 Hz at 50 MHz), comfortably inside the budget even with the
+1/0.00776 ≈ **129 Hz**. The design ticks a refresh every 666 666 clk
+(75 Hz at 50 MHz), comfortably inside the budget even with the
 longer capture phase of a 384-bit chain.
