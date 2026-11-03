@@ -63,6 +63,7 @@ terms before reusing it.
 | MiST-to-MiSTer lineage of the top level | Based on Grant Searle's MultiComp and **WiSo**'s MiST port write-up: [part 1](https://ws0.org/building-your-own-custom-computer-with-the-mist-fpga-board-part-1/), [part 2](https://ws0.org/building-your-own-custom-computer-with-the-mist-fpga-board-part-2/). | `MrZ80.sv` |
 | MiSTer framework | **Alexey Melnikov (Sorgelig)** and the MiSTer-devel contributors, including **Till Harbaum**, **Ludvig Strigeus** (hq2x), **Kitrinx** (mt32pi), **Grabulosaure** (video_freak) and **bellwood420** (f2sdram terminator). [Main_MiSTer](https://github.com/MiSTer-devel/Main_MiSTer), [Template_MiSTer](https://github.com/MiSTer-devel/Template_MiSTer). Maintained externally and never modified here. | `sys/` |
 | Intel/Altera generated IP | PLL and block-RAM/ROM wrappers produced by Quartus MegaWizard under Intel's licence. | `rtl/`, `Components/INTERNALRAM/`, `Components/TERMINAL/` |
+| YM2149 / AY-3-8910 PSG system | **epsilon537** ([YM2149_PSG_system](https://github.com/epsilon537/YM2149_PSG_system)), with enhancements by **BrianHG** and **nockieboy**; built on **Jose Tejada**'s [jt49](https://github.com/jotego/jt49) core (GPLv3). Dual PSG, programmable stereo mixer with bass/treble, DC filter, 8-10-bit exponential DAC and I2S transmitter. Full provenance in `Components/YM2149/README.md`. | `Components/YM2149/` (vendored; not yet in the build) |
 
 **System Support Processor cores** (vendored verbatim; hashes and pinned
 revisions are in `Components/RISCV/PROVENANCE.md`)
