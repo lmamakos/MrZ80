@@ -50,15 +50,18 @@ Segments, in daisy-chain order toward the output:
 | 192 | 207 | 16 | `PC` | T80 `REG` | `fpChainRegs` | |
 | 208 | 223 | 16 | `SP` | T80 `REG` | `fpChainRegs` | |
 | 224 | 251 | 28 | `mmu_phys_addr[27:0]` | MMU physical address output | `fpChainPhysAddrBus` | Translated physical address; bit 27 = bit 224. Bit 27 set ⇒ block-RAM page, clear ⇒ SDRAM. |
-| 252 | 252 | 1 | `/WR` (active-high) | `not n_WR` from T80 | `fpChainCPUctl` | Lit = write strobe asserted. |
-| 253 | 253 | 1 | `/RD` (active-high) | `not n_RD` from T80 | `fpChainCPUctl` | Lit = read strobe asserted. |
-| 254 | 254 | 1 | `/INT` (active-high) | `not n_INT` | `fpChainCPUctl` | The IntervalTimer's interrupt request (`n_INT <= n_int_itimer`), before the SSP single-step mask (see 279). Transparent, so a 20 ms tick is too brief to see; 276 is the stretched copy. |
+| 252 | 252 | 1 | `/WR` (active-high) | `not n_WR` from T80 | `fpChainCPUctl` | Transparent: lights only if the refresh happens to sample the strobe. Stretched copy at 280. |
+| 253 | 253 | 1 | `/RD` (active-high) | `not n_RD` from T80 | `fpChainCPUctl` | Transparent. Stretched copy at 281. |
+| 254 | 254 | 1 | `/INT` (active-high) | `not n_INT` | `fpChainCPUctl` | The IntervalTimer's interrupt request (`n_INT <= n_int_itimer`), before the SSP single-step mask (see 279). Transparent, so a 20 ms tick is too brief to see; 276 is the stretched copy of the same request. |
 | 255 | 255 | 1 | `/NMI` (active-high) | `not n_NMI` | `fpChainCPUctl` | Currently tied inactive. |
 | 256 | 256 | 1 | `/BUSRQ` (active-high) | `not n_BUSRQ` | `fpChainCPUctl` | Currently tied inactive. |
 | 257 | 257 | 1 | `/M1` (active-high) | `not n_M1` from T80 | `fpChainCPUctl` | Lit = opcode-fetch cycle. |
 | 258 | 258 | 1 | `/HALT` (active-high) | `not n_HALT` from T80 | `fpChainCPUctl` | Lit = CPU halted. |
 | 259 | 259 | 1 | `/BUSAK` (active-high) | `not n_BUSAK` from T80 | `fpChainCPUctl` | Lit = bus acknowledge. |
-| 260 | 275 | 16 | reserved (tied `0`) | `b"0000_0000_0000_0000"` | `fpChainEnd` | Unused filler at the far end of the chain. |
+| 260 | 271 | 12 | reserved (tied `0`) | `b"0000_0000_0000"` | `fpChainEnd` | Unused filler at the far end of the chain. |
+| 272 | 272 | 1 | `/MREQ` (active-high) | `not n_MREQ` (post-`z80_bus_mux` net) | `fpChainEnd` | Transparent — not in `STRETCH_MASK`, so this is the raw strobe as the 75 Hz refresh samples it. Stretched copy at 282. |
+| 273 | 273 | 1 | `/IORQ` (active-high) | `not n_IORQ` (post-`z80_bus_mux` net) | `fpChainEnd` | Transparent. Stretched copy at 283. |
+| 274 | 275 | 2 | reserved (tied `0`) | `b"00"` | `fpChainEnd` | Unused filler. |
 | 276 | 276 | 1 | `INT_TMR` (stretched) | `not n_int_itimer` | `fpChainEnd` | IntervalTimer (`$D0`-`$D3`) interrupt request. Pulse-stretched. At RomWBW's 50 Hz tick it looks permanently lit (see below). |
 | 277 | 277 | 1 | `INT_IO1` (stretched) | `not n_int1` | `fpChainEnd` | ACIA interrupt output of the video terminal (`$80`/`$81`). **Not connected to the CPU `INT` pin**; this is the only place it is visible. Dark unless software enables the terminal's receive interrupt. |
 | 278 | 278 | 1 | `INT_IO2` (stretched) | `not n_int2` | `fpChainEnd` | ACIA interrupt output of the serial `bufferedUART` (`$82`/`$83`). **Not connected to the CPU `INT` pin.** Dark unless software enables its receive interrupt. |
@@ -81,14 +84,21 @@ Total: **292 bits** (0–291). Positions 276–283 are the stretched ones.
   the four interrupt bits (276–279) and the `/WR`, `/RD`, `/MREQ`, `/IORQ`
   bits (280–283) hold high for `HOLD_CYCLES` (default 2,500,000 clk ≈ 50 ms
   at 50 MHz) after a brief pulse, so short bus strobes and interrupt
-  requests remain visible in the LED display; the rest of the segment
-  (`fpLatch` echo and the reserved filler) is transparent.
+  requests remain visible in the LED display. The rest of the segment —
+  the raw `/MREQ` and `/IORQ` copies at 272/273, the `fpLatch` echo and the
+  reserved filler — is transparent.
 - **Stretching and fast pulse trains.** A stretched bit stays lit as long as
   pulses arrive faster than the hold time. RomWBW ticks the IntervalTimer at
   50 Hz (every 20 ms, shorter than the ≈ 50 ms hold), so `INT_TMR` (276) and
   `INT_CPU` (279) look steadily lit while HBIOS is running; `/WR`, `/RD`,
   `/MREQ` and `/IORQ` behave the same under any real workload. To see
   individual ticks, shorten `HOLD_CYCLES` on this segment.
+- **Raw and stretched copies of one signal.** Each strobe appears twice in the
+  chain: a transparent sample and a stretched one in `fpChainEnd`
+  (`/WR` 252 and 280, `/RD` 253 and 281, `/MREQ` 272 and 282, `/IORQ` 273
+  and 283 — raw first). `INT` likewise: the raw pre-mask request at 254, and
+  the post-mask `INT_CPU` at 279 stretched. Mapping the raw and stretched copy
+  side by side shows directly whether the refresh is missing pulses.
 - **Interrupt sources.** Only the IntervalTimer drives the CPU `INT` pin.
   `INT_IO1` and `INT_IO2` show the ACIAs' own interrupt outputs, which are
   not connected, so they light only if software turns on a receive or

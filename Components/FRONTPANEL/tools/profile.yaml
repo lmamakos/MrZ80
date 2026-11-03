@@ -59,21 +59,30 @@ signals:                 # named chain groups; a definition may reference
   SP:     ["208..223"]
   A:      ["AF[7..0]"]        # positional subset: A's 8 bits, MSB first
   FLAGS:  ["AF[15..8]"]
-  WR:     [280]
-  RD:     [281]
-  MREQ:   [282]
-  IORQ:   [283]
-  INT_TMR: [276]      # IntervalTimer request (stretched ~50 ms)
-  INT_IO1: [277]      # video-terminal ACIA INT output (not wired to the CPU)
-  INT_IO2: [278]      # serial ACIA INT output (not wired to the CPU)
-  INT_CPU: [279]      # INT at the T80, after the SSP single-step mask
-  INTS:   ["276..279"]   # all four, left to right
+
+  # 252 - 259 are unstretched signals
+  WR:     [252]
+  RD:     [253]
   INTREQ: [254]
   NMI:    [255]
   BUSREQ: [256]
   M1:     [257]
   HALT:   [258]
   BUSAK:  [259]
+  MREQ:   [272]
+  IORQ:   [233]
+  
+  # 260 - 291 are stretched signals
+  sWR:     [280]
+  sRD:     [281]
+  sMREQ:   [282]
+  sIORQ:   [283]
+  sINT_TMR: [276]      # IntervalTimer request (stretched ~50 ms)
+  sINT_IO1: [277]      # video-terminal ACIA INT output (not wired to the CPU)
+  sINT_IO2: [278]      # serial ACIA INT output (not wired to the CPU)
+  sINT_CPU: [279]      # INT at the T80, after the SSP single-step mask
+  INTS:   ["276..279"]   # all four, left to right
+
   PHYSADDR: ["224..251"]
   
 layout:                  # one global wiring description, all profiles

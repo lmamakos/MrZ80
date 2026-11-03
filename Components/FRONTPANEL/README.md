@@ -208,7 +208,9 @@ in [`doc/t80_reg_debug_vector.md`](../../doc/t80_reg_debug_vector.md).
 | 32–223 | CPU registers (exact order in the next table) |
 | 224–251 | `mmu_phys_addr[27:0]` — MMU physical address, bit 27 first |
 | 252–259 | CPU control, active-high: `/WR` `/RD` `/INT` `/NMI` `/BUSRQ` `/M1` `/HALT` `/BUSAK` (`/INT` is the IntervalTimer's request, unmasked and unstretched; `/NMI` and `/BUSRQ` currently tied inactive) |
-| 260–275 | reserved, tied 0 |
+| 260–271 | reserved, tied 0 |
+| 272–273 | `/MREQ` `/IORQ`, active-high — transparent raw samples (the stretched copies are 282–283) |
+| 274–275 | reserved, tied 0 |
 | 276–279 | Interrupts — **stretched**: `INT_TMR` (IntervalTimer request), `INT_IO1` (video-terminal ACIA INT output), `INT_IO2` (serial ACIA INT output), `INT_CPU` (`INT` at the T80, after the SSP single-step mask). The two ACIA outputs are not wired to the CPU, so this is the only place they show |
 | 280–283 | `/WR` `/RD` `/MREQ` `/IORQ` — **stretched** (glow ≈ 50 ms per pulse) |
 | 284–291 | `fpLatch` again (bit 7 first) |

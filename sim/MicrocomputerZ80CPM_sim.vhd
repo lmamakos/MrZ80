@@ -943,10 +943,16 @@ fpChainEnd :  entity work.Universal_Capture_Chain
 		shift_en      => fpChainShiftEn,
 
 		combined_data =>
-                    b"0000_0000_0000_0000" &                      -- 16 bit
-                    not n_int_itimer & not n_int1 & not n_int2 & not n_INT_ssp & -- 4 bits
-                    not n_WR & not n_RD & not n_MREQ & not n_IORQ &  -- 4 bits
-                    fpLatch,                                     -- 8 bits
+                    b"0000_0000_0000" &                       -- 12 bit
+                  -- [260-271]
+                    not n_MREQ &       not n_IORQ &   b"00" & -- 4 bits
+                  --     [272]             [273]       [274-275]
+                    not n_int_itimer & not n_int1 &   not n_int2 & not n_INT_ssp & -- 4 bits
+                  --     [276]             [277]           [278]        [279]
+                    not n_WR &         not n_RD &     not n_MREQ & not n_IORQ &  -- 4 bits
+                  --     [280]             [281]           [282]        [283]
+                    fpLatch,                                  -- 8 bits
+                  -- [284-291]
 		chain_in      => '0',
 		chain_out     => fpChainEndOut
 	);

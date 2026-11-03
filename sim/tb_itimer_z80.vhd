@@ -9,8 +9,10 @@
 --   0900h FAIL (0 = pass), 0901h DONE (0AAh), 0902h GOT, 0903h WANT.
 -- It also watches the front-panel capture chain's last segment (fpChainEnd,
 -- chain positions 260-291, see SIGNAL-CAPTURES.md): /WR dark right after reset,
--- the timer's interrupt request and the CPU INT pin lit by the interrupts,
--- the unwired ACIA interrupt bits and the reserved bits never lit.
+-- the timer's interrupt request and the CPU INT pin lit by the interrupts, the
+-- stretched strobe bits actually HELD after their pulse ends, the raw
+-- (transparent) /MREQ and /IORQ copies NOT held, and the unwired ACIA interrupt
+-- bits and the reserved bits never lit.
 -- Run from the project root:  sim/run_itimer_z80.sh
 
 library ieee;
@@ -141,7 +143,8 @@ begin
     probe_n_int     <= << signal .tb_itimer_z80.dut.n_INT_ssp    : std_logic >>;
     -- fpChainEnd's per-bit (stretched / transparent) output, before the shifter.
     -- Bit 15 = timer INT request, 14/13 = ACIA INT outputs, 12 = INT at the CPU,
-    -- 11:8 = /WR /RD /MREQ /IORQ, 7:0 = fpLatch; 31:16 are reserved zeros.
+    -- 11:8 = stretched /WR /RD /MREQ /IORQ, 7:0 = fpLatch; 19/18 are the raw
+    -- (transparent) /MREQ and /IORQ copies; 31:20 and 17:16 are reserved zeros.
     chain_end       <= << signal .tb_itimer_z80.dut.fpChainEnd.captured_bits : std_logic_vector(31 downto 0) >>;
     -- ...and the raw inputs it is fed, to prove the stretched bits are HELD.
     chain_raw       <= << signal .tb_itimer_z80.dut.fpChainEnd.combined_data : std_logic_vector(31 downto 0) >>;
@@ -220,15 +223,19 @@ begin
 
     chain_watch: process(clk_sys)
         variable seen_tmr, seen_cpu, seen_wr, seen_rd, seen_mreq, seen_iorq : boolean := false;
+        variable seen_mreq_raw, seen_iorq_raw : boolean := false;
         variable bad_acia, bad_rsvd : boolean := false;
         -- Consecutive clocks each bit has been lit while its raw input is low:
         -- only a hold counter can do that (a registered copy lags by one clock).
-        type cnt_t is array (15 downto 8) of natural;
+        -- Bits 19/18 are in range too, but must never reach the threshold: they
+        -- are transparent copies, so a registered lag of one clock is all they
+        -- can ever show here.
+        type cnt_t is array (19 downto 8) of natural;
         variable held   : cnt_t := (others => 0);
-        variable stretched : std_logic_vector(15 downto 8) := (others => '0');
+        variable stretched : std_logic_vector(19 downto 8) := (others => '0');
     begin
         if rising_edge(clk_sys) then
-            for i in 15 downto 8 loop
+            for i in 19 downto 8 loop
                 if chain_raw(i) = '0' and chain_end(i) = '1' then
                     held(i) := held(i) + 1;
                     if held(i) >= 100 then stretched(i) := '1'; end if;
@@ -242,8 +249,13 @@ begin
             if chain_end(10) = '1' then seen_rd   := true; end if;
             if chain_end(9)  = '1' then seen_mreq := true; end if;
             if chain_end(8)  = '1' then seen_iorq := true; end if;
+            if chain_end(19) = '1' then seen_mreq_raw := true; end if;
+            if chain_end(18) = '1' then seen_iorq_raw := true; end if;
             if chain_end(14) = '1' or chain_end(13) = '1' then bad_acia := true; end if;
-            if chain_end(31 downto 16) /= x"0000" then bad_rsvd := true; end if;
+            -- 31:20 and 17:16 are the reserved filler (12 + 2 zeros)
+            if chain_end(31 downto 20) /= x"000" or chain_end(17 downto 16) /= "00" then
+                bad_rsvd := true;
+            end if;
             if sim_done then
                 assert seen_tmr  report "FAIL: tb_itimer_z80: capture chain 276 (timer INT) never lit" severity failure;
                 assert seen_cpu  report "FAIL: tb_itimer_z80: capture chain 279 (CPU INT) never lit"   severity failure;
@@ -266,8 +278,17 @@ begin
                 assert stretched(15) = '1'
                     report "FAIL: tb_itimer_z80: capture chain bit 15 (timer INT) is not pulse-stretched"
                     severity failure;
+                assert seen_mreq_raw report "FAIL: tb_itimer_z80: capture chain 272 (raw /MREQ) never lit" severity failure;
+                assert seen_iorq_raw report "FAIL: tb_itimer_z80: capture chain 273 (raw /IORQ) never lit" severity failure;
+                -- Raw copies must NOT hold: bits 19/18 are outside STRETCH_MASK.
+                assert stretched(19) = '0'
+                    report "FAIL: tb_itimer_z80: capture chain bit 19 (raw /MREQ, 272) is unexpectedly stretched"
+                    severity failure;
+                assert stretched(18) = '0'
+                    report "FAIL: tb_itimer_z80: capture chain bit 18 (raw /IORQ, 273) is unexpectedly stretched"
+                    severity failure;
                 assert not bad_acia report "FAIL: tb_itimer_z80: capture chain 277/278 (ACIA INT, unwired) lit" severity failure;
-                assert not bad_rsvd report "FAIL: tb_itimer_z80: capture chain 260-275 (reserved) lit" severity failure;
+                assert not bad_rsvd report "FAIL: tb_itimer_z80: capture chain 260-271/274-275 (reserved) lit" severity failure;
             end if;
         end if;
     end process;
