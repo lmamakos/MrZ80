@@ -24,7 +24,13 @@
 #   160..175 IX       176..191 IY        192..207 PC       208..223 SP
 #   224..251 mmu_phys_addr[27:0]
 #   252..259 WR RD INT NMI BUSRQ M1 HALT BUSAK (active-high)
-#   260..275 tied 0
+#   260..267 tied 0
+#   268      IFF1
+#   269      IFF2
+#   270..271 IM (Interrupt Mode)
+#   272      MREQ
+#   273      IORQ
+#   274..275 tied 0
 #   276..279 INT_TMR INT_IO1 INT_IO2 INT_CPU: timer request, ACIA INT outputs
 #            (video terminal, serial; not wired to the CPU), INT at the T80
 #            (all stretched)
@@ -70,7 +76,9 @@ signals:                 # named chain groups; a definition may reference
   HALT:   [258]
   BUSAK:  [259]
   MREQ:   [272]
-  IORQ:   [233]
+  IORQ:   [273]
+
+  IFF1:   [268]
   
   # 260 - 291 are stretched signals
   sWR:     [280]
@@ -141,6 +149,10 @@ profile.0:               # "everything in one frame" overview
       on: amber
     - start: [5,16]
       signals: [PC]
+
+    - start: [6,11]
+      signals: [IFF1]    # interrupts enabled
+      on: yellow
 
     - start: [6,12]
       signals: [INTS]    # timer, ACIA 1, ACIA 2, CPU INT (stretched)

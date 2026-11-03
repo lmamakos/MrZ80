@@ -58,7 +58,10 @@ Segments, in daisy-chain order toward the output:
 | 257 | 257 | 1 | `/M1` (active-high) | `not n_M1` from T80 | `fpChainCPUctl` | Lit = opcode-fetch cycle. |
 | 258 | 258 | 1 | `/HALT` (active-high) | `not n_HALT` from T80 | `fpChainCPUctl` | Lit = CPU halted. |
 | 259 | 259 | 1 | `/BUSAK` (active-high) | `not n_BUSAK` from T80 | `fpChainCPUctl` | Lit = bus acknowledge. |
-| 260 | 271 | 12 | reserved (tied `0`) | `b"0000_0000_0000"` | `fpChainEnd` | Unused filler at the far end of the chain. |
+| 260 | 267 | 8 | reserved (tied `0`) | `b"0000_0000"` | `fpChainEnd` | Unused filler at the far end of the chain. |
+| 268 | 268 | 1 | `IFF1`              | `dbgReg_IFF1`  | `fpChainEnd` | Z80 IFF1 state |
+| 269 | 269 | 1 | `IFF2`              | `dbgReg_IFF2`  | `fpChainEnd` | Z80 IFF2 state |
+| 270 | 271 | 2 | `IM`                | `dbgReg_IM`  | `fpChainEnd` | Z80 Interrupt mode (0, 1, 2) |
 | 272 | 272 | 1 | `/MREQ` (active-high) | `not n_MREQ` (post-`z80_bus_mux` net) | `fpChainEnd` | Transparent — not in `STRETCH_MASK`, so this is the raw strobe as the 75 Hz refresh samples it. Stretched copy at 282. |
 | 273 | 273 | 1 | `/IORQ` (active-high) | `not n_IORQ` (post-`z80_bus_mux` net) | `fpChainEnd` | Transparent. Stretched copy at 283. |
 | 274 | 275 | 2 | reserved (tied `0`) | `b"00"` | `fpChainEnd` | Unused filler. |
