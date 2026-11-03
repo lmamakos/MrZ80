@@ -186,7 +186,7 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 | `0xA0`-`0xA7` | 8     | Front-panel subsystem control window (`n_fpSubsysCS`). See Front-panel I/O register map below.            |
 | `0xB0`-`0xBF` | 16    | MMU register window (`n_mmuCS`). 4 frame-mapping low bytes at `+0..+3` (Z2-compatible), 4 high bytes at `+4..+7`, direct-access pointer at `+8..+11` (little-endian), direct-access data port at `+12`. |
 | `0xC0`-`0xCF` | 16    | Benchmark timers (`n_timerCS`, `BenchTimer`). Four 32-bit snapshot channels: ch0/ch1 1 ms/tick, ch2/ch3 1 µs/tick. See below. |
-| `0xD0`-`0xD3` | 4     | Interval timer and interrupt source (`n_itimerCS`, `Components/TIMER/IntervalTimer.vhd`). Drives the Z80 `INT` pin (interrupt mode 1). See below. |
+| `0xD0`-`0xD3` | 4     | Interval timer and interrupt source (`n_itimerCS`, `Components/TIMER/IntervalTimer.vhd`). One of three sources driving the Z80 `INT` pin (interrupt mode 1; with the terminal and serial ACIAs). See below. |
 | `0xFF`        | 1     | Front-panel data latch (R/W). Software writes drive the 8-bit transparent capture chain; reads return the last-written value. |
 
 ### Storage: SPI SD card (`0x88`) and HPS image block device (`0x90`)
@@ -586,9 +586,11 @@ Channels 1 and 3 are not used by the kernel.
 
 `Components/TIMER/IntervalTimer.vhd`. Counts milliseconds from the 50 MHz
 system clock (independent of the CPU clock and wait states) and raises a
-**level** interrupt request every INTERVAL ms. It is the only source wired
-to the Z80 `INT` pin so far (the two ACIAs' interrupt outputs are not
-connected). Use Z80 **interrupt mode 1**: the CPU takes `RST 38h`, and the
+**level** interrupt request every INTERVAL ms. Together with the two ACIA
+interrupt outputs — the video terminal (`$80`/`$81`) and the serial port
+(`$82`/`$83`) — it is wired to the Z80 `INT` pin: the three active-low
+requests are ANDed, so any asserted source drives `INT`. Use Z80
+**interrupt mode 1**: the CPU takes `RST 38h`, and the
 handler polls this device's STATUS (and any other device's) to find the
 source. Mode 0, the reset default, also works: the interrupt-acknowledge
 read floats to `FFh`, which is `RST 38h`. A Z80 reset clears the timer.
@@ -705,7 +707,8 @@ Register map (see `Components/RTC/README.md` for full detail):
   `IN`/`OUT` to `0x71`, so reading Register C clears the flags exactly once.
 - **Not implemented / deviations:** the SQW output is not generated, DST is
   stored but has no effect, and the interrupt output is **not connected**
-  (the Z-80 `/INT` input is tied inactive); software must poll Register C.
+  to the Z-80 `/INT` (that pin is driven by the interval timer, terminal
+  and serial UART, above); software must poll Register C.
   Periodic-interrupt tap rates are derived from the 50 MHz clock (< 0.02 %
   error).
 

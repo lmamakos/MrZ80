@@ -52,7 +52,7 @@ Segments, in daisy-chain order toward the output:
 | 224 | 251 | 28 | `mmu_phys_addr[27:0]` | MMU physical address output | `fpChainPhysAddrBus` | Translated physical address; bit 27 = bit 224. Bit 27 set ⇒ block-RAM page, clear ⇒ SDRAM. |
 | 252 | 252 | 1 | `/WR` (active-high) | `not n_WR` from T80 | `fpChainCPUctl` | Transparent: lights only if the refresh happens to sample the strobe. Stretched copy at 280. |
 | 253 | 253 | 1 | `/RD` (active-high) | `not n_RD` from T80 | `fpChainCPUctl` | Transparent. Stretched copy at 281. |
-| 254 | 254 | 1 | `/INT` (active-high) | `not n_INT` | `fpChainCPUctl` | The IntervalTimer's interrupt request (`n_INT <= n_int_itimer`), before the SSP single-step mask (see 279). Transparent, so a 20 ms tick is too brief to see; 276 is the stretched copy of the same request. |
+| 254 | 254 | 1 | `/INT` (active-high) | `not n_INT` | `fpChainCPUctl` | The CPU interrupt request (`n_INT <= n_int_itimer and n_int1 and n_int2`: IntervalTimer, video terminal, serial UART), before the SSP single-step mask (see 279). Transparent, so a 20 ms tick is too brief to see; 276-278 are the stretched copies of the individual requests. |
 | 255 | 255 | 1 | `/NMI` (active-high) | `not n_NMI` | `fpChainCPUctl` | Currently tied inactive. |
 | 256 | 256 | 1 | `/BUSRQ` (active-high) | `not n_BUSRQ` | `fpChainCPUctl` | Currently tied inactive. |
 | 257 | 257 | 1 | `/M1` (active-high) | `not n_M1` from T80 | `fpChainCPUctl` | Lit = opcode-fetch cycle. |
@@ -66,9 +66,9 @@ Segments, in daisy-chain order toward the output:
 | 273 | 273 | 1 | `/IORQ` (active-high) | `not n_IORQ` (post-`z80_bus_mux` net) | `fpChainEnd` | Transparent. Stretched copy at 283. |
 | 274 | 275 | 2 | reserved (tied `0`) | `b"00"` | `fpChainEnd` | Unused filler. |
 | 276 | 276 | 1 | `INT_TMR` (stretched) | `not n_int_itimer` | `fpChainEnd` | IntervalTimer (`$D0`-`$D3`) interrupt request. Pulse-stretched. At RomWBW's 50 Hz tick it looks permanently lit (see below). |
-| 277 | 277 | 1 | `INT_IO1` (stretched) | `not n_int1` | `fpChainEnd` | ACIA interrupt output of the video terminal (`$80`/`$81`). **Not connected to the CPU `INT` pin**; this is the only place it is visible. Dark unless software enables the terminal's receive interrupt. |
-| 278 | 278 | 1 | `INT_IO2` (stretched) | `not n_int2` | `fpChainEnd` | ACIA interrupt output of the serial `bufferedUART` (`$82`/`$83`). **Not connected to the CPU `INT` pin.** Dark unless software enables its receive interrupt. |
-| 279 | 279 | 1 | `INT_CPU` (stretched) | `not n_INT_ssp` | `fpChainEnd` | `INT` as the T80 sees it: the timer request after the SSP single-step mask (`ssp_int_hold`). Stays dark during a single-step trace even though 276 keeps lighting. |
+| 277 | 277 | 1 | `INT_IO1` (stretched) | `not n_int1` | `fpChainEnd` | ACIA interrupt output of the video terminal (`$80`/`$81`). ANDed into the CPU `INT` pin with the other sources (see 254/279). Dark unless software enables the terminal's receive interrupt. |
+| 278 | 278 | 1 | `INT_IO2` (stretched) | `not n_int2` | `fpChainEnd` | ACIA interrupt output of the serial `bufferedUART` (`$82`/`$83`). ANDed into the CPU `INT` pin with the other sources. Dark unless software enables its receive interrupt. |
+| 279 | 279 | 1 | `INT_CPU` (stretched) | `not n_INT_ssp` | `fpChainEnd` | `INT` as the T80 sees it: the combined request (timer + both ACIAs) after the SSP single-step mask (`ssp_int_hold`). Stays dark during a single-step trace even though 276 keeps lighting. |
 | 280 | 280 | 1 | `/WR` (stretched) | `not n_WR` | `fpChainEnd` | Pulse-stretched (see below). |
 | 281 | 281 | 1 | `/RD` (stretched) | `not n_RD` | `fpChainEnd` | Pulse-stretched. |
 | 282 | 282 | 1 | `/MREQ` (stretched) | `not n_MREQ` | `fpChainEnd` | Pulse-stretched. |
@@ -102,11 +102,11 @@ Total: **292 bits** (0–291). Positions 276–283 are the stretched ones.
   and 283 — raw first). `INT` likewise: the raw pre-mask request at 254, and
   the post-mask `INT_CPU` at 279 stretched. Mapping the raw and stretched copy
   side by side shows directly whether the refresh is missing pulses.
-- **Interrupt sources.** Only the IntervalTimer drives the CPU `INT` pin.
-  `INT_IO1` and `INT_IO2` show the ACIAs' own interrupt outputs, which are
-  not connected, so they light only if software turns on a receive or
-  transmit interrupt in the 6850 control register (RomWBW does not:
-  `ACIAINTS=FALSE`).
+- **Interrupt sources.** Three sources are ANDed onto the CPU `INT` pin:
+  the IntervalTimer (`INT_TMR`) and the two ACIAs — `INT_IO1` (video
+  terminal) and `INT_IO2` (serial). The ACIAs assert only if software turns
+  on a receive or transmit interrupt in the 6850 control register (RomWBW
+  does not: `ACIAINTS=FALSE`).
 - **Polarity.** Active-low Z-80 control signals are inverted before capture,
   so throughout the chain a **logic 1 = the signal is asserted**.
 - **Sampling rate.** The chain is latched on the `FrontPanel_Subsystem`

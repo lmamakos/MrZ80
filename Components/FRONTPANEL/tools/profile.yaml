@@ -32,8 +32,8 @@
 #   273      IORQ
 #   274..275 tied 0
 #   276..279 INT_TMR INT_IO1 INT_IO2 INT_CPU: timer request, ACIA INT outputs
-#            (video terminal, serial; not wired to the CPU), INT at the T80
-#            (all stretched)
+#            (video terminal, serial; all three ANDed into the CPU INT),
+#            INT at the T80 (all stretched)
 #   280..283 WR RD MREQ IORQ strobes (stretched)
 #   284..291 fpLatch again (bit 7 first)
 #   292..383 headroom, reads 0 (no segment wired)
@@ -86,8 +86,8 @@ signals:                 # named chain groups; a definition may reference
   sMREQ:   [282]
   sIORQ:   [283]
   sINT_TMR: [276]      # IntervalTimer request (stretched ~50 ms)
-  sINT_IO1: [277]      # video-terminal ACIA INT output (not wired to the CPU)
-  sINT_IO2: [278]      # serial ACIA INT output (not wired to the CPU)
+  sINT_IO1: [277]      # video-terminal ACIA INT output (ANDed into CPU INT)
+  sINT_IO2: [278]      # serial ACIA INT output (ANDed into CPU INT)
   sINT_CPU: [279]      # INT at the T80, after the SSP single-step mask
   INTS:   ["276..279"]   # all four, left to right
 
