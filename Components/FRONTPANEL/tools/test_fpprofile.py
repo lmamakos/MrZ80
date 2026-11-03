@@ -22,8 +22,8 @@ def conf(text):
         return fp.load_config(path)
 
 
-def build_yaml(text, override=None):
-    return fp.build_profiles(conf(text), override)
+def build_yaml(text, override=None, lint=False):
+    return fp.build_profiles(conf(text), override, lint=lint)
 
 
 class Ranges(unittest.TestCase):
@@ -763,15 +763,17 @@ class DumpAndWarnings(unittest.TestCase):
                          ["1", "2", "3", "9"])
 
     def test_unused_symbol_and_colour_warnings(self):
-        _, w, e = build_yaml(
-            "colors:\n  myred: '#FF1111'\n"
-            "signals:\n  USED: [0]\n  UNUSED: [1]\n"
-            "profile.0:\n  runs:\n    - start: [0, 0]\n"
-            "      dir: right\n      signals: [USED]\n")
+        cfg = ("colors:\n  myred: '#FF1111'\n"
+               "signals:\n  USED: [0]\n  UNUSED: [1]\n"
+               "profile.0:\n  runs:\n    - start: [0, 0]\n"
+               "      dir: right\n      signals: [USED]\n")
+        _, w, e = build_yaml(cfg)
         self.assertEqual(e, [])
-        self.assertEqual(len(w), 2)
-        self.assertTrue(any("UNUSED" in x for x in w))
-        self.assertTrue(any("myred" in x for x in w))
+        self.assertEqual(w, [])          # unused entries are quiet by default
+        _, wl, _ = build_yaml(cfg, lint=True)
+        self.assertEqual(len(wl), 2)
+        self.assertTrue(any("UNUSED" in x for x in wl))
+        self.assertTrue(any("myred" in x for x in wl))
 
     def test_nested_symbol_reference_counts_as_used(self):
         _, w, _ = build_yaml(
@@ -828,8 +830,10 @@ class Cli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cfg = os.path.join(d, "c.yaml")
             out = os.path.join(d, "o.fpp")
+            # chain position 5 has a signal colour but no profile
+            # displays it -> still a warning by default
             with open(cfg, "w") as f:
-                f.write("signals:\n  X: [1]\n")
+                f.write("signal_colors:\n  \"5\": {on: cyan}\n")
             self.assertEqual(fp.main([cfg, "-o", out]), 0)
             self.assertEqual(fp.main([cfg, "-o", out, "--strict"]), 1)
 

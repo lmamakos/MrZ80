@@ -851,8 +851,14 @@ TOP_KEYS = ("chain_bits", "leds", "dir", "colors", "defaults", "signals",
             "signal_colors", "layout")
 
 
-def build_profiles(config, chain_bits_override=None):
-    """Parsed config -> (list of 8 profiles, warnings, errors)."""
+def build_profiles(config, chain_bits_override=None, lint=False):
+    """Parsed config -> (list of 8 profiles, warnings, errors).
+
+    With lint=True the unused-entry checks are added to the warnings:
+    a `signals` symbol or `colors` entry that nothing references.  They
+    are off by default (too noisy for regular builds); the `referenced`
+    bookkeeping and colour scan that feed them always run, so enabling
+    lint is just this flag (a future --lint / verbose mode)."""
     errors = []
     if config is None:
         config = {}
@@ -932,18 +938,20 @@ def build_profiles(config, chain_bits_override=None):
         else:
             profiles.append(default_profile(leds, fb_on, fb_off))
 
-    warnings = [f"signal '{name}' is defined but no profile references it"
-                for name in symbols if name not in referenced]
-    warnings += sigc_warnings
+    warnings = list(sigc_warnings)
     warnings += [
         f"signal_colors: chain position {b} is not displayed by any "
         f"defined profile"
         for b in sorted(sigc_global) if b not in all_placed]
-    if isinstance(config.get("colors"), dict):
-        warnings += [
-            f"colour '{name}' in the colors table is never referenced"
-            for name in config["colors"]
-            if not color_name_used(name, config)]
+    if lint:
+        warnings += [f"signal '{name}' is defined but no profile "
+                    f"references it"
+                    for name in symbols if name not in referenced]
+        if isinstance(config.get("colors"), dict):
+            warnings += [
+                f"colour '{name}' in the colors table is never referenced"
+                for name in config["colors"]
+                if not color_name_used(name, config)]
     # `placed` is internal bookkeeping for the signal_colour warnings;
     # drop it so profile dicts stay uniform with decode()'s output.
     for p in profiles:

@@ -339,9 +339,11 @@ reported with the key path and source line. The full catalogue:
   in an entry.
 * TOML input (see § Migration).
 
-Warnings (errors under `--strict`): a `signals` symbol or `colors`
-entry that nothing references; a `signal_colors` entry (global or
+Warnings (errors under `--strict`): a `signal_colors` entry (global or
 profile-level) whose chain position no defined profile displays.
+Unused-entry checks — a `signals` symbol or `colors` entry that nothing
+references — are quiet by default (they were noise in regular builds);
+`build_profiles(config, lint=True)` re-enables them for profile linting.
 Duplicate chain positions across LEDs are *not* a warning — repeats are
 a feature.
 
