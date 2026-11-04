@@ -842,9 +842,9 @@ mixer output that is held off for those first 200 ms.
   chip detection, writing R2 and reading it back from the third column (RIN) of
   its config table, and every Coleco row in that table uses `0x52` - the RC
   Sound Module's read port, which this core does not decode. The platform-29
-  row added for the MrZ80 reads back at `0x51` instead, like `ay.asm`, so that
-  plain `TUNE file.pt3` detects the chip too (hardware check pending); it
-  prints `MrZ80 YM2149 PSG (50H/51H)`.
+  row added for the MrZ80 reads back at `0x51` instead, like `ay.asm`, so plain
+  `TUNE file.pt3` detects the chip itself - confirmed on hardware (2026-11-04),
+  where it prints `MrZ80 YM2149 PSG (50H/51H), timer mode` and plays.
 - **vibetune** (`VTUNE.COM`, [jduraes/vibetune](https://github.com/jduraes/vibetune)):
   takes device 1 from the HBIOS sound driver automatically. For two-chip
   TurboSound tunes, run `VTUNECFG` and set the TurboSound hardware to

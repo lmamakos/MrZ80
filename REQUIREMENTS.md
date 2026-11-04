@@ -650,11 +650,12 @@ taken against the open points below:
   `TUNE.COM` also probes the chip itself, reading the value back from the RIN
   column of its config table; every Coleco row there uses `$52`, the RC Sound
   Module's read port, which this core does not decode, so the platform-29 row
-  added for the MrZ80 uses `RIN=$51` - the plain, no-switch path should then
-  detect the chip too (hardware check pending).
+  added for the MrZ80 uses `RIN=$51` - and the plain, no-switch path does
+  detect it, confirmed on hardware 2026-11-04 with
+  `TUNE VICTORY.PT3` -> `MrZ80 YM2149 PSG (50H/51H), timer mode`.
 
-Remaining: plain `TUNE file.pt3` on hardware, vibetune single-chip and
-dual-chip (EB), checking the OSD pan modes by ear, and the licence point.
+Remaining: vibetune single-chip and dual-chip (EB), checking the OSD pan modes
+by ear, and the licence point.
 
 Original note (2026-11-02, owner): Two YM2149/AY-3-8910 sound chips, one per stereo
 channel, so "chiptunes" player applications can use six voices with hard

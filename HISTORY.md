@@ -3806,3 +3806,35 @@ outright, so for vibetune the automatic HBIOS path stays the one to use.
 
 To check on hardware: run `TUNE FOO.PT3` with no switch on the new `TUNE.COM`
 (`RomWBW/Binary/Apps/tune.com`) and confirm it names the MrZ80 entry and plays.
+
+### The new TUNE.COM never reached the disk (2026-11-04)
+
+After RomWBW `d6deabae`, plain `TUNE file.pt3` still reported no hardware on the
+board. The core was fine: byte-searching the disk images on the SD card found
+seven `TUNE    COM` directory entries in `hd1k_all.img` (five in
+`hd1k_combo.img`) and seven copies of the *old* description string, but no copy
+of the new one. The installed binary was the pre-fix program, whose probe reads
+`$52`.
+
+Why: RomWBW's `Source/Images/Makefile` built the aggregate images with
+`hd1k_%.img: %.def` and worked the slice list out inside the recipe, so make
+never saw the slices as prerequisites. The same `make` refreshed every 8 MB slice
+with the new `TUNE.COM` and left the aggregates at their previous content, then
+copied those stale aggregates to `Binary/` with a fresh timestamp. Fixed in
+RomWBW `7017ab05` by deriving the slice list at parse time and hanging it on the
+targets (the recipes grep `$<` now, since `$^` includes the slices). Both
+aggregates rebuilt here contain the new binary in all seven and five copies and a
+second run is a no-op.
+
+Deploy: the images on the card were moved to `games/MrZ80/pre-tune-fix-20261104/`
+rather than overwritten, since the core holds a mounted image open, and the
+rebuilt images copied in their place.
+
+Then plain `TUNE VICTORY.PT3`, with no switch at all, printed
+`MrZ80 YM2149 PSG (50H/51H), timer mode` and played (owner). Auto-detect at
+`$51` works on hardware, as do `-coleco` and `--hbios`. A quick way to tell the
+two binaries apart from CP/M: `DIR TUNE COM` shows 41 records (5152 bytes) for
+the old one and 46 records (5179 bytes) for the new.
+
+`cpm.img` on the card was searched too; it holds no `TUNE.COM` at all and is
+unrelated.
