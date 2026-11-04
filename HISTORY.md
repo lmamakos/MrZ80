@@ -3867,3 +3867,42 @@ the SSP memory map in `ssp/rtl/ssp_top.v`.
 dependency (only for docs). The `.dot` sources and the rendered `.svg`s are
 committed, PNGs are gitignored. `AGENTS.md` gained a note to edit the source and
 not the picture; `doc/OVERVIEW.md` §10 links the new document.
+
+## The diagram set gets a front page (2026-11-04)
+
+Feedback on the set above: much more detailed than anyone needs, and it read like
+a CAD plot. What was actually wanted is one picture of the major functional
+elements joined by a common interconnect, with no implementation detail except the
+numbers a user looks up — the I/O ports and the memory ranges — and looking more
+like a slide than a schematic.
+
+`doc/architecture/block.dot` is that picture, and it is now the front page of
+`doc/ARCHITECTURE.md`: the MiSTer board as a band across the top, one rounded
+container for the FPGA image, five blocks above the Z-80 bus bar and six below it,
+each block labelled with its function and its port range and nothing else. The
+seven sheets from the previous entry did not change and are now an appendix
+labelled as implementation detail.
+
+Getting the slide to sit still took more Graphviz than expected, and the traps are
+worth recording because they cost time:
+
+- the container is only drawn if the subgraph's name starts with `cluster`;
+- an edge naming a cluster as an endpoint silently invents a stray node unless the
+  graph sets `compound = true`, after which `lhead = cluster_core` stops the arrow
+  at the container's border instead of reaching through to a node inside it;
+- HTML-like labels (`<<b>text</b>>`) must not be quoted, and a literal `>` inside
+  one has to be written `&gt;`;
+- `rank = same` across nodes that are already constrained inside a cluster made
+  `dot` segfault, so the rows are level by rank sets that stay inside the
+  container and left-to-right order comes from invisible weighted edges;
+- uniform blocks need `fixedsize = true` with explicit width and height, which then
+  *warns* ("size too small for label") rather than clips when a label outgrows the
+  box — so the warning is the thing to watch after any label edit.
+
+The document itself was rewritten to lead with the picture and a plain-language
+tour of the blocks, keeping only the port table and the on-screen file-load
+targets as reference, and dropping the clock/reset and OSD status-bit tables that
+had become the tail of the previous version — `HARDWARE.md` is where that detail
+lives. `AGENTS.md` now says `block.dot` takes a port only if a user of the
+machine needs to know it exists, and `doc/OVERVIEW.md` points at the diagram from
+both its opening and its further-reading table.

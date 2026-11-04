@@ -5,7 +5,9 @@
 #
 # The sheets, top to bottom (doc/ARCHITECTURE.md explains how they fit):
 #
-#   overview.dot       the whole core at a glance, with the sys/ framework as
+#   block.dot            the front page: major functional blocks on the Z-80 bus,
+#                      labelled with their I/O ports and memory ranges only
+#   overview.dot         the whole core at module level, with the sys/ framework as
 #                      one box
 #   z80.dot            T80, bus arbitration, reset-vector trampoline, MMU,
 #                      block RAM, SDRAM client and the wait generation
@@ -15,6 +17,9 @@
 #   psg.dot          dual YM2149 sound: wrapper, vendored cores, pan sequencer
 #   ssp.dot          the RISC-V System Support Processor and its seam
 #   clocks.dot       clock domains, reset tree, clock-domain crossings
+#
+# block.dot is the one to show anyone who is using the machine rather than
+# changing it; the others are implementation detail, one page each.
 #
 # Needs graphviz (dot).  The .dot sources are committed, and so are the SVGs
 # referenced from doc/ARCHITECTURE.md, so the docs read without a toolchain;

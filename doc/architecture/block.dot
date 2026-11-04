@@ -1,0 +1,100 @@
+// block.dot -- the high-level view of MrZ80: the major functional blocks on
+// one interconnect.  The only implementation detail here is the I/O ports and
+// the memory ranges, because those are what a user needs.
+//
+// Regenerate:  make -C doc/architecture
+//
+// Layout notes (graphviz):
+//   * the container must be named cluster* to draw a box around the core, and
+//     compound=true lets the link from the board stop at that border instead of
+//     reaching through to a node inside it;
+//   * each row is held level with rank=same and ordered left-to-right by
+//     invisible edges;
+//   * blocks in a row share a fixed size, which is what keeps the rows tidy.
+//     fixedsize means text longer than the box would overflow it, so if you
+//     lengthen a label, re-check the rendered image (or raise the width).
+
+digraph MrZ80 {
+
+    graph [rankdir   = TB,
+           compound   = true,
+           ranksep    = 0.42,
+           nodesep    = 0.3,
+           fontname   = "Helvetica-Bold",
+           fontsize   = 24,
+           labelloc   = "t",
+           label      = "MrZ80\n "];
+
+    node [shape = box, style = "rounded,filled", fontname = "Helvetica",
+          fontsize = 14, penwidth = 1.2, color = "#78909c", fixedsize = true];
+    edge [penwidth = 1.8, color = "#546e7a", arrowhead = none,
+          fontname = "Helvetica", fontsize = 12];
+
+    // --------------------------------------------------------------------
+    // the rest of the board, which this FPGA image depends on
+    // --------------------------------------------------------------------
+    board [shape = box, fixedsize = true, width = 18.9, height = 1.42,
+           label = "MiSTer board\nthe framework this image runs on\n\nHDMI video   ·   stereo audio   ·   USB keyboard   ·   SD card socket   ·   on-screen setup menu\nprograms, disk images and the boot ROM come from the SD card through that menu",
+           fillcolor = "#eceff1", color = "#90a4ae"];
+
+    // --------------------------------------------------------------------
+    // the FPGA image
+    // --------------------------------------------------------------------
+    subgraph cluster_core {
+        label     = "MrZ80 core — one FPGA image\n\n";
+        fontname  = "Helvetica-Bold";
+        fontsize  = 17;
+        color     = "#b0bec5";
+        style     = "rounded";
+        bgcolor   = "#fafcfe";
+        penwidth  = 1.6;
+
+        // blocks on the far side of the bus
+        cpu [label = "Z-80 CPU\n10 MHz\nCP/M 2.2 and 3, RomWBW,\nCamelFORTH", fillcolor = "#dbe9f6",
+             width = 3.3, height = 1.16];
+        ssp [label = "Service monitor\nits own processor,\nits own Forth; parks\nand traces the Z-80", fillcolor = "#e0f0e1",
+             width = 3.3, height = 1.16];
+        mem [label = "Memory\n64 KB on-chip + 128 MB paged\n64 KB visible at a time\nports $B0-$BF", fillcolor = "#dbe9f6",
+             width = 3.3, height = 1.16];
+        vdu [label = "Text screen\nand keyboard\n80 × 25 colour\nports $80-$81", fillcolor = "#fdecd8",
+             width = 3.3, height = 1.16];
+        snd [label = "Sound\n2 × 3-channel PSG,\nstereo mixing\nports $50/$51, $68/$60", fillcolor = "#ecdcf2",
+             width = 3.3, height = 1.16];
+
+        // the common interconnect
+        bus [label = "Z-80 bus  —  address, data and control\na block answers when the CPU names the port range it owns",
+             fixedsize = true, width = 17.7, height = 0.68,
+             fillcolor = "#cfd8dc", color = "#78909c", penwidth = 2.4,
+             fontname = "Helvetica-Bold", fontsize = 14];
+
+        // blocks on the near side of the bus
+        sio [label = "Serial port\nbaud set by software\n$82-$83", fillcolor = "#fdecd8",
+             width = 2.5, height = 0.9];
+        rtc [label = "Real-time clock\ntime from the board\n$70-$71", fillcolor = "#eceff1",
+             width = 2.5, height = 0.9];
+        tim [label = "Timers\n1 ms and 1 us\n$C0-$CF, $D0-$D3", fillcolor = "#e2f0dd",
+             width = 2.5, height = 0.9];
+        led [label = "Front panel\nLEDs and switches\n$A0-$A7, $FF", fillcolor = "#eceff1",
+             width = 2.5, height = 0.9];
+        sd  [label = "SD card\nthe physical socket\n$88-$8F", fillcolor = "#e6ddd2",
+             width = 2.5, height = 0.9];
+        dsk [label = "Disk images\nmounted from the menu\n$90-$97", fillcolor = "#e6ddd2",
+             width = 2.5, height = 0.9];
+
+        cpu -> bus;   ssp -> bus;   mem -> bus;   vdu -> bus;   snd -> bus;
+        bus -> sio;   bus -> rtc;   bus -> tim;   bus -> led;   bus -> sd; bus -> dsk;
+
+        // left-to-right order along each row
+        cpu -> ssp [style = invis, weight = 10];  ssp -> mem [style = invis, weight = 10];
+        mem -> vdu [style = invis, weight = 10];  vdu -> snd [style = invis, weight = 10];
+        sio -> rtc [style = invis, weight = 10];  rtc -> tim [style = invis, weight = 10];
+        tim -> led [style = invis, weight = 10];  led -> sd  [style = invis, weight = 10];
+        sd  -> dsk [style = invis, weight = 10];
+
+        { rank = same; cpu; ssp; mem; vdu; snd; }
+        { rank = same; sio; rtc; tim; led; sd; dsk; }
+    }
+
+    // the link stops at the core's border
+    board -> mem [lhead = cluster_core, penwidth = 2.6];
+}

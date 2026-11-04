@@ -37,7 +37,8 @@ millisecond-resolution counters, a bootable ANS Forth, and an embedded RISC-V
 "system support processor" running Forth that gives the machine a
 PDP-11-ODT-style debug console. And none of this comes close to filling the
 chip: the current build occupies barely a third of the FPGA fabric, which
-matters when we talk about room to grow (§8).
+matters when we talk about room to grow (§8).  The whole thing on one page is
+the block diagram in [`doc/ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ### The CPU and memory in one paragraph
 
@@ -794,7 +795,7 @@ a `.BIN` is not affected unless it executes `EI`.
 
 | Document | Contents |
 |----------|----------|
-| [`doc/ARCHITECTURE.md`](ARCHITECTURE.md) | Block diagrams of every part of the core outside `sys/`, generated from Graphviz sources in `doc/architecture/` |
+| [`doc/ARCHITECTURE.md`](ARCHITECTURE.md) | A high-level block diagram of the machine — the functional blocks, their I/O ports and memory ranges — plus the port map and, behind it, one implementation sheet per subsystem |
 | [`README.md`](../README.md) | Project overview, console wiring, OSD, build |
 | [`HARDWARE.md`](../HARDWARE.md) | Authoritative memory map, full I/O port maps, boot/reset semantics, custom instructions |
 | [`Components/FRONTPANEL/README.md`](../Components/FRONTPANEL/README.md) | Front-panel datasheet, profile file format, capture chain |
