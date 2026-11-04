@@ -795,7 +795,7 @@ a `.BIN` is not affected unless it executes `EI`.
 
 | Document | Contents |
 |----------|----------|
-| [`doc/ARCHITECTURE.md`](ARCHITECTURE.md) | A high-level block diagram of the machine — the functional blocks, their I/O ports and memory ranges — plus the port map and, behind it, one implementation sheet per subsystem |
+| [`doc/ARCHITECTURE.md`](ARCHITECTURE.md) | A one-page block diagram of the machine — the functional blocks, their I/O ports and memory ranges — with the port map and the on-screen file-load targets in text |
 | [`README.md`](../README.md) | Project overview, console wiring, OSD, build |
 | [`HARDWARE.md`](../HARDWARE.md) | Authoritative memory map, full I/O port maps, boot/reset semantics, custom instructions |
 | [`Components/FRONTPANEL/README.md`](../Components/FRONTPANEL/README.md) | Front-panel datasheet, profile file format, capture chain |

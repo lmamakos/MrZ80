@@ -70,28 +70,19 @@ image), *Boot Load Target*, *Flow Control* (serial handshake), *Front Panel
 Profile*, *SSP Monitor* and its friends (the service monitor), and *PSG Stereo*
 (Mono / ABC / ACB channel panning).
 
-`HARDWARE.md` remains authoritative for bit-level detail on every port, the boot
-and reset rules, and the two custom Z-80 instructions this core adds.
+`HARDWARE.md` remains authoritative for every port bit, the page-mapping rules,
+boot and reset behaviour, and the two custom Z-80 instructions this core adds. The
+clocking, for the record: one PLL, 50 MHz for the whole computer and a second
+faster tap for the SDRAM controller alone — 100 MHz in the current build
+(`SDRAM_CLK_100` is defined in `MrZ80.sv`; the PLL also emits the 112 MHz the
+controller was ported for) — with the Z-80 enabled one cycle in five to give a
+10 MHz core.
 
-## Deeper sheets
+## Regenerating the image
 
-Only if you want the implementation. Each is one page, and the text of every
-fact they show is in `HARDWARE.md` and the source.
-
-| Sheet | Contents |
-|-------|----------|
-| [overview](architecture/overview.svg) | the whole core at module level, with the MiSTer framework as one box |
-| [z80](architecture/z80.svg) | the CPU complex: bus arbitration between the two masters, the reset-vector trampoline, the MMU, block RAM, the SDRAM client, how wait states are built |
-| [peripherals](architecture/peripherals.svg) | each I/O device and what it reaches off-core |
-| [iomap](architecture/iomap.svg) | the port map plus the register windows inside the memory controller, panel and sound chip |
-| [psg](architecture/psg.svg) | the sound wrapper around the vendored cores: port steering, the mute-and-pan sequencer |
-| [ssp](architecture/ssp.svg) | the service monitor: its processor, memory map, and the seam to the Z-80 |
-| [clocks](architecture/clocks.svg) | clock domains, the reset tree, and every crossing between domains |
-
-## Regenerating the images
-
-Sources are the `.dot` files beside this document (Graphviz); the rendered SVGs
-are committed so the docs read without a toolchain, PNGs are build output:
+The source is `architecture/block.dot`, in [Graphviz](https://graphviz.org) format.
+The rendered SVG is committed so the documentation reads without a toolchain; the
+PNG is build output and is gitignored:
 
 ```sh
 make -C doc/architecture      # needs graphviz (dot)

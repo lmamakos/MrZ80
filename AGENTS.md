@@ -38,7 +38,8 @@ Three mechanisms, pick the right one:
 
 ## Conditional compilation macros
 
-All macros in `MrZ80.qsf` are **commented out**:
+These `MrZ80.qsf` macros are **commented out**, and must stay that way for a
+normal build:
 
 ```
 ARCADE_SYS, USE_FB, USE_SDRAM, USE_DDRAM, DEBUG_NOHDMI
@@ -47,7 +48,18 @@ ARCADE_SYS, USE_FB, USE_SDRAM, USE_DDRAM, DEBUG_NOHDMI
 `MISTER_DUAL_SDRAM` in `sys_dual_sdram.tcl` is unused (file is never
 sourced).
 
-There are **no active conditional compilation macros** in the current build.
+These macros **are active** in the current build:
+
+| Macro | Where | Effect |
+|-------|-------|--------|
+| `USE_STEREO`, `USE_DUAL_PSG` | `MrZ80.qsf` | configures the vendored `Components/YM2149` cores for two chips and two mixers, without editing them |
+| `MRZ80_SD_IGNORE_CD` | `MrZ80.qsf` | ignores the framework's SD card-detect when gating the secondary SD pins in `sys/sys_top.v` |
+| `MRZ80_SD_FORCE` | `MrZ80.qsf` | always routes the SD signals to the SDIO pins (no MCP23009 I/O board); costs the analog video on the shared pins |
+| ``` `define SDRAM_CLK_100 ``` | `MrZ80.sv` | SDRAM controller runs on the PLL's 100 MHz tap instead of 112 MHz, the timing-closure fallback |
+
+So the build does use conditional compilation; the macros above are what make the
+sound, SD pin routing and SDRAM clock what they are. Removing the two `MRZ80_SD_*`
+macros restores stock MiSTer behaviour.
 
 ## Build commands
 
@@ -92,22 +104,20 @@ a containerized Quartus environment on `tycho` to avoid local tool dependencies.
 
 ### Architecture diagrams
 
-`doc/ARCHITECTURE.md` leads with `block.svg` — a high-level view of the major
+`doc/ARCHITECTURE.md` is a single high-level diagram, `block.svg` — the major
 functional blocks on the Z-80 bus, labelled only with their I/O ports and memory
-ranges, for people *using* the machine. Behind it sit the implementation sheets
-(overview, Z-80/memory, peripherals, port map, sound, SSP, clocks). All of them
-come from `doc/architecture/*.dot`:
+ranges, for people *using* the machine. It comes from `doc/architecture/block.dot`:
 
 ```sh
-make -C doc/architecture      # -> .svg and .png per sheet (needs graphviz/dot)
+make -C doc/architecture      # -> .svg and .png (needs graphviz/dot)
 ```
 
-Update the `.dot` source, not the rendered image, whenever the structure changes
-(new port, new reset term, new clock domain). Add a port to `block.dot` only if a
-user of the machine needs to know it exists; the detail belongs in the subordinate
-sheets and in `HARDWARE.md`. The committed artifacts are the `.dot` files and the
-`.svg`s; PNGs are ignored. `doc/ARCHITECTURE.md` also holds the port map and the
-on-screen file-load targets in text form.
+Update the `.dot` source, not the rendered image, whenever a user-visible block or
+port changes. There are deliberately no subordinate implementation sheets: port
+bits, resets and clock domains belong in `HARDWARE.md` and the RTL. The committed
+artifacts are `block.dot` and `block.svg`; PNGs are ignored.
+`doc/ARCHITECTURE.md` also holds the port map and the on-screen file-load targets
+in text form.
 
 ## Z-80 assembler toolchain (`forth/`, and any future Z-80 `.azm`/`.mac` work)
 

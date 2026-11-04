@@ -1,29 +1,17 @@
-# Renders the architecture diagrams from their Graphviz sources.
+# Renders the architecture diagram from its Graphviz source.
 #
-#   make            all SVGs and PNGs
-#   make clean      remove generated images
+#   make            the SVG and PNG
+#   make clean      remove the generated images
 #
-# The sheets, top to bottom (doc/ARCHITECTURE.md explains how they fit):
+# block.dot is the whole set: the major functional blocks on the Z-80 bus,
+# labelled with their I/O ports and memory ranges and nothing more.  It is the
+# view for people using the machine; the implementation detail lives in
+# HARDWARE.md and the RTL, not in a subordinate sheet.
 #
-#   block.dot            the front page: major functional blocks on the Z-80 bus,
-#                      labelled with their I/O ports and memory ranges only
-#   overview.dot         the whole core at module level, with the sys/ framework as
-#                      one box
-#   z80.dot            T80, bus arbitration, reset-vector trampoline, MMU,
-#                      block RAM, SDRAM client and the wait generation
-#   peripherals.dot    the I/O devices and what they reach off-core
-#   iomap.dot          the port map, plus the MMU / front-panel / PSG register
-#                      windows
-#   psg.dot          dual YM2149 sound: wrapper, vendored cores, pan sequencer
-#   ssp.dot          the RISC-V System Support Processor and its seam
-#   clocks.dot       clock domains, reset tree, clock-domain crossings
-#
-# block.dot is the one to show anyone who is using the machine rather than
-# changing it; the others are implementation detail, one page each.
-#
-# Needs graphviz (dot).  The .dot sources are committed, and so are the SVGs
-# referenced from doc/ARCHITECTURE.md, so the docs read without a toolchain;
-# PNGs are ignored (regenerate with "make -C doc/architecture").
+# Needs graphviz (dot).  The .dot source and the SVG referenced from
+# doc/ARCHITECTURE.md are committed, so the docs read without a toolchain; the
+# PNG is build output and is gitignored (regenerate with
+# "make -C doc/architecture").
 
 DOT      := $(wildcard *.dot)
 SVGS     := $(DOT:.dot=.svg)

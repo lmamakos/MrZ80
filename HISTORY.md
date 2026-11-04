@@ -3906,3 +3906,29 @@ had become the tail of the previous version — `HARDWARE.md` is where that deta
 lives. `AGENTS.md` now says `block.dot` takes a port only if a user of the
 machine needs to know it exists, and `doc/OVERVIEW.md` points at the diagram from
 both its opening and its further-reading table.
+
+## One diagram is enough (2026-11-04)
+
+The seven implementation sheets built earlier today are deleted; `block.dot` is the
+whole diagram set. The reasoning is the same that produced the block diagram: the
+detail those sheets carried is already written down, in more precise form, in
+`HARDWARE.md` and in the RTL, and a second place to keep it current is a second
+way for it to go stale. `doc/ARCHITECTURE.md` is now the picture, a plain-language
+tour of the blocks, the port table and the on-screen file-load targets. `AGENTS.md`
+and `doc/architecture/Makefile` say the same: no subordinate sheets, on purpose.
+
+While checking a clock frequency for the text, a stale statement turned up in
+`AGENTS.md`: it claimed *no* conditional compilation macros are active in this
+build. Four are:
+
+| Macro | Effect |
+|-------|--------|
+| `USE_STEREO`, `USE_DUAL_PSG` (`MrZ80.qsf`) | two PSGs and two mixers in the vendored `Components/YM2149` cores |
+| `MRZ80_SD_IGNORE_CD`, `MRZ80_SD_FORCE` (`MrZ80.qsf`) | SD card-detect ignored, SD signals always routed to the SDIO pins (costs analog video on those pins) |
+| ``` `define SDRAM_CLK_100 ``` (`MrZ80.sv`) | SDRAM controller on the PLL's 100 MHz tap, not the 112 MHz tap |
+
+The last one is the interesting one: because `SDRAM_CLK_100` is defined,
+`clk_ram` is 100 MHz today, not the 112 MHz the CoCo3 controller was ported for —
+the timing-closure fallback is what runs. `AGENTS.md` now lists the active macros
+as well as the ones that must stay commented out, and `doc/ARCHITECTURE.md` states
+the SDRAM clock as it actually is.
