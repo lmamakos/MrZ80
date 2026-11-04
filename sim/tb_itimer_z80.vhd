@@ -11,8 +11,9 @@
 -- chain positions 260-291, see SIGNAL-CAPTURES.md): /WR dark right after reset,
 -- the timer's interrupt request and the CPU INT pin lit by the interrupts, the
 -- stretched strobe bits actually HELD after their pulse ends, the raw
--- (transparent) /MREQ and /IORQ copies NOT held, and the unwired ACIA interrupt
--- bits and the reserved bits never lit.
+-- (transparent) /MREQ and /IORQ copies NOT held, IFF1 lit by EI and the IM
+-- field showing IM 1, and the ACIA interrupt bits (never enabled by this
+-- program) and the reserved bits never lit.
 -- Run from the project root:  sim/run_itimer_z80.sh
 
 library ieee;
@@ -144,7 +145,8 @@ begin
     -- fpChainEnd's per-bit (stretched / transparent) output, before the shifter.
     -- Bit 15 = timer INT request, 14/13 = ACIA INT outputs, 12 = INT at the CPU,
     -- 11:8 = stretched /WR /RD /MREQ /IORQ, 7:0 = fpLatch; 19/18 are the raw
-    -- (transparent) /MREQ and /IORQ copies; 31:20 and 17:16 are reserved zeros.
+    -- (transparent) /MREQ and /IORQ copies; 23 = IFF1, 22 = IFF2, 21:20 = IM
+    -- (chain 268-271); 31:24 and 17:16 are reserved zeros.
     chain_end       <= << signal .tb_itimer_z80.dut.fpChainEnd.captured_bits : std_logic_vector(31 downto 0) >>;
     -- ...and the raw inputs it is fed, to prove the stretched bits are HELD.
     chain_raw       <= << signal .tb_itimer_z80.dut.fpChainEnd.combined_data : std_logic_vector(31 downto 0) >>;
@@ -224,6 +226,7 @@ begin
     chain_watch: process(clk_sys)
         variable seen_tmr, seen_cpu, seen_wr, seen_rd, seen_mreq, seen_iorq : boolean := false;
         variable seen_mreq_raw, seen_iorq_raw : boolean := false;
+        variable seen_iff1, seen_im1 : boolean := false;
         variable bad_acia, bad_rsvd : boolean := false;
         -- Consecutive clocks each bit has been lit while its raw input is low:
         -- only a hold counter can do that (a registered copy lags by one clock).
@@ -251,9 +254,11 @@ begin
             if chain_end(8)  = '1' then seen_iorq := true; end if;
             if chain_end(19) = '1' then seen_mreq_raw := true; end if;
             if chain_end(18) = '1' then seen_iorq_raw := true; end if;
+            if chain_end(23) = '1' then seen_iff1 := true; end if;
+            if chain_end(21 downto 20) = "01" then seen_im1 := true; end if;
             if chain_end(14) = '1' or chain_end(13) = '1' then bad_acia := true; end if;
-            -- 31:20 and 17:16 are the reserved filler (12 + 2 zeros)
-            if chain_end(31 downto 20) /= x"000" or chain_end(17 downto 16) /= "00" then
+            -- 31:24 and 17:16 are the reserved filler (8 + 2 zeros)
+            if chain_end(31 downto 24) /= x"00" or chain_end(17 downto 16) /= "00" then
                 bad_rsvd := true;
             end if;
             if sim_done then
@@ -287,8 +292,10 @@ begin
                 assert stretched(18) = '0'
                     report "FAIL: tb_itimer_z80: capture chain bit 18 (raw /IORQ, 273) is unexpectedly stretched"
                     severity failure;
-                assert not bad_acia report "FAIL: tb_itimer_z80: capture chain 277/278 (ACIA INT, unwired) lit" severity failure;
-                assert not bad_rsvd report "FAIL: tb_itimer_z80: capture chain 260-271/274-275 (reserved) lit" severity failure;
+                assert seen_iff1 report "FAIL: tb_itimer_z80: capture chain 268 (IFF1) never lit" severity failure;
+                assert seen_im1  report "FAIL: tb_itimer_z80: capture chain 270-271 (IM) never showed IM 1" severity failure;
+                assert not bad_acia report "FAIL: tb_itimer_z80: capture chain 277/278 (ACIA INT, not enabled here) lit" severity failure;
+                assert not bad_rsvd report "FAIL: tb_itimer_z80: capture chain 260-267/274-275 (reserved) lit" severity failure;
             end if;
         end if;
     end process;

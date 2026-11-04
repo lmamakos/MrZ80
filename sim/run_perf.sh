@@ -62,20 +62,28 @@ done
 ghdl -e "${GHDL_FLAGS[@]}" tb_sdram_perf
 echo "---- sdram_perf.asm (timing) ----"
 ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf "$@" --ieee-asserts=disable --stop-time=25ms 2>&1 \
-    | sed -n 's/.*(report \(note\|warning\|error\)): //p'
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p' | tee -a "$WORKDIR/results.log"
 echo "---- sdram_stress.asm (correctness, RESULT = error count) ----"
 ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN=sim/sdram_stress.bin -gEXPECT_SUM=0 "$@" \
     --ieee-asserts=disable --stop-time=25ms 2>&1 \
-    | sed -n 's/.*(report \(note\|warning\|error\)): //p'
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p' | tee -a "$WORKDIR/results.log"
 echo "---- testing/sdramstress.asm -D SIM (1 pass, RESULT = error count) ----"
 ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN="$WORKDIR/sdramstress_sim.bin" -gEXPECT_SUM=0 "$@" \
     --ieee-asserts=disable --stop-time=110ms 2>&1 \
-    | sed -n 's/.*(report \(note\|warning\|error\)): //p'
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p' | tee -a "$WORKDIR/results.log"
 echo "---- sim_unused_io.asm (unclaimed I/O ports read 0FFh, RESULT = error count) ----"
 ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN=sim/sim_unused_io.bin -gEXPECT_SUM=0 "$@" \
     --ieee-asserts=disable --stop-time=25ms 2>&1 \
-    | sed -n 's/.*(report \(note\|warning\|error\)): //p'
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p' | tee -a "$WORKDIR/results.log"
 echo "---- sim_blockdev_io.asm (HPS block device ports 90-97 via the top level, RESULT = error count) ----"
 ghdl -r "${GHDL_FLAGS[@]}" tb_sdram_perf -gBIN=sim/sim_blockdev_io.bin -gEXPECT_SUM=0 "$@" \
     --ieee-asserts=disable --stop-time=25ms 2>&1 \
-    | sed -n 's/.*(report \(note\|warning\|error\)): //p'
+    | sed -n 's/.*(report \(note\|warning\|error\)): //p' | tee -a "$WORKDIR/results.log"
+
+# Every payload reports "checksum .. OK" or "checksum .. WRONG"; fail the lane
+# on any WRONG (it used to print the result and still exit 0).
+if grep -q 'WRONG' "$WORKDIR/results.log"; then
+    echo "run_perf.sh: FAIL - a checksum is WRONG (see above)" >&2
+    exit 1
+fi
+echo "run_perf.sh: all checksums OK"

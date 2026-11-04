@@ -252,6 +252,9 @@ architecture struct of MicrocomputerZ80CPM is
 	signal dbgReg_IY				: std_logic_vector(15 downto 0);
 	signal dbgReg_PC				: std_logic_vector(15 downto 0);
 	signal dbgReg_SP				: std_logic_vector(15 downto 0);
+	signal dbgReg_IFF1				: std_logic;
+	signal dbgReg_IFF2				: std_logic;
+	signal dbgReg_IM				: std_logic_vector(1 downto 0);
 
 	signal internalRam1DataOut		: std_logic_vector(7 downto 0);
 	-- Block RAM port muxed between the CPU and the OSD download write path.
@@ -275,8 +278,8 @@ architecture struct of MicrocomputerZ80CPM is
 	signal n_MREQ					: std_logic :='1';
 	signal n_IORQ					: std_logic :='1';	
 
-	signal n_int1					: std_logic :='1';	
-	signal n_int2					: std_logic :='1';	
+	signal n_int1					: std_logic;
+	signal n_int2					: std_logic;
 	
 	signal n_internalRam1CS			: std_logic :='1';
 	signal n_interface1CS			: std_logic :='1';
@@ -557,11 +560,12 @@ ssp_alt            <= t80_alt;
 ssp_would_boundary <= t80_would_boundary;
 ssp_t80_reg        <= cpuDbgRegisters;
 
--- The bus-request input is driven by the SSP. INT comes from the IntervalTimer
--- ($D0-$D3); the Z80 runs in interrupt mode 1 and software polls the sources.
--- n_int1/n_int2 (the io1/io2 ACIA interrupt outputs) are still unconnected;
--- they would be ANDed in here.
-n_INT   <= n_int_itimer;
+-- The bus-request input is driven by the SSP. INT comes from the
+-- IntervalTimer ($D0-$D3), the Terminal and the ACIA devices
+-- (io1/io2); the Z80 runs in interrupt mode 1 and software polls
+-- the sources at $38.
+n_INT   <= n_int_itimer and n_int1 and n_int2;
+
 -- R39 single-step interrupt mask (owner ruling): while the SSP step
 -- sequencer is armed (ssp_int_hold), INT is forced inactive for the T80.
 -- This is what keeps an IntervalTimer tick from hijacking a single-step trace
@@ -820,6 +824,9 @@ dbgReg_IX     <= cpuDbgRegisters(143 downto 128);
 dbgReg_IY     <= cpuDbgRegisters(207 downto 192);
 dbgReg_PC     <= cpuDbgRegisters(79 downto 64);
 dbgReg_SP     <= cpuDbgRegisters(63 downto 48);
+dbgReg_IFF2   <= cpuDbgRegisters(211);
+dbgReg_IFF1   <= cpuDbgRegisters(210);
+dbgReg_IM     <= cpuDbgRegisters(209 downto 208);
 
 -- **** Signal Chain 0 - 7
 -- 8-bit transparent capture chain sourced from the fpLatch register.
@@ -943,8 +950,10 @@ fpChainEnd :  entity work.Universal_Capture_Chain
 		shift_en      => fpChainShiftEn,
 
 		combined_data =>
-                    b"0000_0000_0000" &                       -- 12 bit
-                  -- [260-271]
+                    b"0000_0000" &                       -- 8 bit
+                  -- [260-267]
+                    dbgReg_IFF1 &      dbgReg_IFF2 &  dbgReg_IM &
+                  -- [268]             [269]          [270-271]
                     not n_MREQ &       not n_IORQ &   b"00" & -- 4 bits
                   --     [272]             [273]       [274-275]
                     not n_int_itimer & not n_int1 &   not n_int2 & not n_INT_ssp & -- 4 bits
