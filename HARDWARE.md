@@ -836,13 +836,15 @@ mixer output that is held off for those first 200 ms.
   and `AY_CLK 1789772`. The stock `ay.asm` driver finds device 1 at
   `0x50`/`0x51` (it probes by writing R2 and reading it back from `0x51`) and
   the boot banner shows `AY: MODE=COLECO IO=0x50`. RomWBW drives only one AY.
-  Verified on hardware (2026-11-04): `TUNE.COM` plays PT3 tunes. It needs the
-  `-coleco` switch, though: `TUNE.COM`'s own auto-detect reads the chip back
-  at `0x52` (the RC Sound Module's read port, in the RomWBW Coleco table),
-  which this core does not decode, so without the switch it reports no sound
-  hardware. `-coleco` skips that probe and writes `0x50`/`0x51`, which is what
-  the chip wants. Adding a platform-29 row to `TUNE.COM`'s table with its read
-  port at `0x51` instead would make the default path work as well.
+  Verified on hardware (2026-11-04): `TUNE.COM` plays PT3 tunes, both through
+  the sound driver (`--hbios`) and driving the ports itself (`-coleco`).
+  `TUNE.COM` has one more wrinkle when neither switch is given: it does its own
+  chip detection, writing R2 and reading it back from the third column (RIN) of
+  its config table, and every Coleco row in that table uses `0x52` - the RC
+  Sound Module's read port, which this core does not decode. The platform-29
+  row added for the MrZ80 reads back at `0x51` instead, like `ay.asm`, so that
+  plain `TUNE file.pt3` detects the chip too (hardware check pending); it
+  prints `MrZ80 YM2149 PSG (50H/51H)`.
 - **vibetune** (`VTUNE.COM`, [jduraes/vibetune](https://github.com/jduraes/vibetune)):
   takes device 1 from the HBIOS sound driver automatically. For two-chip
   TurboSound tunes, run `VTUNECFG` and set the TurboSound hardware to

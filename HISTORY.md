@@ -3785,3 +3785,24 @@ read back as designed, and the motif comes out of the MiSTer audio output. Two f
 
 Left: vibetune single-chip and dual-card (EB) on hardware, the OSD Mono/ABC/ACB modes by ear,
 and the GPL-3.0 licence reconciliation (`REQUIREMENTS.md` item 6).
+
+### TUNE.COM auto-detect for the MrZ80 (2026-11-04)
+
+RomWBW `d6deabae`, a follow-up to the platform-29 row it gained in `80ecf98f`. That row copied the
+RC Sound Module's Coleco entry, whose read port is `$52`; the MrZ80 does not decode `$52` (its PSG
+answers reads on both ports of the select/data pair), so `TUNE.COM`'s own detection - select R2,
+write `0AAh`, read it back at RIN - still saw the floating bus and reported no hardware. The row
+now reads back at `$51`, which is how `ay.asm`'s `AYMODE_COLECO` probe finds the chip at boot, so
+the plain `TUNE file.pt3` path should detect it as well; playback is unaffected either way, since
+the player only writes to the chip. The row also gets its own banner string,
+`HWSTR_MRZ80 = "MrZ80 YM2149 PSG (50H/51H)"`, replacing the misleading "RCBus Coleco Ports".
+`COLECOPORTS` (the `-coleco` switch) is unchanged: `$52` is right for the RC module there, and the
+forced path never probes. `uz80as` builds all three variants, and `tune.com` was checked byte-wise
+for the entry `1D 50 51 51 FF FF FF` and the descriptor resolving to the new string.
+
+Quirk count, for the record: `TUNE.COM` and vibetune each have their own Coleco notion. TUNE's is
+a read port this core lacks, fixed above; vibetune's forced `-coleco` swaps SELECT and DATA
+outright, so for vibetune the automatic HBIOS path stays the one to use.
+
+To check on hardware: run `TUNE FOO.PT3` with no switch on the new `TUNE.COM`
+(`RomWBW/Binary/Apps/tune.com`) and confirm it names the MrZ80 entry and plays.

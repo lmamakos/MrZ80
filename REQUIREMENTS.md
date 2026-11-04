@@ -646,14 +646,15 @@ taken against the open points below:
   audio through `TUNE.COM`.
 - **RomWBW:** `cfg_MRZ80.asm` enables the stock `ay.asm` (`AYMODE_COLECO`,
   `AY_CLK=1789772`); the ROM builds with `AY: MODE=COLECO, IO=80` and plays on
-  hardware. `TUNE.COM` needs its `-coleco` switch: the program's own
-  auto-detect reads the chip back at `$52` (the RC Sound Module's read port),
-  which this core does not decode, so it reports no hardware without the
-  switch. Give `TUNE.COM`'s platform-29 table entry `RIN=$51` instead and the
-  default path works too.
+  hardware (`TUNE.COM` with `-coleco`, and with `--hbios` through the driver).
+  `TUNE.COM` also probes the chip itself, reading the value back from the RIN
+  column of its config table; every Coleco row there uses `$52`, the RC Sound
+  Module's read port, which this core does not decode, so the platform-29 row
+  added for the MrZ80 uses `RIN=$51` - the plain, no-switch path should then
+  detect the chip too (hardware check pending).
 
-Remaining: vibetune single-chip and dual-chip (EB) on hardware, checking the
-OSD pan modes by ear, and the licence point.
+Remaining: plain `TUNE file.pt3` on hardware, vibetune single-chip and
+dual-chip (EB), checking the OSD pan modes by ear, and the licence point.
 
 Original note (2026-11-02, owner): Two YM2149/AY-3-8910 sound chips, one per stereo
 channel, so "chiptunes" player applications can use six voices with hard
