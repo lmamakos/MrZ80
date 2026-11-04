@@ -3684,3 +3684,104 @@ needed, a table of every driver with its ports (ACIA consoles, MD, `mrz80sd.asm`
 disks including the `MRZ80SD1BLKS` caveat, DS12RTC, FP LEDs, ITIM), the tick design and limits, the
 `ACIAINTS` gotcha, and status. "Where to read more" became section 10, and the stale "HBIOS
 platform driver is still to be written" text and the status rows were updated.
+
+### Dual YM2149 PSG sound at `$50`/`$51` and `$68`/`$60` (2026-11-03)
+
+`REQUIREMENTS.md` item 6. Two YM2149 / AY-3-8910 sound chips, mixed to stereo on the MiSTer audio
+output. Full programming detail is in `HARDWARE.md`, "PSG sound".
+
+- **Basis.** The vendored `Components/YM2149` (epsilon537's `YM2149_PSG_system`, jt49 with
+  BrianHG/nockieboy enhancements, imported unmodified in `89fd2c1`) already contains two PSGs, a
+  left and a right `BHG_audio_filter_mixer` that each sum all six channels, and a fractional clock
+  divider. It has no AY bus: one flat 8-bit address (high nibble 0/1 = PSG A/B, 8/9 = left/right
+  mixer) with level-sensitive writes. The new wrapper `Components/PSG/MrZ80_PSG.sv` adds the two
+  SELECT latches, steers that bus, and runs a small mix sequencer. The CPU always wins the bus; the
+  sequencer writes only in idle clocks.
+- **Ports, chosen for existing software rather than a window.** Device 1 at `$50` SELECT / `$51`
+  DATA is RomWBW's `AYMODE_COLECO`, so the stock `ay.asm` works unchanged (its probe writes R2 and
+  reads it back from `$51`). Device 2 had to be a pair vibetune's dual-card mode can name. Its
+  table offers MSX `$A0`/`$A1` (the front panel), RC `$D8`/`$D0` (`$D0` is the interval timer),
+  Coleco (device 1) and **EB `$68`/`$60`**, the only free one. Both ports of each pair read the
+  selected register, so both the Coleco (read DATA) and EB (read SELECT) conventions work. A SELECT
+  value above 15 deselects the chip, as on a real AY. Device 1's SELECT `$80`-`$89` and `$90`-`$99`
+  reach the left and right mixer registers, a MrZ80 extension that legacy software cannot hit.
+  TurboSound "module" select (`$FF`/`$FE` on one pair) was considered and left out (owner):
+  vibetune only uses it when reads are Hi-Z, which would break `ay.asm`'s probe.
+- **Stereo (owner: an OSD option).** Both chips feed both mixers, so panning means per-side gains.
+  The OSD "PSG Stereo" option (`status[26:25]`) chooses Mono, ABC (A left, B centre, C right, the
+  Spectrum 128 / CPC convention) or ACB (A left, C centre, B right, Pentagon / demoscene), with
+  device 2 panned like device 1. Side channels are mixed 3:1 (gains 96/32 of 256) rather than hard,
+  and the per-side gain sum stays at 384 in every mode, so the loudness does not change. The
+  sequencer writes the gains after reset and on every OSD change; an OSD change rewrites only the
+  gains, so software's master volume, invert, bass and treble survive it. `AUDIO_S` = signed,
+  `AUDIO_MIX` off.
+- **Silent out of reset (owner).** The PSG registers reset to 0, so all volumes are 0. Simulation
+  showed the mixer would still thump: the silent DAC level is not centred, the DC clamp engages and
+  the RC filter takes about 12 ms per time constant to centre it. The sequencer mutes both master
+  volumes in the first idle clocks after reset and restores them only after 200 ms (about 17 time
+  constants). The output is exactly 0 for that window and afterwards a flat -8 LSB (-72 dBFS, the
+  filter's resolution floor) with no AC.
+- **Build options as macros.** The vendored `YM2149_PSG_system.sv` ships with `USE_STEREO` and
+  `USE_DUAL_PSG` commented out, because upstream sets them from its build manifest. `MrZ80.qsf`
+  defines both as `VERILOG_MACRO`s and `sim/run_psg.sh` passes the same macros, so the vendored file
+  stays as imported. A local edit that enabled them inside the vendored file was dropped in favour
+  of this (owner). As a control, the bench fails without the macros (no device 2, no right mixer).
+- **Quartus 17.0.** The first synthesis failed in the vendored `BHG_jt49_exp_lut.vh` (Error 10748:
+  a variable initialised from other variables; upstream used Quartus 20.1). `Components/YM2149`
+  stays unmodified. `tools/gen_bhg_lut.py` generates `Components/PSG/BHG_jt49_exp_q17.sv`, the same
+  module with the tables as packed constants, used by both the build and the simulation in place
+  of `BHG_jt49_exp.sv`. Every measured value in the bench was identical with either file.
+  Analysis & Synthesis then passed. The remaining critical warnings are jt49's "power up to High"
+  async-reset registers, harmless because the core starts in reset. The VHDL core instantiates the
+  SystemVerilog wrapper through a component declaration (mixed language).
+- **Verification.** `make -C sim psg` (`sim/tb_psg.sv`, Verilator, about 25 s) checks: silence
+  through and after the mute window; the `ay.asm` probe and readback at both ports of each pair;
+  device independence; that out-of-range SELECTs drop writes and read `$FF`; AY read masks; ABC,
+  ACB and Mono gains, and that an OSD change keeps software's master volume; and a tone on each
+  chip at the programmed pitch (44 and 88 crossings per 100 ms for 437 and 874 Hz), left-heavy
+  (device 1 A) and right-heavy (device 2 C) under ABC. The GHDL lanes compile
+  `sim/MrZ80_PSG_stub.vhd` (an absent device) in its place.
+- **`testing/psgtest.asm`** probes both chips, prints the mixer gains and the OSD mode, and plays
+  the five-note *Close Encounters of the Third Kind* motif (G4 A4 F4 F3 C4, periods 285 254 320 641
+  428) on device 1 channel A, then device 2 channel C, leaving both silent. Run under the Python
+  `z80` emulator with a register-level PSG and BenchTimer model, it produced the right notes,
+  durations and channel enables, and detected all three OSD modes.
+- **Found on the way.** `sim/MicrocomputerZ80CPM_sim.vhd` had drifted from the real core since
+  `6dc802c` (INT wiring, IFF/IM chain bits), and `sim/check_sync.sh` reported it. Resyncing it
+  exposed that `tb_itimer_z80` still treated chain 268-271 as reserved. It now requires IFF1 to
+  light and the IM field to show IM 1. `run_perf.sh`'s `sim_unused_io` payload had been reporting
+  `checksum 10 WRONG` since the interval timer arrived (16 = its four ports `$D0`-`$D3` x the four
+  frame settings tried), but the lane printed the result and still exited 0. The skip list now
+  includes `$D0`-`$D3` and the PSG ports, and the lane fails on any WRONG checksum. Separately,
+  vibetune's forced `-coleco` configuration swaps
+  the Coleco SELECT and DATA ports (`$51`/`$50`), unlike its own card-2 table, its README and
+  RomWBW. Its automatic HBIOS path is correct.
+- **Full build:** successful, timing met on every clock (`clk_sys` setup slack +2.04 ns; worst
+  +0.77 ns on the HDMI PLL). 15,435 of 41,910 ALMs (37 %, up from 34 %), 39 DSP blocks.
+- **RomWBW** (`~/RomWBW`): `cfg_MRZ80.asm` sets `AYENABLE=TRUE`, `AYMODE=AYMODE_COLECO` and
+  `AY_CLK=1789772`. The stock `ay.asm` needs no change. The ROM builds and reports `AY:
+  MODE=COLECO, IO=80, CLOCK=1789772 HZ` (80 decimal = `$50`), with about 21 KB of HBIOS space
+  left. RomWBW's `AGENTS.md` records the decision and the ports.
+- **Still to do at the time:** the hardware test (`psgtest.bin`; the RomWBW `AY:` boot line and
+  `TUNE.COM`; vibetune single-chip and dual-card EB), and the GPL-3.0 licence reconciliation that
+  `REQUIREMENTS.md` item 6 asks for.
+
+### PSG sound on hardware (2026-11-04)
+
+The core, `testing/psgtest.bin` and a new HBIOS boot on the board, and RomWBW plays audio
+(owner). Both PSGs answer at `$50`/`$51` and `$68`/`$60`, the mixer gains and the OSD pan mode
+read back as designed, and the motif comes out of the MiSTer audio output. Two findings:
+
+- **`TUNE.COM` needs `-coleco`.** RomWBW's `ay.asm` finds the chip at boot (it reads the probe
+  value back from `$51`, which answers), but `TUNE.COM` has its own AY detection and reads the
+  register back at **`$52`** - the RC Sound Module's read port in its Coleco table, and a port
+  this core does not decode - so its auto path reports no sound hardware. Its `-coleco` switch
+  skips that probe and drives `$50`/`$51`, which works. A platform-29 row in `TUNE.COM`'s
+  `CFGTBL` was added, which is the right place to fix it; with the third column (RIN) at `$51`
+  instead of `$52` the default, no-switch path would work too.
+- The `-coleco` quirk is specific to `TUNE.COM`. **vibetune**'s forced `-coleco` is the opposite
+  problem (it swaps SELECT and DATA), so for vibetune the automatic HBIOS path remains the one
+  to use.
+
+Left: vibetune single-chip and dual-card (EB) on hardware, the OSD Mono/ABC/ACB modes by ear,
+and the GPL-3.0 licence reconciliation (`REQUIREMENTS.md` item 6).

@@ -596,7 +596,7 @@ follow it.
 | CamelFORTH standalone & CP/M, custom instructions, RAM-disk blocks | Working |
 | CP/M 2.2/3.0 boot images | Working |
 | RomWBW (HBIOS + multi-boot) | **MVP** — the MrZ80 HBIOS platform (MMU, consoles, ROM/RAM disks, HPS and SD disks, RTC, front-panel LEDs) comes up and runs; the 50 Hz interval-timer tick driver is built but awaiting a hardware check, and tuning under a real workload remains (§9) |
-| AY-3-8910 / YM2149 PSG audio: a stereo pair, one per channel (`REQUIREMENTS.md` item 6) | Roadmap |
+| AY-3-8910 / YM2149 PSG audio: two chips at `$50`/`$51` and `$68`/`$60`, stereo mixers with OSD Mono/ABC/ACB panning (`REQUIREMENTS.md` item 6) | Working on hardware (owner, 2026-11-04: `psgtest`, RomWBW `TUNE.COM`); simulation lane `make -C sim psg` |
 | Programmable millisecond interval timer and Z80 `INT` source, ports `$D0`-`$D3` (`REQUIREMENTS.md` item 7) | Working on hardware (owner, 2026-11-02); RomWBW tick driver `itim.asm` written 2026-11-02, hardware check pending (§9) |
 | SSP monitor: escape/park/E/D/G/R | Proven on hardware |
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
@@ -631,11 +631,14 @@ there's a place for it.
   interfaces to the MiSTer's USER header, drives the 256-WS2812 light strip,
   and carries the toggle bank, function levers and encoder from §4's panel
   engine. The IMSAI reference becomes physical.
-* **PSG audio on the roadmap.** Planned: the General Instrument
-  **AY-3-8910** — the three-voice programmable sound generator (three square
-  waves, noise, envelopes) that sang in the ZX Spectrum 128K, the Amstrad
-  CPC, the Atari ST and countless arcade cabinets — and maybe *two* of them
-  for stereo. Authentic 1980s sound for a 1970s CPU, inside a 2010s FPGA.
+* **PSG audio, now in.** The General Instrument **AY-3-8910** — the
+  three-voice programmable sound generator (three square waves, noise,
+  envelopes) that sang in the ZX Spectrum 128K, the Amstrad CPC, the Atari ST
+  and countless arcade cabinets — and *two* of them, in stereo, as a YM2149
+  pair with programmable mixers. RomWBW's stock AY driver finds the first chip
+  and `TUNE.COM` plays on hardware; the second chip is mapped for two-chip
+  TurboSound players such as vibetune. Authentic 1980s sound for a 1970s CPU,
+  inside a 2010s FPGA (`HARDWARE.md`, "PSG sound").
 * **The SSP will keep evolving — because it's just software.** The monitor is
   not etched anywhere: it is Forth source assembled into a ROM image that ships
   in the core, and even the bridge's register file is generated from one CSV so
@@ -703,14 +706,16 @@ Everything is a stock RomWBW driver except the block device and the timer.
 | Clock/calendar | `$70`/`$71` | Stock **DS12RTC** driver for the DS12887 (`DS12RTC_BASE=$70`), seeded from the MiSTer Linux host at power-up. |
 | Front panel LEDs | `$FF` | Stock **FP** driver on the output latch (`FPLED_IO=$FF`): HBIOS progress codes and disk activity show on the LEDs. |
 | System tick | `$D0`–`$D3` | **`itim.asm`** (`ITIMENABLE`, `ITIMIO`), described next. |
+| Sound | `$50`/`$51` | Stock **AY** driver (`ay.asm`), `AYENABLE=TRUE`, `AYMODE=AYMODE_COLECO`, `AY_CLK=1789772`: PSG device 1's ports are exactly the Coleco layout. Boot banner `AY: MODE=COLECO IO=0x50`, verified on hardware (2026-11-04). RomWBW drives one AY; device 2 (`$68`/`$60`) is for software such as vibetune. |
 
 ### The system tick: `itim.asm`
 
 HBIOS keeps time with a periodic interrupt that increments `HB_TICKS`, rolls
 into `HB_SECS`, and feeds SYSGET TIMER, the boot timeout and the drivers that
 check `SYSTIM`. On the MrZ80 that interrupt comes from the **IntervalTimer**
-(`Components/TIMER/IntervalTimer.vhd`, §2 and `HARDWARE.md`), the only source
-wired to the Z80 `INT` pin.
+(`Components/TIMER/IntervalTimer.vhd`, §2 and `HARDWARE.md`). It shares the Z80
+`INT` pin with the two ACIAs' interrupt outputs (the three active-low requests
+are ANDed); each handler checks its own device, as described below.
 
 **Why a separate file.** Every RomWBW tick source (`sctim.asm`, `ctc.asm`,
 `ez80tmr.asm`) is its own HBIOS module with PREINIT and INIT phases, and
@@ -747,23 +752,29 @@ its sticky OVERFLOW status bit, but the missed tick is not made up, so
 is masked at the CPU, so ticks are not delivered during a trace; the timer keeps
 counting and the next interrupt arrives when stepping ends.
 
-### Gotcha: the ACIAs must stay polled
+### `ACIAINTS`: interrupt-driven or polled ACIA receive
 
 Turning on `INTMODE=1` for the timer has a side effect that is easy to miss.
 RomWBW's ACIA driver ties **interrupt-driven receive** to `INTMODE`: with
 `INTMODE=1` it reads characters only from its interrupt handler, into a ring
-buffer, and its "character waiting?" test looks only at that buffer. On the
-MrZ80 that cannot work, for two reasons: the ACIAs' interrupt outputs are not
-connected to `INT`, and RomWBW walks the interrupt-mode-1 call list only until a
-handler claims the interrupt, so the 50 Hz timer would claim every one. The
-result would be a console that prints but never receives.
+buffer, and its "character waiting?" test looks only at that buffer. When the
+timer tick was added, the ACIAs' interrupt outputs were not yet connected to
+`INT`, so receive interrupts would never have come and the console would have
+printed but never received.
 
-The fix is a new setting, **`ACIAINTS`**, in `acia.asm`: interrupt-driven receive
-is used only when `ACIAINTS` is TRUE *and* `INTMODE` is 1. It defaults to TRUE in
-`cfg_MASTER.asm`, so every other platform builds exactly as before (RC2014's ROM
-is byte-identical with and without the change), and `cfg_MRZ80.asm` sets it
-FALSE. The ACIAs are then polled exactly as they were under `INTMODE=0`. When
-the ACIA interrupt outputs are one day wired to `INT`, set it back to TRUE.
+The fix was a new setting, **`ACIAINTS`**, in `acia.asm`: interrupt-driven
+receive is used only when `ACIAINTS` is TRUE *and* `INTMODE` is 1. It defaults
+to TRUE in `cfg_MASTER.asm`, so every other platform builds exactly as before
+(RC2014's ROM is byte-identical with and without the change), and
+`cfg_MRZ80.asm` set it FALSE, polling the ACIAs exactly as under `INTMODE=0`.
+
+The ACIA interrupt outputs are now wired to `INT` (MrZ80 commit `6dc802c`), and
+`cfg_MRZ80.asm` sets `ACIAINTS` TRUE (RomWBW commit `9f384430`): the build
+reports `ACIA: … INTERRUPTS ENABLED` for both consoles. The three sources share
+the level interrupt because every handler in the interrupt-mode-1 call list
+checks its own device's status and returns "not handled" otherwise, so the next
+entry gets its turn. Set `ACIAINTS` FALSE to go back to polling, for example
+with an older core that lacks the ACIA wiring.
 
 Related and worth knowing: with `INTMODE=1`, HBIOS and CP/M applications run with
 interrupts enabled, so page zero needs the RST 38h vector in every bank.
@@ -775,9 +786,9 @@ a `.BIN` is not affected unless it executes `EI`.
 | Item | State |
 |------|-------|
 | HBIOS platform: MMU, two ACIA consoles, ROM/RAM disks, HPS and SPI-SD disks, DS12887 clock, front-panel LEDs | Working on hardware (the two-console boot, owner, 2026-11-02) |
-| Interval-timer tick (`itim.asm`, `ACIAINTS=FALSE`) | Builds and assembles correctly; **not yet run on hardware**. Things to check: the `ITIM: … INTERVAL=20MS` line at boot, SYSGET TIMER advancing at 50 Hz, console input still working, and the first HPS/SD transfers with interrupts enabled |
-| ACIA interrupt outputs wired to `INT`, `ACIAINTS=TRUE` | Not planned yet; an HDL change |
-| Sound device driver | Waits on the PSG hardware (§8) |
+| Interval-timer tick (`itim.asm`) | Builds and assembles correctly; **not yet run on hardware**. Things to check: the `ITIM: … INTERVAL=20MS` line at boot, SYSGET TIMER advancing at 50 Hz, console input still working, and the first HPS/SD transfers with interrupts enabled |
+| ACIA interrupt outputs wired to `INT`, `ACIAINTS=TRUE` | Done: HDL in MrZ80 `6dc802c`, RomWBW `9f384430`; the ROM builds with `ACIA: … INTERRUPTS ENABLED` on both consoles |
+| Sound device driver (stock `ay.asm`, `AYMODE_COLECO`) | **Verified on hardware** (owner, 2026-11-04): the `AY: MODE=COLECO IO=0x50` line at boot and `TUNE.COM` playing PT3 tunes. Note that `TUNE.COM` needs its `-coleco` switch — its auto-detect reads the chip back at `$52`, which the core does not decode (`HARDWARE.md`, "PSG sound"). Vibetune single- and dual-chip play still to check |
 
 ## 10. Where to read more
 

@@ -617,9 +617,45 @@ Remaining:
   custom-instruction kernels, and record the baseline numbers (replaces the
   stopwatch figures in item 4) before starting item 4.1.
 
-### 6. Planned: stereo PSG audio (two YM2149 instances) — not started
+### 6. Stereo PSG audio (two YM2149 instances) — implemented 2026-11-03, on hardware 2026-11-04
 
-Noted 2026-11-02 (owner). Two YM2149/AY-3-8910 sound chips, one per stereo
+**Implemented 2026-11-03** (detail in `HARDWARE.md` "PSG sound"). Decisions
+taken against the open points below:
+
+- **Basis:** the vendored [epsilon537/YM2149_PSG_system](https://github.com/epsilon537/YM2149_PSG_system)
+  (`Components/YM2149`, unmodified): two jt49-derived PSGs with 10-bit DAC
+  tables and a programmable left and right mixer (BrianHG/nockieboy
+  enhancements of jt49). Quartus 17.0 needed one replacement file
+  (`Components/PSG/BHG_jt49_exp_q17.sv`, generated, identical tables).
+  The GPL-3.0 licence reconciliation noted below is still open.
+- **Z80 I/O:** one SELECT/DATA pair per chip, chosen for software
+  compatibility rather than a window: device 1 at `$50`/`$51` (RomWBW
+  `AYMODE_COLECO`), device 2 at `$68`/`$60` (vibetune's "EB" second card).
+  No write mirroring; mono-only software uses device 1.
+- **Stereo:** not one chip per side; both chips feed both mixers, and the
+  OSD "PSG Stereo" option picks Mono, ABC or ACB panning (3:1 side split).
+  Software can reprogram the mixers through device-1 SELECT `$80`-`$99`.
+- **Clock and output:** 1.7897725 MHz from the 50 MHz `clk`; signed 16-bit
+  `AUDIO_L`/`AUDIO_R`, DC filter in the mixers, `AUDIO_MIX` off. Both chips
+  are silent out of reset (mixer output held at 0 for 200 ms while the DC
+  filter settles).
+- **Verification:** `make -C sim psg` (Verilator) covers the ports, readback,
+  deselection, pan modes, reset silence and tone pitch/panning.
+  **On hardware (owner, 2026-11-04):** the core boots, `testing/psgtest.bin`
+  probes both devices and plays the motif, and RomWBW with the new HBIOS plays
+  audio through `TUNE.COM`.
+- **RomWBW:** `cfg_MRZ80.asm` enables the stock `ay.asm` (`AYMODE_COLECO`,
+  `AY_CLK=1789772`); the ROM builds with `AY: MODE=COLECO, IO=80` and plays on
+  hardware. `TUNE.COM` needs its `-coleco` switch: the program's own
+  auto-detect reads the chip back at `$52` (the RC Sound Module's read port),
+  which this core does not decode, so it reports no hardware without the
+  switch. Give `TUNE.COM`'s platform-29 table entry `RIN=$51` instead and the
+  default path works too.
+
+Remaining: vibetune single-chip and dual-chip (EB) on hardware, checking the
+OSD pan modes by ear, and the licence point.
+
+Original note (2026-11-02, owner): Two YM2149/AY-3-8910 sound chips, one per stereo
 channel, so "chiptunes" player applications can use six voices with hard
 left/right placement. Roadmap entry in `doc/OVERVIEW.md` (§ "Room to grow").
 

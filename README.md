@@ -23,6 +23,52 @@ monitor's own screen and keyboard — examine and deposit memory
 
 The core boots CP/M 2.2/3.0 today; RomWBW bring-up is ongoing.
 
+
+## Some background, why would I do such a thing?
+
+Years ago, in the 1980's I built an S-100 Z80 based system: the North
+Star Horizon.  It was a handsome looking system with a beautiful
+walnut wood cover, in complete disregard for any EMI concerns.  Worked
+great, and with not one, but _two_ floppy disk, I was the envy of my
+peers.  Since then, I'd given away the North Star after one too many
+moves and recently got an itch to do the CP/M thing again.
+
+During my career as an Internet guy, I did a lot of early work in in
+the pre-commercial Internet days running large backbone networks.  I
+had occasion for a few years to work for a router start-up that no one
+has ever heard of, and we built a larger router with an FPGA-based
+packet network forwarding engine.  I wasn't an FPGA guy; I was one of
+the engineering team having to _use_ the forwarding engine and I had
+occasion to work closely with the guys who spent their day laboring
+over VHDL and floorplanning and the like.  I only picked stuff up
+along the way, and learned enough to mostly just be a danger to
+myself.
+
+Flash forward 25 years, and now Anthropic LLMs and local models running
+on my Mac have enabled me to extend my little FPGA knowledge and now I
+can be a danger to myself **and others!**
+
+So this is a heads-up to those of you allergic to LLM-assisted and
+-generated code.  There's a bunch in here, all lovingly directed by me
+as I can now realize my desires and plans for a fancy Z80 RomWBW and
+CP/M system.  And I am still the envy of my friends with their
+hardware Z80 systems.
+
+If you poke around, you'll see that the design incorporates
+programmable timer that can generate an interrupt.. fair enough.  Of
+course there's also an RTC chip to do civil timekeeping, sure, sure.
+And then you'll find four 32 bit counters, a pair running at
+millisecond granularity, and another pair that increments each
+microsecond.  My excuse here is that I spent a lot of time in the
+early days of NTP (the Network Time Protocol) and developed an unusual
+interest in precise timekeeping and measurement.  These times come in
+handy for benchmarking.
+
+Stuff gets added because it's pretty easy to do so.  And why let all
+those FPGA logic cells just sit there unused?  This is the reason why
+the Z80 has access to a 128**MB** address space through it's MMU.  Is
+that overkill?  _Of course it is!_
+
 ## Credits & origin
 
 Port of Grant Searle's MultiComp to the MiSTer by Louis Mamakos.
@@ -63,7 +109,7 @@ terms before reusing it.
 | MiST-to-MiSTer lineage of the top level | Based on Grant Searle's MultiComp and **WiSo**'s MiST port write-up: [part 1](https://ws0.org/building-your-own-custom-computer-with-the-mist-fpga-board-part-1/), [part 2](https://ws0.org/building-your-own-custom-computer-with-the-mist-fpga-board-part-2/). | `MrZ80.sv` |
 | MiSTer framework | **Alexey Melnikov (Sorgelig)** and the MiSTer-devel contributors, including **Till Harbaum**, **Ludvig Strigeus** (hq2x), **Kitrinx** (mt32pi), **Grabulosaure** (video_freak) and **bellwood420** (f2sdram terminator). [Main_MiSTer](https://github.com/MiSTer-devel/Main_MiSTer), [Template_MiSTer](https://github.com/MiSTer-devel/Template_MiSTer). Maintained externally and never modified here. | `sys/` |
 | Intel/Altera generated IP | PLL and block-RAM/ROM wrappers produced by Quartus MegaWizard under Intel's licence. | `rtl/`, `Components/INTERNALRAM/`, `Components/TERMINAL/` |
-| YM2149 / AY-3-8910 PSG system | **epsilon537** ([YM2149_PSG_system](https://github.com/epsilon537/YM2149_PSG_system)), with enhancements by **BrianHG** and **nockieboy**; built on **Jose Tejada**'s [jt49](https://github.com/jotego/jt49) core (GPLv3). Dual PSG, programmable stereo mixer with bass/treble, DC filter, 8-10-bit exponential DAC and I2S transmitter. Full provenance in `Components/YM2149/README.md`. | `Components/YM2149/` (vendored; not yet in the build) |
+| YM2149 / AY-3-8910 PSG system | **epsilon537** ([YM2149_PSG_system](https://github.com/epsilon537/YM2149_PSG_system)), with enhancements by **BrianHG** and **nockieboy**; built on **Jose Tejada**'s [jt49](https://github.com/jotego/jt49) core (GPLv3). Dual PSG, programmable stereo mixer with bass/treble, DC filter, 8-10-bit exponential DAC and I2S transmitter. Full provenance in `Components/YM2149/README.md`. Vendored unmodified; wrapped by `Components/PSG/` (with a generated Quartus 17 replacement for `BHG_jt49_exp.sv`). | `Components/YM2149/`, `Components/PSG/` |
 
 **System Support Processor cores** (vendored verbatim; hashes and pinned
 revisions are in `Components/RISCV/PROVENANCE.md`)
@@ -114,6 +160,8 @@ on-FPGA block RAM. Peripherals:
 | Front-panel data latch | `$FF` | IMSAI-style 8-bit output latch feeding the capture chain |
 | Benchmark timers | `$C0`–`$CF` | Free-running µs/ms counters with snapshot channels |
 | DS12887 real-time clock | `$70`–`$71` | Time seeded from the MiSTer host |
+| Interval timer | `$D0`–`$D3` | Millisecond periodic/one-shot timer; drives `INT` (RomWBW's 50 Hz tick) |
+| Dual YM2149 / AY-3-8910 PSG | `$50`–`$51`, `$68`/`$60` | Six voices in stereo on the MiSTer audio output; OSD Mono/ABC/ACB panning. Device 1 is RomWBW's `AYMODE_COLECO` pair (`ay.asm` finds it, `TUNE.COM` plays); device 2 is vibetune's dual-card "EB" card |
 
 The authoritative **memory map and full I/O port map** live in
 [`HARDWARE.md`](HARDWARE.md). Development history and design rationale are in
@@ -418,6 +466,15 @@ CPU selection any more — the core is Z-80 only.)
   the built-in ROM.
 * **Reset SSP** — restarts the monitor processor (~1 ms reset pulse) without
   resetting the Z80.
+
+### Sound
+
+* **PSG Stereo** (Mono/ABC/ACB) — how the six PSG voices (three per chip) are
+  panned. Mono centres every channel. **ABC** puts channel A on the left, B in
+  the centre and C on the right (ZX Spectrum 128 / Amstrad CPC convention);
+  **ACB** puts A on the left, C in the centre and B on the right (Pentagon /
+  demoscene convention). Both chips are panned alike, side channels 3:1 rather
+  than hard. Takes effect immediately; see `HARDWARE.md`, "PSG sound".
 
 ### Communication settings
 

@@ -178,6 +178,8 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 | Port(s)       | Width | Function                                                                                                  |
 |---------------|-------|-----------------------------------------------------------------------------------------------------------|
 | `0x38`        | 1     | Unmapped. Formerly the ROM-disable trigger; the boot ROM has been removed, so writes are ignored.        |
+| `0x50`-`0x51` | 2     | PSG device 1, YM2149/AY-3-8910 (`n_psg1SelCS`/`n_psg1DatCS`, `Components/PSG/MrZ80_PSG.sv`). `0x50` = register SELECT, `0x51` = DATA; both read the selected register. RomWBW `AYMODE_COLECO`. Also reaches the stereo mixers. See PSG sound below. |
+| `0x60`, `0x68` | 2    | PSG device 2 (`n_psg2DatCS`/`n_psg2SelCS`). `0x68` = register SELECT, `0x60` = DATA; both read the selected register (vibetune's "EB" second card). See PSG sound below. |
 | `0x70`-`0x71` | 2     | DS12887 real-time clock (`n_rtcCS`, `Components/RTC/ds12887.vhd`). AT-style index/data pair: `0x70` = register index, `0x71` = selected register. See below. |
 | `0x80`-`0x81` | 2     | SBCTextDisplayRGB (`n_interface1CS`). VGA/PS-2 text display, 6850 ACIA programming model. RomWBW video console (ACIA unit 1). See Serial-like devices below. |
 | `0x82`-`0x83` | 2     | bufferedUART (`n_interface2CS`). Serial console, 6850 ACIA programming model. RomWBW boot console (ACIA unit 0). See Serial-like devices below. |
@@ -720,6 +722,164 @@ Register map (see `Components/RTC/README.md` for full detail):
         OUT  (70h),A       ; select Register B
         IN   A,(71h)
 ```
+
+### PSG sound: dual YM2149 (`0x50`/`0x51` and `0x68`/`0x60`)
+
+Two YM2149 / AY-3-8910 programmable sound generators, three tone channels
+and one noise generator each, mixed to stereo and played through the
+MiSTer audio output (HDMI and the analog jack). `Components/PSG/MrZ80_PSG.sv`
+wraps the vendored `YM2149_PSG_system` (`Components/YM2149`, from
+[epsilon537/YM2149_PSG_system](https://github.com/epsilon537/YM2149_PSG_system),
+built on [jotego/jt49](https://github.com/jotego/jt49), GPL-3.0). The chips
+are clocked at 1.7897725 MHz (the MSX clock, RomWBW's `AY_CLK`), derived
+from the 50 MHz system clock, so pitch does not depend on the CPU speed.
+Each channel uses a 10-bit logarithmic DAC table, which is a close match to
+a real YM2149's output levels.
+
+#### Programming model
+
+Each chip is a standard AY-style SELECT/DATA port pair: write the register
+number to SELECT, then write the value to DATA (or read it back).
+
+| Port   | Write                 | Read                                         |
+|--------|-----------------------|----------------------------------------------|
+| `0x50` | device 1 SELECT       | selected register                            |
+| `0x51` | device 1 DATA         | selected register (where RomWBW `ay.asm` reads) |
+| `0x68` | device 2 SELECT       | selected register (where vibetune reads an "EB" card) |
+| `0x60` | device 2 DATA         | selected register                            |
+
+| SELECT value | Device 1                          | Device 2               |
+|--------------|-----------------------------------|------------------------|
+| `0x00`-`0x0F` | PSG registers R0-R15             | PSG registers R0-R15   |
+| `0x80`-`0x89` | left mixer registers 0-9 (MrZ80 extension) | deselected |
+| `0x90`-`0x99` | right mixer registers 0-9 (MrZ80 extension) | deselected |
+| anything else | deselected                       | deselected             |
+
+A deselected chip drops DATA writes and reads `0xFF`, the way a real
+AY-3-8910 ignores a latched address whose upper nibble is not its chip
+code. Legacy software never writes a SELECT value above 15, so it cannot
+reach the mixer registers by accident. The SELECT latches clear on reset.
+
+The PSG registers are the standard AY-3-8910 set: R0/R1, R2/R3 and R4/R5 are
+the 12-bit tone periods of channels A, B and C (frequency =
+1789772 / (16 x period)); R6 is the noise period; R7 is the mixer enable
+(bits 0-2 tone A-C, bits 3-5 noise A-C, **0 = on**; bits 6-7 I/O port
+direction); R8-R10 are the channel volumes (0-15, bit 4 = use envelope);
+R11/R12 are the envelope period, R13 the envelope shape (a write restarts
+it), and R14/R15 the I/O ports (not wired to anything; they read back the
+written value when set as outputs, R7 bits 6/7 = 1, and 0 as inputs). Unused bits read back as 0, as on the
+AY-3-8910 (for example R1 reads back 4 bits).
+
+#### The stereo mixers
+
+The two chips do not each get one output. Both feed **two mixers, one for
+the left output and one for the right**, and each mixer sums all six
+channels, A, B, C of device 1 (mixer inputs A-C) and A, B, C of device 2
+(mixer inputs D-F), each with its own gain, and then applies a DC filter,
+bass and treble shaping and a master volume. Panning a channel is therefore
+a matter of giving it different gains on the two sides. Registers of one
+mixer (SELECT `0x80`+n for the left, `0x90`+n for the right, through the
+device-1 ports):
+
+| n | Register | Notes |
+|---|----------|-------|
+| 0-5 | gain of A, B, C, D, E, F | 0 = off; the product is input x gain / 256, so 64 = 1/4 of full scale |
+| 6 | master volume | 0 = mute, 128 = 100 %, 255 = 200 % with a limiter |
+| 7 | phase invert | bit n inverts channel n (A-F) on this side |
+| 8 | bass | 1 = most bass ... 63 = least; 0 lets DC through, do not use |
+| 9 | treble | 0 = full bandwidth ... 255 = muffled |
+
+#### OSD "PSG Stereo": Mono, ABC, ACB
+
+The OSD option picks the panning that the core writes into the mixers.
+"ABC" and "ACB" are the two stereo conventions used by AY music, named
+after the left-to-right order of the three channels:
+
+| OSD | Channel A | Channel B | Channel C | Used by |
+|-----|-----------|-----------|-----------|---------|
+| Mono | centre | centre | centre | MSX, the vendor default |
+| ABC | left | centre | right | ZX Spectrum 128 stereo add-ons, Amstrad CPC |
+| ACB | left | right | centre | Pentagon and many demoscene players and trackers |
+
+Device 2's channels are panned the same way as device 1's, so a
+TurboSound (two-chip) tune keeps each chip's stereo image. "Left" and
+"right" are not hard: a side channel is mixed 3:1 (gains 96 and 32 of 256),
+so it never disappears from one ear on headphones, and a centre channel is
+64 on both sides. Every mode keeps the total gain per side at 384, so
+changing the option does not change the loudness. The MiSTer framework's
+own L/R mix (`AUDIO_MIX`) is left off.
+
+The core applies the option after every reset and whenever it changes in
+the OSD. An OSD change rewrites only the gains (registers 0-5) of both
+mixers: software changes to the master volume, phase invert, bass or
+treble are kept, but software gain settings are overwritten. Software can
+read the gains back to see which mode is in effect (`testing/psgtest.asm`
+does).
+
+#### Reset: both chips start silent
+
+A Z-80 reset (OSD Reset, the reset button, power-up) resets both PSGs and
+both mixers. The PSG registers reset to 0, so every channel volume is 0 and
+neither chip makes a tone. The mixers' DC filter would still produce a thump
+at power-up, because the silent DAC level is not centred and the filter
+takes about 12 ms per time constant to centre it. The core therefore holds
+both master volumes at 0 for 200 ms after reset (about 17 time constants),
+then writes the OSD panning and sets the master volume to 128. The output
+is exactly zero during that window, and afterwards it is a constant
+residual of a few LSB (-72 dBFS, the filter's resolution) with no AC
+content. Software can write the PSG registers at any time; it is only the
+mixer output that is held off for those first 200 ms.
+
+#### Software
+
+- **RomWBW:** `cfg_MRZ80.asm` sets `AYENABLE TRUE`, `AYMODE AYMODE_COLECO`
+  and `AY_CLK 1789772`. The stock `ay.asm` driver finds device 1 at
+  `0x50`/`0x51` (it probes by writing R2 and reading it back from `0x51`) and
+  the boot banner shows `AY: MODE=COLECO IO=0x50`. RomWBW drives only one AY.
+  Verified on hardware (2026-11-04): `TUNE.COM` plays PT3 tunes. It needs the
+  `-coleco` switch, though: `TUNE.COM`'s own auto-detect reads the chip back
+  at `0x52` (the RC Sound Module's read port, in the RomWBW Coleco table),
+  which this core does not decode, so without the switch it reports no sound
+  hardware. `-coleco` skips that probe and writes `0x50`/`0x51`, which is what
+  the chip wants. Adding a platform-29 row to `TUNE.COM`'s table with its read
+  port at `0x51` instead would make the default path work as well.
+- **vibetune** (`VTUNE.COM`, [jduraes/vibetune](https://github.com/jduraes/vibetune)):
+  takes device 1 from the HBIOS sound driver automatically. For two-chip
+  TurboSound tunes, run `VTUNECFG` and set the TurboSound hardware to
+  dual-card and the second AY card to **EB**, which is `0x68`/`0x60` on a
+  Z-80. Do not use the `-coleco` switch: vibetune's forced Coleco
+  configuration swaps the SELECT and DATA ports (it uses `0x51`/`0x50`),
+  unlike its own card-2 table, its README and RomWBW. The automatic (HBIOS)
+  path is correct.
+- **`testing/psgtest.asm`** probes both chips, prints the mixer gains and
+  the OSD mode, and plays the opening motif of *Close Encounters of the
+  Third Kind* (G4 A4 F4 F3 C4) on device 1 channel A, then device 2
+  channel C. Under ABC the first pass is heard on the left and the second
+  on the right. Passes on hardware (2026-11-04).
+
+#### Implementation notes
+
+- `MrZ80_PSG` holds the two SELECT latches and steers one shared bus into
+  `YM2149_PSG_system`, whose own interface is a flat 8-bit address (high
+  nibble 0 = PSG A, 1 = PSG B, 8 = left mixer, 9 = right mixer) with
+  level-sensitive writes. The CPU always has priority on that bus; the
+  panning sequencer writes only in idle clock cycles. Register reads are
+  registered and valid about 2 clocks after the address settles, well
+  inside a 10 MHz Z-80 I/O cycle.
+- `YM2149_PSG_system.sv` takes its build options from the build, not the
+  file (upstream sets them from a manifest): `MrZ80.qsf` defines
+  `USE_STEREO` and `USE_DUAL_PSG` as `VERILOG_MACRO`s, and `sim/run_psg.sh`
+  passes the same macros. Without them the core would have one mono PSG
+  and no device 2. `USE_I2S` stays undefined.
+- `Components/YM2149` is vendored unmodified, but its `BHG_jt49_exp.sv` is
+  not compiled: Quartus 17.0 rejects the way its `BHG_jt49_exp_lut.vh`
+  builds the table. `Components/PSG/BHG_jt49_exp_q17.sv` (same module,
+  generated by `tools/gen_bhg_lut.py` from that `.vh`, identical tables)
+  replaces it in `MrZ80.qsf` and in the simulation lane.
+- Verification: `make -C sim psg` (Verilator, about 25 s) checks the ports,
+  readback, read masks, deselection, the sequencer in all modes, silence
+  from reset, and tone pitch and panning on both chips. The GHDL lanes use
+  `sim/MrZ80_PSG_stub.vhd`, an absent device.
 
 ### Front-panel subsystem register map (within the `0xA0`-`0xA7` window)
 
