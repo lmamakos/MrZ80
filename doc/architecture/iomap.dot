@@ -1,0 +1,114 @@
+// iomap.dot -- the Z-80 address space this core decodes, and the register
+// sub-maps inside the windowed devices.
+//
+// Regenerate:  make -C doc/architecture        (or: dot -Tsvg -O iomap.dot)
+//
+// Decode source: MicrocomputerZ80CPM.vhd, "CHIP SELECTS GO HERE".  A device is
+// selected only when its window matches AND an I/O strobe (IORQ with RD or WR)
+// is active; anything else reads back $FF.
+//
+// Colour key:
+//   orange = console   blue = memory mapping   brown = storage
+//   green  = timing     purple = sound         grey  = front panel, RTC, latch
+//
+// Labels are Graphviz HTML-like labels (angle brackets, NOT quoted); a literal
+// ampersand must be written as &amp;.
+
+digraph iomap {
+
+    graph [rankdir  = TB,
+           ranksep  = 0.75,
+           nodesep  = 0.1,
+           splines  = line,
+           fontname = "Helvetica",
+           fontsize = 13,
+           labelloc = "t",
+           labeljust= "l",
+           label    = "MrZ80 -- Z-80 I/O port map, and the register windows inside the MMU, front-panel and PSG devices"];
+
+    node [shape = box, style = "rounded,filled", fontname = "Helvetica",
+          fontsize = 11, margin = "0.12,0.07"];
+    edge [style = invis];
+
+    // ------------------------------------------------------------------
+    subgraph cluster_io {
+        label     = "I/O space: 8-bit ports, decoded on cpuAddress with IORQ";
+        color     = "#424242";
+        style     = "rounded";
+        fontcolor = "#212121";
+
+        p50 [label = <<b>$50</b>  PSG device 1 SELECT<br/>read: selected register<br/><i>RomWBW AYMODE_COLECO</i>>, fillcolor="#e1bee7"];
+        p51 [label = <<b>$51</b>  PSG device 1 DATA<br/>read: selected register<br/><i>where ay.asm probes</i>>, fillcolor="#e1bee7"];
+        p60 [label = <<b>$60</b>  PSG device 2 DATA<br/>read: selected register<br/><i>vibetune "EB" card data</i>>, fillcolor="#e1bee7"];
+        p68 [label = <<b>$68</b>  PSG device 2 SELECT<br/>read: selected register<br/><i>vibetune "EB" card select</i>>, fillcolor="#e1bee7"];
+        p70 [label = <<b>$70-$71</b>  DS12887 RTC, index / data<br/><i>time-of-day supplied by the MiSTer HPS</i>>, fillcolor="#eeeeee"];
+        p80 [label = <<b>$80-$81</b>  video terminal, data / status-ctrl<br/>6850 ACIA semantics, PS/2 keyboard, IRQ>, fillcolor="#ffcc80"];
+        p82 [label = <<b>$82-$83</b>  serial ACIA, data / status-ctrl<br/>DDS baud rate, optional RTS/CTS, IRQ>, fillcolor="#ffcc80"];
+        p88 [label = <<b>$88-$8F</b>  SD card on raw SPI<br/>SDHC-style block registers (8 ports)>, fillcolor="#bcaaa4"];
+        p90 [label = <<b>$90-$97</b>  HPS block device<br/>same registers, backed by a mounted image>, fillcolor="#bcaaa4"];
+        pA0 [label = <<b>$A0-$A7</b>  front-panel subsystem (8 ports)>, fillcolor="#cfd8dc"];
+        pB0 [label = <<b>$B0-$BF</b>  MMU (16 ports)>, fillcolor="#bbdefb"];
+        pC0 [label = <<b>$C0-$CF</b>  BenchTimer<br/>4 x 32-bit snapshots: 1 ms x2, 1 us x2>, fillcolor="#c8e6c9"];
+        pD0 [label = <<b>$D0-$D3</b>  IntervalTimer<br/>programmatic tick, IRQ (RomWBW system tick)>, fillcolor="#c8e6c9"];
+        pFF [label = <<b>$FF</b>  front-panel data latch (8 bits)<br/><i>any other port reads back $FF</i>>, fillcolor="#eeeeee"];
+
+        p50 -> p51 -> p60 -> p68 -> p70 -> p80 -> p82 -> p88 -> p90
+            -> pA0 -> pB0 -> pC0 -> pD0 -> pFF;
+    }
+
+    // ------------------------------------------------------------------
+    subgraph cluster_mmu {
+        label     = "MMU window $B0-$BF   (Components/MMU/MMU.vhd)";
+        color     = "#1565c0";
+        style     = "rounded";
+        fontcolor = "#0d47a1";
+
+        m0 [label = <<b>$B0-$B3</b>  frame 0..3 page number, bits 7:0>, fillcolor="#bbdefb"];
+        m4 [label = <<b>$B4-$B7</b>  frame 0..3 page number, bits 15:8<br/><i>present because physical_page_bits = 14</i>>, fillcolor="#bbdefb"];
+        m8 [label = <<b>$B8-$BB</b>  direct-access pointer<br/>bits 7:0 / 15:8 / 23:16 / 31:24>, fillcolor="#bbdefb"];
+        mc [label = <<b>$BC</b>  direct-access DATA port<br/>a read or write is a physical memory access at the pointer,<br/>which then auto-increments (INIR/OUTIR friendly);<br/>the CPU is forced to wait for it>, fillcolor="#90caf9"];
+        md [label = <<b>$BD-$BF</b>  reserved, reads 0>, fillcolor="#e3f2fd"];
+        mn [label = <4 x 16 KB logical frames &#8594; a 28-bit physical space<br/>(256 MB in 16 KB pages). SDRAM fills pages 0-8191,<br/>the 64 KB block RAM sits at page 8192 (0x08000000).<br/>Writing a frame's low byte clears its high byte: write $B0-$B3<br/>first, then $B4-$B7. Frame 0 defaults to block RAM, or to<br/>SDRAM page 0 once a .BIN boot image has been loaded.>];
+        m0 -> m4 -> m8 -> mc -> md -> mn;
+    }
+
+    // ------------------------------------------------------------------
+    subgraph cluster_fp {
+        label     = "Front-panel window $A0-$A7   (FrontPanel_Subsystem.vhd)";
+        color     = "#455a64";
+        style     = "rounded";
+        fontcolor = "#263238";
+
+        f0 [label = <<b>$A0</b>  global brightness (0..255)>, fillcolor="#cfd8dc"];
+        f1 [label = <<b>$A1</b>  map bits 9:8 for $A5 writes, and reads>, fillcolor="#cfd8dc"];
+        f2 [label = <<b>$A2</b>  global pointer (LED index)>, fillcolor="#cfd8dc"];
+        f3 [label = <<b>$A3</b>  colour stream, 6 bytes per LED:<br/>on R,G,B then off R,G,B (auto-advances)>, fillcolor="#cfd8dc"];
+        f4 [label = <<b>$A4</b>  mode: 0 = mirror the capture chain,<br/>1 = framebuffer>, fillcolor="#cfd8dc"];
+        f5 [label = <<b>$A5</b>  chain-map entry at the pointer (auto-advances)>, fillcolor="#cfd8dc"];
+        f6 [label = <<b>$A6</b>  framebuffer bit at the pointer (auto-advances)>, fillcolor="#cfd8dc"];
+        f7 [label = <<b>$A7</b>  active profile 0..7>, fillcolor="#cfd8dc"];
+        fn [label = <8 profiles x 256 WS2812/SK6812 LEDs, 384 capture-chain bits.<br/>A .FPP profile file and the OSD profile override can select the<br/>active profile without the Z-80's knowledge.>];
+        f0 -> f1 -> f2 -> f3 -> f4 -> f5 -> f6 -> f7 -> fn;
+    }
+
+    // ------------------------------------------------------------------
+    subgraph cluster_psg {
+        label     = "PSG SELECT values   (Components/PSG/MrZ80_PSG.sv)";
+        color     = "#6a1b9a";
+        style     = "rounded";
+        fontcolor = "#4a148c";
+
+        g0 [label = <<b>$00-$0F</b>  PSG registers R0-R15<br/>device 1 &#8594; chip A, device 2 &#8594; chip B>, fillcolor="#e1bee7"];
+        g1 [label = <<b>$80-$89</b>  LEFT mixer registers 0-9<br/><i>MrZ80 extension, device 1 only</i>>, fillcolor="#e1bee7"];
+        g2 [label = <<b>$90-$99</b>  RIGHT mixer registers 0-9<br/><i>MrZ80 extension, device 1 only</i>>, fillcolor="#e1bee7"];
+        g3 [label = <<b>any other value</b><br/>deselects that device: DATA writes are dropped and<br/>reads return $FF, like a real AY with a bad latched nibble>, fillcolor="#f5f5f5"];
+        gn [label = <Both chips feed both mixers. The OSD &quot;PSG Stereo&quot; choice<br/>(status[26:25]) picks Mono / ABC / ACB and rewrites only the<br/>gains, keeping software's master volume, invert, bass and treble.<br/>Device 2 is panned the same way as device 1.>];
+        g0 -> g1 -> g2 -> g3 -> gn;
+    }
+
+    // tie the sub-maps to their windows
+    pB0 -> m0 [style = solid, color = "#1565c0", arrowhead = normal];
+    pA0 -> f0 [style = solid, color = "#455a64", arrowhead = normal];
+    p50 -> g0 [style = solid, color = "#6a1b9a", arrowhead = normal];
+    p68 -> g0 [style = solid, color = "#6a1b9a", arrowhead = normal];
+}

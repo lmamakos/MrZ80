@@ -1,0 +1,84 @@
+// ssp.dot -- the System Support Processor and its seam to the Z-80.
+// Parent sheet: overview.dot.  Z80-side detail: z80.dot.
+//
+// Regenerate:  make -C doc/architecture
+// Sources: ssp/rtl/{ssp_top.v,ssp_bridge.v,ssp_uart.v,ssp_vdu.vhd,
+// ssp_mem_client.vhd,ssp_tramp.vhd,z80_bus_mux.vhd}, ssp/regs/ssp_regs.csv,
+// MrZ80.sv.  Design rationale: doc/SSP_DESIGN.md, status: doc/SSP_STATUS.md.
+
+digraph ssp {
+
+    graph [rankdir  = LR,
+           ranksep  = 0.68,
+           nodesep  = 0.2,
+           fontname = "Helvetica",
+           fontsize = 13,
+           labelloc = "t",
+           labeljust= "l",
+           label    = "SSP -- System Support Processor\nA RISC-V Forth monitor that lives beside the Z-80: it parks the CPU at an instruction boundary, single-steps it, and reads and writes physical memory while it is stopped."];
+
+    node [shape = box, style = "rounded,filled", fontname = "Helvetica",
+          fontsize = 11, margin = "0.12,0.08"];
+    edge [fontname = "Helvetica", fontsize = 9];
+
+    subgraph cluster_ssptop {
+        label     = "ssp_top  (ssp/rtl/ssp_top.v)";
+        color     = "#2e7d32";
+        style     = "rounded";
+        fontcolor = "#1b5e20";
+        bgcolor   = "#eef8ef";
+
+        core [label = "FemtoRV32-gracilis\n(Components/RISCV, ADDR_WIDTH 30)\n\nruns Mecrisp-Quintus Forth from MROM,\nlaunch+1 memory latency native to the\nrstrb protocol", fillcolor = "#a5d6a7"];
+
+        mrom [label = "MROM 128 KiB\nssp_sdp_ram (altsyncram)\nINIT_FILE ssp/fw/forth_rom.mif\n\nwrites land only in the dictionary\nwindow DICT_BASE (0x5000) .. 0x20000,\nthe Mecrisp compiletoflash region;\nwrites below it are counted, never land", fillcolor = "#c8e6c9"];
+        rram [label = "RV RAM 64 KiB\nssp_sdp_ram, byte-enable\n@0x1000_0000", fillcolor = "#c8e6c9"];
+
+        bridge [label = "ssp_bridge  @0x2000_0000, 4 KiB\n\noffsets come from ssp/regs/ssp_regs.csv via\ngenerated ssp_regs.vh, so the map cannot drift\n(regmap-check fails if it does)\n\nID / CTRL / STATUS / TICK_US / ESC_CHAR / IRQ_*\nMEM_CTL, MEM_ADDR, MEM_DATA + SNAP / LIVE regs\nboundary-aligned parking, micro-op sequencer\n(for MEM/IO kicks), two-tier watchdog\nregions that phase in later (STEP assist, BP,\npanel/LED/SD/mailbox/map) still decode and\nread zero, so the map is complete", fillcolor = "#a5d6a7"];
+
+        uart [label = "ssp_uart\nthe monitor's own console\nbaud from the same\nbaud_increment as the Z-80\nno flow control", fillcolor = "#c8e6c9"];
+
+        mux  [label = "console mux\n\nsnac_txd = monitor TX while the\nmonitor owns the console, else the\nZ80's TX passes through untouched\nz80_rxd goes to the Z-80 when the\nSSP is not active", fillcolor = "#c8e6c9"];
+
+        vdub [label = "vdu_* byte port\nto the SSP's video terminal", fillcolor = "#c8e6c9"];
+    }
+
+    vdu [label = "ssp_vdu (VHDL)\nthe monitor's own text terminal:\na 2nd SBCTextDisplayRGB instance\nsame video timing, free-running\nso only the colours are switched;\nboth decode PS/2, only the shown\none keeps keys", fillcolor = "#c8e6c9"];
+
+    osd [label = "MiSTer OSD / HPS\n\nOK  status[20]  SSP Monitor on/off\nOM  status[22]  serial escape into the monitor\nOO  status[24]  console = Serial or Video\nRL  status[21]  Enter SSP Monitor (trigger)\nTN  status[23]  Reset SSP, stretched to ~1.3 ms\nFC6 (.MRZ)      mount a monitor ROM image\n\nreset_sys resets the SSP; it does NOT wait\nfor a Z-80 boot image (the SSP has its own ROM)", fillcolor = "#e0e0e0", color = "#9e9e9e"];
+
+    mount [label = "ROM mount path (index 6)\n\nholds the RV core in reset, clears the\n128 KiB MROM (~0.66 ms, back-pressured\nto the HPS with ioctl_wait), streams the\nfile, then restarts the monitor\nthe Z-80 keeps running throughout", fillcolor = "#fff3cd"];
+
+    // Z80 side of the seam
+    subgraph cluster_seam {
+        label     = "Z-80 side of the seam (in MicrocomputerZ80CPM.vhd)";
+        color     = "#1565c0";
+        style     = "rounded";
+        fontcolor = "#0d47a1";
+        bgcolor   = "#e8f1fb";
+
+        muxz  [label = "z80_bus_mux\n\nsel_eng flips to the engine only with\nBusAck confirmed, and back when the\nengine is done and BUSRQ is released", fillcolor = "#bbdefb"];
+        tramp [label = "ssp_tramp\n\nreset vent + JP injection\n(see z80.dot)", fillcolor = "#bbdefb"];
+        memc  [label = "ssp_mem_client\n\nborrows the SDRAM client port for one\nbyte while the Z80 is parked; SDRAM\nwindow only, ph_err otherwise", fillcolor = "#bbdefb"];
+        t80   [label = "T80\n\nfreeze_ok gates the BusAck grant at the\ninstruction-end branch, so the park is\nboundary-aligned; 212-bit register\nvector exported for SNAP", fillcolor = "#bbdefb"];
+    }
+
+    // seam edges
+    bridge -> muxz [label = "z_busrq_n park request\neng_* cycle-faithful engine", color = "#2e7d32"];
+    muxz -> bridge [label = "z_busack_n\nM1, mc/ts, HALT,\n212-bit t80_reg", color = "#2e7d32"];
+    bridge -> tramp[label = "tramp_arm,\ntramp_target", color = "#2e7d32"];
+    tramp -> bridge [label = "tramp_done", color = "#2e7d32"];
+    bridge -> memc  [label = "ph_req/we/addr/wdata\n-> ph_done/err/rdata", color = "#2e7d32"];
+    bridge -> core  [dir = both, label = "mem + io", color = "#2e7d32"];
+    core -> mrom [dir = both];
+    core -> rram [dir = both];
+    core -> uart [dir = both];
+    uart -> mux;
+    mux  -> bridge [label = "ESC_CHAR, console_own", style = dashed];
+    bridge -> vdub;
+    vdub -> vdu [dir = both, label = "tx_valid/data/ready\nrx_valid/data/take", color = "#2e7d32"];
+    osd -> bridge [label = "enable, escape, enter,\nconsole select, watchdog feed", color = "#9e9e9e"];
+    osd -> mount  [color = "#9e9e9e"];
+    mount -> mrom [label = "mnt_wr/addr/data", color = "#8d6e00"];
+    t80 -> muxz [label = "T80 bus"];
+    muxz -> tramp [dir = both];
+}

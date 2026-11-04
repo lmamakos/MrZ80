@@ -39,3 +39,8 @@ bakeoff/output_uartfifo8/
 bakeoff/output_uartfifo128/
 bakeoff/output_uartfifo128nohint/
 bakeoff/output_ssp_top/
+
+# Diagram renders. The .dot sources and the SVGs that doc/ARCHITECTURE.md links
+# to are committed; PNGs are a convenience copy, regenerate with
+#   make -C doc/architecture
+doc/architecture/*.png

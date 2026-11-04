@@ -90,6 +90,20 @@ Output: `output_files/MrZ80.rbf`.
 **Note:** Building the HDL core typically happens via the wrapper scripts above, which invoke
 a containerized Quartus environment on `tycho` to avoid local tool dependencies.
 
+### Architecture diagrams
+
+`doc/ARCHITECTURE.md` links a hierarchy of block diagrams (overview, Z-80/memory,
+peripherals, port map, sound, SSP, clocks) whose sources are `doc/architecture/*.dot`:
+
+```sh
+make -C doc/architecture      # -> .svg and .png per sheet (needs graphviz/dot)
+```
+
+Update the `.dot` source, not the rendered image, whenever the structure changes
+(new port, new reset term, new clock domain). The committed artifacts are the
+`.dot` files and the `.svg`s; PNGs are ignored. `doc/ARCHITECTURE.md` also holds
+the port map, memory map, clock/reset and OSD status-bit tables in text form.
+
 ## Z-80 assembler toolchain (`forth/`, and any future Z-80 `.azm`/`.mac` work)
 
 The `forth/` directory (CamelFORTH port) is assembled with **um80/ul80**,

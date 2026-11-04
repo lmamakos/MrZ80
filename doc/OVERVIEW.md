@@ -794,6 +794,7 @@ a `.BIN` is not affected unless it executes `EI`.
 
 | Document | Contents |
 |----------|----------|
+| [`doc/ARCHITECTURE.md`](ARCHITECTURE.md) | Block diagrams of every part of the core outside `sys/`, generated from Graphviz sources in `doc/architecture/` |
 | [`README.md`](../README.md) | Project overview, console wiring, OSD, build |
 | [`HARDWARE.md`](../HARDWARE.md) | Authoritative memory map, full I/O port maps, boot/reset semantics, custom instructions |
 | [`Components/FRONTPANEL/README.md`](../Components/FRONTPANEL/README.md) | Front-panel datasheet, profile file format, capture chain |

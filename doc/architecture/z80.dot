@@ -1,0 +1,74 @@
+// z80.dot -- the Z-80 CPU, its bus arbitration and the physical-memory path.
+// Parent sheet: overview.dot.  Port map: iomap.dot.
+//
+// Regenerate:  make -C doc/architecture
+// Sources: MicrocomputerZ80CPM.vhd, Components/Z80/*, Components/MMU/MMU.vhd,
+// Components/INTERNALRAM/InternalRam64K.vhd, ssp/rtl/{z80_bus_mux,ssp_tramp,
+// ssp_mem_client}.vhd, MrZ80.sv (SDRAM client CDC + controller).
+
+digraph z80 {
+
+    graph [rankdir  = LR,
+           ranksep  = 0.6,
+           nodesep  = 0.2,
+           fontname = "Helvetica",
+           fontsize = 13,
+           labelloc = "t",
+           labeljust= "l",
+           label    = "Z-80 CPU complex and the memory path\nOne master at a time drives the bus: the T80, or the SSP's cycle-faithful engine.  Every cycle becomes a 28-bit physical access."];
+
+    node [shape = box, style = "rounded,filled", fontname = "Helvetica",
+          fontsize = 11, margin = "0.12,0.08"];
+    edge [fontname = "Helvetica", fontsize = 9];
+
+    cen [label = "cpu_cen\nclk_sys 50 MHz / 5\n= 10 MHz CPU enable", fillcolor = "#fff3cd"];
+
+    t80 [label = "T80s (Z80 core)\nComponents/Z80/T80s.vhd\n\nsamples DI at the end of T2,\nissues MRD_T1 at T1 (the\nspeculative-read trigger)\nfreeze_ok gates the BusAck\ngrant at the instruction boundary", fillcolor = "#bbdefb"];
+
+    mux [label = "z80_bus_mux\n\nsel_eng goes to the engine only\nwith BusAck confirmed, and back\nto the T80 when the engine is\ndone and BUSRQ is released\n\nwhile the T80 is parked its\nfrozen strobes are idle-gated\nhigh, so a halt mid-MREF\ncannot leak onto the bus", fillcolor = "#c8e6c9"];
+
+    tramp [label = "ssp_tramp\n\nreset vent (CTRL.Z_RST_N) held\nVENT_CEN more cpu_cen pulses\narmed only while the T80 is in\nreset, then substitutes C3 lo hi\non the three instruction reads\nat $0000-$0002", fillcolor = "#c8e6c9"];
+
+    bus [shape = plain, label = <<b>the Z-80 bus, as the peripherals see it</b><br/>A[15:0] · D[7:0] · MREQ_n · IORQ_n · RD_n · WR_n<br/>M1_n · MRD_T1 · WAIT_n>, fillcolor = "#ffffff"];
+
+    dec [label = "I/O decode\nwindow match + IORQ\n(port map: iomap.dot)", fillcolor = "#ffe0b2"];
+    rdm [label = "read-data mux, priority order:\nper-port devices, then MMU regs,\nthen physical memory,\nthen $FF unclaimed", fillcolor = "#ffe0b2"];
+
+    mmu [label = "MMU (I/O $B0-$BF)\n\nA[15:14] = frame 0..3 -> hardware\npage number -> phys[27:14]\n\n$B0-$B3 page low bytes (writing one\nclears that page's high byte)\n$B4-$B7 page high bytes (Z2 + ext)\n$B8-$BB direct pointer\n$BC direct DATA: an I/O cycle\nrewritten as a memory access, the\npointer auto-increments\n\nphys[27] = 0 -> SDRAM pages 0..8191\nphys[27:16] = 0x800 -> block RAM;\nboth legs qualified by mmu_req_mem_out,\nso an unclaimed I/O port never reads\nmemory\n\nframe 0 -> block RAM, or SDRAM page 0\nonce a .BIN boot image is loaded", fillcolor = "#bbdefb"];
+
+    bram [label = "InternalRam64K\n64 KB at phys 0x08000000\nMMU writes qualified by\nreq_mem_out and req_write, so\nthe direct port $BC works too\n2nd port: OSD download", fillcolor = "#bbdefb"];
+
+    cli [label = "SDRAM client FSM\n\nS_IDLE -> S_REQ -> S_HOLD -> gap\na read issued at T1 is reused when\nthe final address matches\n(sdram_match), else restarted\nwrites are posted with a gap so the\nrequest-level synchroniser cannot\nmerge two transactions", fillcolor = "#bbdefb"];
+
+    memcli [label = "ssp_mem_client\n\nphysical byte R/W for the SSP\nwhile the Z80 is parked; admitted\nonly when parked and the primary\nFSM is idle; SDRAM window only,\nelse ph_err", fillcolor = "#c8e6c9"];
+
+    borrow [label = "borrow mux\nZ80 FSM | SSP client\nselect toggles only while\nboth sides are idle", fillcolor = "#c8e6c9"];
+
+    sdi [label = "SDRAM interface, two clock domains\n\nCDC adapter (MrZ80.sv): the request\nlevel is 2-FF'd into clk_ram and edge-\ndetected, addr/data latched; completion\ntoggles back to clk_sys; addr bit 0\npicks the byte of the 16-bit word\n\nsdram_32r8w (CoCo3 controller) in\nclk_ram ~112 MHz, two 16-bit devices,\n27-bit byte address, refresh - the\nCPU port waits through it", fillcolor = "#ddebff"];
+
+    waitn [label = "wait merge\ncpu_wait_n = MMU_wait and\n(SDRAM_wait or sdram_release)\nsdram_release presents the end of\nan SDRAM wait on the same cycle\nas the completion pulse", fillcolor = "#fff3cd"];
+
+    ssp [shape = plain, label = <<b>SSP</b> (see ssp.dot)<br/>engine, park request,<br/>reset vent, tramp arm, ph_*>, fillcolor = "#e8f5e9"];
+
+    // seams
+    cen -> t80 [color = "#f9a825"];
+    t80 -> mux [label = "T80 bus + BUSAK"];
+    ssp -> mux  [dir = both, label = "sel_eng,\neng_*", color = "#2e7d32"];
+    ssp -> tramp[label = "arm, target,\nz_reset_n", color = "#2e7d32"];
+    mux -> tramp [dir = both, label = "DI override"];
+    mux -> bus;
+    bus -> dec;
+    bus -> mmu  [label = "virtual address\n+ strobes", color = "#1565c0"];
+    bus -> cli  [label = "MRD_T1", style = dashed, color = "#1565c0"];
+    dec -> rdm  [style = invis];
+    rdm -> t80  [label = "D[7:0]", color = "#1565c0"];
+    mmu -> bram [label = "block-RAM page", color = "#1565c0"];
+    mmu -> cli  [label = "SDRAM pages", color = "#1565c0"];
+    cli -> borrow;
+    memcli -> borrow [color = "#2e7d32"];
+    ssp -> memcli [label = "ph_req/we/addr/wdata", color = "#2e7d32"];
+    borrow -> sdi [label = "clk_sys <-> clk_ram", color = "#f9a825"];
+    mmu  -> waitn [label = "mmu_cpu_wait\n(1 wait for $BC)"];
+    cli  -> waitn [label = "sdram_wait_n"];
+    waitn -> t80  [label = "WAIT_n", color = "#1565c0"];
+}

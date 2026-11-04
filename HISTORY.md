@@ -3838,3 +3838,32 @@ the old one and 46 records (5179 bytes) for the new.
 
 `cpm.img` on the card was searched too; it holds no `TUNE.COM` at all and is
 unrelated.
+
+## A diagram set for the core (2026-11-04)
+
+`doc/ARCHITECTURE.md` plus Graphviz sources in `doc/architecture/` now describe
+the machine that has accumulated in this repo, deliberately excluding the
+`sys/` MiSTer framework, which appears as one grey box with its interfaces
+labelled: `sys_top` is the top-level entity and instantiates `emu`, and `emu`
+holds the glue, the Z-80 computer, the SSP and the sound.
+
+It is hierarchical: `overview` (nine boxes) over six subordinate sheets -
+`z80` (T80, `z80_bus_mux`, `ssp_tramp`, MMU, block RAM, SDRAM client, wait
+generation), `peripherals`, `iomap` (port map plus the MMU, front-panel and PSG
+register windows), `psg` (wrapper, vendored jt49 cores, mute/pan sequencer),
+`ssp` (FemtoRV32, memory map, bridge, the seam), and `clocks` (domains, reset
+tree, every clock-domain crossing). The port map, memory map, clock/reset and OSD
+status-bit tables are also in text there, so the facts are greppable, not only
+drawable.
+
+Everything was read off the RTL rather than recalled: the chip-select block in
+`MicrocomputerZ80CPM.vhd`, the download router and reset tree in `MrZ80.sv`, the
+MMU generics (`physical_page_bits => 14`, `block_ram_page => 8192`, hence a
+28-bit physical space with block RAM at page 8192), the front-panel window
+(`NUM_LEDS => 256`, `CHAIN_BITS => 384`), the two `MrZ80.qsf` sound macros, and
+the SSP memory map in `ssp/rtl/ssp_top.v`.
+
+`make -C doc/architecture` regenerates the images; graphviz is a new build
+dependency (only for docs). The `.dot` sources and the rendered `.svg`s are
+committed, PNGs are gitignored. `AGENTS.md` gained a note to edit the source and
+not the picture; `doc/OVERVIEW.md` §10 links the new document.
