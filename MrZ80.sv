@@ -373,9 +373,13 @@ assign VGA_SL = 0;
 assign VGA_F1 = 0;
 assign VGA_SCALER = 1;
 
-assign AUDIO_S = 0;
-assign AUDIO_L = 0;
-assign AUDIO_R = 0;
+// Dual YM2149 PSG (I/O $50/$51, $68/$60) inside the CPM core: signed
+// 16-bit stereo. Panning is done in the PSG mixers (OSD "PSG Stereo"), so
+// the framework's own L/R mix stays off.
+wire [15:0] psg_audio_l, psg_audio_r;
+assign AUDIO_S = 1;
+assign AUDIO_L = psg_audio_l;
+assign AUDIO_R = psg_audio_r;
 assign AUDIO_MIX = 0;
 
 `include "build_id.v"
@@ -394,6 +398,8 @@ parameter CONF_STR = {
 	"OC,Serial Port,Console Port,User IO (SNAC) Port;",
 	"O9B,Baud Rate tty,115200,38400,19200,9600,4800,2400;",
 	"OE,Flow Control,None,RTS/CTS;",  // New flow control option
+	"-;",
+	"OPQ,PSG Stereo,Mono,ABC,ACB;",                  // status[26:25]: YM2149 pan: Mono / A-left B-centre C-right / A-left C-centre B-right
 	"-;",
 	"OK,SSP Monitor,Off,On;",                        // status[20]: SSP (System Support Processor) enable (osd_ok); Off = indistinguishable from absent
 	"OM,SSP Serial Escape,Off,On;",                  // status[22]: escape byte on the selected serial port enters the SSP monitor (OM)
@@ -415,6 +421,7 @@ parameter CONF_STR = {
 // bits 16-19 = Front Panel Profile ("OGJ"): 0 = Software, 1..8 = profile 0..7
 // bit 20 = SSP Monitor enable ("OK"), bit 21 = Enter SSP Monitor (trigger "RL"), bit 22 = SSP Serial Escape ("OM"),
 // bit 23 = Reset SSP (trigger "TN"), bit 24 = SSP Console Serial/Video ("OO")
+// bits 25-26 = PSG Stereo ("OPQ"): 0 = Mono, 1 = ABC, 2 = ACB (3 unused, treated as Mono)
    
 //////////////////   HPS I/O   ///////////////////
 wire  [1:0] buttons;
@@ -1095,6 +1102,11 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
     .dl_bram_data(dl_bram_data_r),
     .dl_bram_we  (dl_bram_we_r),
     .hps_rtc     (hps_rtc),
+
+    // Dual YM2149 PSG sound
+    .audio_l     (psg_audio_l),
+    .audio_r     (psg_audio_r),
+    .psg_stereo  (status[26:25]),
 
     // HPS image-backed block device ($90-$97)
     .bd_lba          (bd_lba),

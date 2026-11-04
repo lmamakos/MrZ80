@@ -51,6 +51,7 @@ FILES=(
     Components/TIMER/IntervalTimer.vhd
     ssp/rtl/z80_bus_mux.vhd
     ssp/rtl/ssp_tramp.vhd ssp/rtl/ssp_mem_client.vhd
+    sim/MrZ80_PSG_stub.vhd
     sim/MicrocomputerZ80CPM_sim.vhd
     sim/sdram_cdc_fake.vhd
     sim/tb_sdram_perf.vhd

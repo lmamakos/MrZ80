@@ -118,6 +118,13 @@ entity MicrocomputerZ80CPM is
 		-- feeds the DS12887 RTC at I/O ports $70/$71.
 		hps_rtc			: in  std_logic_vector(64 downto 0) := (others => '0');
 
+		-- Dual YM2149 PSG at I/O ports $50/$51 and $68/$60 (MrZ80_PSG):
+		-- signed 16-bit stereo for the MiSTer audio path, and the OSD
+		-- "PSG Stereo" choice (0 = Mono, 1 = ABC, 2 = ACB).
+		audio_l			: out std_logic_vector(15 downto 0);
+		audio_r			: out std_logic_vector(15 downto 0);
+		psg_stereo		: in  std_logic_vector(1 downto 0) := "00";
+
 		-- MiSTer hps_io block-storage interface, serving the image-backed
 		-- block device (hps_blockdev) at I/O ports $90-$97. The SPI sd_controller
 		-- at $88-$8F is NOT connected to this; it only drives the physical
@@ -296,6 +303,39 @@ architecture struct of MicrocomputerZ80CPM is
 	signal itimerDataOut			: std_logic_vector(7 downto 0);
 	signal n_int_itimer				: std_logic :='1';   -- IntervalTimer interrupt request (active low)
 	signal n_rtcCS					: std_logic :='1';   -- DS12887 RTC index/data pair at 0x70/0x71
+	signal n_psg1SelCS				: std_logic :='1';   -- PSG device 1 SELECT at 0x50
+	signal n_psg1DatCS				: std_logic :='1';   -- PSG device 1 DATA at 0x51
+	signal n_psg2SelCS				: std_logic :='1';   -- PSG device 2 SELECT at 0x68
+	signal n_psg2DatCS				: std_logic :='1';   -- PSG device 2 DATA at 0x60
+	signal psgDataOut				: std_logic_vector(7 downto 0);
+	signal psg_cs_sel1, psg_cs_dat1	: std_logic;          -- active-high copies for the
+	signal psg_cs_sel2, psg_cs_dat2	: std_logic;          -- (Verilog) PSG component
+	signal psg_io_wr				: std_logic;
+
+	-- Components/PSG/MrZ80_PSG.sv (SystemVerilog, so a component
+	-- declaration; GHDL lanes bind it to sim/MrZ80_PSG_stub.vhd).
+	component MrZ80_PSG is
+		generic (
+			CLK_HZ        : integer := 50000000;
+			PSG_HZ        : integer := 1789772;
+			DAC_BITS      : integer := 10;
+			SETTLE_CYCLES : integer := 10000000
+		);
+		port (
+			clk         : in  std_logic;
+			reset_n     : in  std_logic;
+			stereo_mode : in  std_logic_vector(1 downto 0);
+			cs_sel1     : in  std_logic;
+			cs_dat1     : in  std_logic;
+			cs_sel2     : in  std_logic;
+			cs_dat2     : in  std_logic;
+			io_wr       : in  std_logic;
+			din         : in  std_logic_vector(7 downto 0);
+			dout        : out std_logic_vector(7 downto 0);
+			audio_l     : out std_logic_vector(15 downto 0);
+			audio_r     : out std_logic_vector(15 downto 0)
+		);
+	end component;
 
 	-- DS12887 RTC plumbing (index/data port pair)
 	signal rtc_idx					: std_logic_vector(6 downto 0) := (others => '0');
@@ -1090,7 +1130,7 @@ end process;
 
 rtcDataOut <= rtc_rdata;
 
--- irq (open-drain) is not routed: the Z-80 /INT input is tied inactive.
+-- irq (open-drain) is not routed to the Z-80 /INT input; software polls Register C.
 rtc1 : entity work.ds12887
 	generic map (
 		SYS_CLK => 50_000_000
@@ -1107,6 +1147,40 @@ rtc1 : entity work.ds12887
 		sqw       => open,
 		rtc       => hps_rtc,
 		pof_in    => '0'
+	);
+
+-- ____________________________________________________________________________________
+-- DUAL YM2149 PSG SOUND GOES HERE
+
+-- Two AY-3-8910/YM2149 PSGs (vendored YM2149_PSG_system, Components/YM2149)
+-- behind a SELECT/DATA port pair each: $50/$51 (RomWBW AYMODE_COLECO) and
+-- $68/$60 (vibetune's "EB" second card). Both chips feed a left and a right
+-- mixer; psg_stereo (OSD) picks Mono/ABC/ACB panning. Reset by a Z80 reset:
+-- both chips come up silent (see Components/PSG/MrZ80_PSG.sv, HARDWARE.md).
+psg_cs_sel1 <= not n_psg1SelCS;
+psg_cs_dat1 <= not n_psg1DatCS;
+psg_cs_sel2 <= not n_psg2SelCS;
+psg_cs_dat2 <= not n_psg2DatCS;
+psg_io_wr   <= not n_ioWR;
+
+psg1 : MrZ80_PSG
+	generic map (
+		CLK_HZ => 50000000,
+		PSG_HZ => 1789772
+	)
+	port map (
+		clk         => clk,
+		reset_n     => reset_n_internal,
+		stereo_mode => psg_stereo,
+		cs_sel1     => psg_cs_sel1,
+		cs_dat1     => psg_cs_dat1,
+		cs_sel2     => psg_cs_sel2,
+		cs_dat2     => psg_cs_dat2,
+		io_wr       => psg_io_wr,
+		din         => cpuDataOut,
+		dout        => psgDataOut,
+		audio_l     => audio_l,
+		audio_r     => audio_r
 	);
 
 -- ____________________________________________________________________________________
@@ -1134,6 +1208,11 @@ n_timerCS <= '0' when cpuAddress(7 downto 4) = "1100" and (n_ioWR='0' or n_ioRD 
 n_itimerCS <= '0' when cpuAddress(7 downto 2) = "110100" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 4 Bytes $D0-$D3 (interval timer)
 
 n_rtcCS <= '0' when cpuAddress(7 downto 1) = "0111000" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 2 Bytes $70-$71 (DS12887 RTC index/data)
+
+n_psg1SelCS <= '0' when cpuAddress(7 downto 0) = x"50" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 1 Byte $50 (PSG 1 SELECT)
+n_psg1DatCS <= '0' when cpuAddress(7 downto 0) = x"51" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 1 Byte $51 (PSG 1 DATA)
+n_psg2SelCS <= '0' when cpuAddress(7 downto 0) = x"68" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 1 Byte $68 (PSG 2 SELECT)
+n_psg2DatCS <= '0' when cpuAddress(7 downto 0) = x"60" and (n_ioWR='0' or n_ioRD = '0') else '1'; -- 1 Byte $60 (PSG 2 DATA)
 
 -- MMU.io_cs is active-high.
 mmu_io_cs <= '1' when n_mmuCS = '0' else '0';
@@ -1167,6 +1246,8 @@ n_internalRam1CS <= '0' when phys_in_blockram = '1' else '1';
                  timerDataOut        when (n_timerCS = '0') else
                  itimerDataOut       when (n_itimerCS = '0') else
                  rtcDataOut          when (n_rtcCS = '0') else
+                 psgDataOut          when (n_psg1SelCS = '0' or n_psg1DatCS = '0' or
+                                           n_psg2SelCS = '0' or n_psg2DatCS = '0') else
                  mmu_dataOut         when (mmu_io_cs = '1' and cpuAddress(3 downto 0) /= "1100") else
                  internalRam1DataOut when (mmu_req_mem_out = '1' and phys_in_blockram = '1') else
                  sdram_dout          when (mmu_req_mem_out = '1' and phys_in_sdram = '1') else
