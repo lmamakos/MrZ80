@@ -165,6 +165,56 @@ Rules of thumb:
 - Because there is no ROM, any Z-80 write to port `0x38` (the old ROM-disable
   trigger) is ignored.
 
+## Build configuration: conditional compilation
+
+Every macro the sources test — this project's, plus the framework macros in `sys/`
+that bear on this core's configuration — and its state in this build.  Synthesis
+macros are set in `MrZ80.qsf` as `VERILOG_MACRO` unless the table says otherwise.
+VHDL has no preprocessor: everything tunable in the VHDL components is a
+*generic*, listed with the block it belongs to (`HS_DIVIDER`, `CLKEDGE_DIVIDER`,
+the MMU geometry, `NUM_LEDS`, and so on).
+
+### Active
+
+| Macro | Set in | What it selects |
+|-------|--------|-----------------|
+| `USE_STEREO` | `MrZ80.qsf` | the right-hand `BHG_audio_filter_mixer` in the vendored `YM2149_PSG_system` — stereo output (see the PSG section) |
+| `USE_DUAL_PSG` | `MrZ80.qsf` | the second `BHG_jt49` — channels D, E, F, i.e. two PSGs |
+| `MRZ80_SD_IGNORE_CD` | `MrZ80.qsf` | card-detect stops gating the secondary SD pins in `sys/sys_top.v` |
+| `MRZ80_SD_FORCE` | `MrZ80.qsf` | SD signals always routed to the SDIO pins, at the cost of analog video on those pins |
+| ``` `define SDRAM_CLK_100 ``` | `MrZ80.sv` (source-level, not the `.qsf`) | the SDRAM controller runs on the PLL's 100 MHz tap instead of 112 MHz |
+
+The net clocking, as built: `clk_sys` = 50 MHz for the whole computer (CPU, MMU,
+peripherals, sound, SSP and `hps_io`), `clk_ram` = 100 MHz for the SDRAM
+controller alone, and the Z-80 enabled one `clk_sys` cycle in five for a 10 MHz
+core.
+
+`sim/run_psg.sh` defines the same two sound macros as the `.qsf`, which is what
+keeps the simulation lane testing the configuration the hardware is built with.
+
+### Present but off
+
+| Macro | Where | Effect if switched on |
+|-------|-------|-----------------------|
+| `MISTER_DUAL_SDRAM` | `sys/sys_dual_sdram.tcl`, which `MrZ80.qsf` never sources (it sources `sys/sys.tcl` and `sys/sys_analog.tcl`) | second SDRAM device wiring in `sys/sys_top.v`; also changes how the SD pins are routed |
+| `MISTER_FB`, `MISTER_FB_PALETTE`, `MISTER_DOWNSCALE_NN`, `MISTER_SMALL_VBUF`, `MISTER_DISABLE_ADAPTIVE`, `MISTER_DISABLE_ALSA`, `MISTER_DISABLE_YC`, `MISTER_DEBUG_NOHDMI` | the MiSTer build system, not this repository | the framework's framebuffer, scaling, ALSA/YC and no-HDMI variants.  `MrZ80.sv` and `sys/` test these names; nothing here defines them, so the ports they guard are simply absent |
+| `OSD_HEADER` | `sys/osd.v`, set by the MiSTer build system | the framework OSD reserves 24 header rows instead of 0 |
+| `USE_I2S` | tested by the vendored `YM2149_PSG_system.sv`; not set here | the core would drive an I2S DAC interface itself; MiSTer's `audio_out` does that conversion, so it stays off |
+| `ARCADE_SYS`, `USE_FB`, `USE_SDRAM`, `USE_DDRAM`, `DEBUG_NOHDMI` | commented out in `MrZ80.qsf` | **nothing at all in this tree** — these are stock MiSTer `.qsf` boilerplate, and no source here (this core or `sys/`) tests those names.  The framework's equivalents are the `MISTER_*` names above.  Keep them commented; deleting them is also harmless |
+
+### Off in synthesis, and only meaningful in simulation
+
+| Macro | Where |
+|-------|-------|
+| `SIMULATION` | `Components/YM2149/jt49_hdl/filter/jt49_dly.v` — zero-initialises the delay RAM so simulators start from a known state |
+| `BENCH` | `Components/RISCV/femtorv32_gracilis.v` (compiled) and `utils.v` (not compiled) — benchmark/trace hooks in the vendored core |
+| `verilator`, `QUIET`, `VERBOSE` | `Components/RISCV/utils.v`, which is not in the synthesis file list |
+| `DEBUG`, `DEBUGNETS`, `DEBUGREGS`, `DEBUGASM`, `FORMAL`, `RISCV_FORMAL*` | `Components/RISCV/picorv32.v`, which is **not compiled** into this build (the SSP runs `femtorv32_gracilis.v`); the file is kept for the CPU bakeoffs |
+| `use_legacy_jt49` | `Components/YM2149/YM2149_PSG_system_tb.sv`, the vendored testbench, which is not in the synthesis file list |
+| `SSP_REGS_VH` | include guard of the generated `ssp/rtl/ssp_regs.vh` |
+
+Nothing else in the compiled sources is conditional.
+
 ## I/O port map (reference)
 
 A consolidated list of all I/O ports identified for use by this
@@ -369,11 +419,22 @@ half a clock period, 20 ns at 25 MHz. Reads were then corrupt and unrepeatable
 (a block read differently each time); initialisation, which runs at 250 kHz, was
 fine. At 6.25 MHz (80 ns) there is plenty of margin.
 
-Other build macros that exist but are not SD socket settings: `SDRAM_CLK_100` in
-`MrZ80.sv` (selects the PLL output that clocks the SDRAM controller). The
-framework macro `MISTER_DUAL_SDRAM` is not defined; if it were, `sys/sys_top.v`
-would use a different SD wiring (`SD_SPI_*` pins only, MCP23009 card-detect
-required) and the options above would not apply.
+Two more macros matter to this socket, in a different category from the two
+above:
+
+- **`SDRAM_CLK_100` is defined**, so the SDRAM controller runs on the PLL's
+  100 MHz tap (`outclk_2`) and not on the 112 MHz `outclk_1` the CoCo3
+  `sdram_32r8w` controller was ported for. It is a source-level
+  ``` `define ``` in `MrZ80.sv` rather than a `.qsf` `VERILOG_MACRO`, so only the
+  source controls it. The controller itself is correct at either frequency (its
+  refresh constant is derived for 112 MHz and is therefore conservative at
+  100 MHz). This is the timing-closure fallback, and it is the state the machine
+  runs in today; raising it back to 112 MHz is a deliberate piece of deferred
+  work — see `REQUIREMENTS.md` item 4.
+- **`MISTER_DUAL_SDRAM` is not defined** (its home, `sys_dual_sdram.tcl`, is
+  never sourced). If it were, `sys/sys_top.v` would use a different SD wiring
+  (`SD_SPI_*` pins only, MCP23009 card-detect required) and the two options above
+  would not apply.
 
 #### The slide switches (boards without an MCP23009)
 

@@ -3932,3 +3932,48 @@ The last one is the interesting one: because `SDRAM_CLK_100` is defined,
 the timing-closure fallback is what runs. `AGENTS.md` now lists the active macros
 as well as the ones that must stay commented out, and `doc/ARCHITECTURE.md` states
 the SDRAM clock as it actually is.
+
+## What the build actually compiles conditionally (2026-11-04)
+
+While writing one sentence about the SDRAM clock for `doc/ARCHITECTURE.md` it came
+out that `AGENTS.md` was wrong: it stated there were no active conditional
+compilation macros in this build. Enumerating every `ifdef` in the tree, excluding
+`sys/`, gave the real picture, now documented in a new `HARDWARE.md` section
+("Build configuration: conditional compilation") and summarised in `AGENTS.md`:
+
+- **Active:** `USE_STEREO`, `USE_DUAL_PSG` (dual PSG and stereo mixer pair in the
+  vendored `YM2149_PSG_system`; `sim/run_psg.sh` passes the same two, which is
+  what keeps the simulation lane testing the shipped configuration),
+  `MRZ80_SD_IGNORE_CD`, `MRZ80_SD_FORCE` (SD pin routing in `sys/sys_top.v`), and
+  ``` `define SDRAM_CLK_100 ``` in `MrZ80.sv`.
+- **Inert:** `ARCADE_SYS`, `USE_FB`, `USE_SDRAM`, `USE_DDRAM`, `DEBUG_NOHDMI` in
+  `MrZ80.qsf`. They are stock MiSTer boilerplate and *no source in this tree tests
+  those names* — the framework names `sys/` and `MrZ80.sv` really consult are
+  `MISTER_*` (`MISTER_FB`, `MISTER_DUAL_SDRAM`, `MISTER_DEBUG_NOHDMI`, …), which
+  come from the MiSTer build system, or from `sys_dual_sdram.tcl` that
+  `MrZ80.qsf` never sources. So the commented lines are not "features held off",
+  they are dead switches.
+- **Simulation-only, off in synthesis:** `SIMULATION` (jt49 delay-RAM zeroing),
+  `verilator`/`QUIET`/`VERBOSE`/`BENCH` (RISC-V testbench plumbing),
+  `DEBUG*`/`FORMAL`/`RISCV_FORMAL*` in `Components/RISCV/picorv32.v` — a file that
+  is in the tree for the CPU bakeoffs but is *not compiled* (the SSP uses
+  `femtorv32_gracilis.v`) — and the `SSP_REGS_VH` include guard.
+- `MISTER_DUAL_SDRAM` off, meaning one SDRAM device and the SD routing above.
+
+The interesting one is `SDRAM_CLK_100`: because it is defined, `clk_ram` is the
+PLL's 100 MHz tap rather than the 112 MHz the CoCo3 `sdram_32r8w` controller was
+ported for, and nothing has re-measured whether that fallback is still needed since
+the reliability and wait-release work. Owner decision today: leave it, no work now.
+Recorded as deferred in `REQUIREMENTS.md` item 4 with the recipe for revisiting it
+(comment the define, confirm the PLL really emits the 112 MHz tap, STA on the
+read-capture paths, re-run the FORTH benchmark), and `AGENTS.md` now warns against
+"fixing" it as a drive-by. Note that this macro sits in `MrZ80.sv`, not the `.qsf`,
+so the build's configuration is split across two files — worth knowing before
+hunting for it in the wrong place.
+
+`doc/ARCHITECTURE.md` keeps the clocking to one outline sentence and points at
+`HARDWARE.md` for the numbers and macros, its memory paragraph now matching
+`HARDWARE.md`'s own map (SDRAM in the low 128 MB, on-chip RAM at `0x0800_0000`,
+frame 0 coming from block RAM until a boot image lands in SDRAM page 0), and
+`HARDWARE.md` notes that the VHDL half of the project has no preprocessor at all:
+its tunables are generics, listed with the blocks they belong to.

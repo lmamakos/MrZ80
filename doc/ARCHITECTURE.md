@@ -31,10 +31,12 @@ MiSTer core shares, and it is where the SD card, keyboard, video, audio and
 on-screen menu actually live. Boot code, disk images and the monitor firmware all
 arrive through that menu.
 
-**Memory**, in short: four 16 KB frames, each pointing at any 16 KB page of a
-128 MB space. Page 0 is where a loaded boot image lands, and the 64 KB of
-on-chip RAM sits at `0x0800_0000`. RAM disks mounted from the menu are placed at
-the top of the SDRAM, out of the way of program memory.
+**Memory**, in short: four 16 KB frames, each pointing at any 16 KB page of the
+board's 128 MB of SDRAM, or at the 64 KB of on-chip RAM (`0x0800_0000`). Frame 0
+comes out of the on-chip RAM until a boot image is loaded into SDRAM page 0, which
+is the entire boot mechanism — there is no built-in boot ROM. RAM disks mounted
+from the menu are placed at the top of the SDRAM, out of the way of program
+memory.
 
 ## Reference tables
 
@@ -71,12 +73,11 @@ Profile*, *SSP Monitor* and its friends (the service monitor), and *PSG Stereo*
 (Mono / ABC / ACB channel panning).
 
 `HARDWARE.md` remains authoritative for every port bit, the page-mapping rules,
-boot and reset behaviour, and the two custom Z-80 instructions this core adds. The
-clocking, for the record: one PLL, 50 MHz for the whole computer and a second
-faster tap for the SDRAM controller alone — 100 MHz in the current build
-(`SDRAM_CLK_100` is defined in `MrZ80.sv`; the PLL also emits the 112 MHz the
-controller was ported for) — with the Z-80 enabled one cycle in five to give a
-10 MHz core.
+boot and reset behaviour, the exact clock frequencies and the build macros that
+select them, and the two custom Z-80 instructions this core adds. The clocking, in
+outline: one PLL, 50 MHz for the whole computer and a second, faster tap for the
+SDRAM controller alone, with the Z-80 enabled one cycle in five to give a 10 MHz
+core.
 
 ## Regenerating the image
 

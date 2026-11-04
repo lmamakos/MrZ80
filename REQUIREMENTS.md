@@ -580,6 +580,22 @@ Use the same FORTH benchmark (block RAM vs SDRAM, stock and custom-
 instruction kernels) as the before/after measure, and regress with
 `testing/sdramexec`, `sdramret`, `backtoback` and `sdramtest`.
 
+**Recorded 2026-11-04, and deliberately not scheduled: the `clk_ram` tap.**
+`MrZ80.sv` defines `SDRAM_CLK_100`, so the SDRAM controller runs on the PLL's
+100 MHz tap, not the 112 MHz `outclk_1` the CoCo3 `sdram_32r8w` controller was
+ported for — the timing-closure fallback. Whether the fallback is still needed has
+not been re-measured since the reliability and wait-release fixes above. Undoing it
+is a small job: comment the define, confirm the PLL actually emits the 112 MHz tap
+(`rtl/pll.v` declares `outclk_0/1/2` today, but `MrZ80.sv` warns that the stock IP
+emits only `outclk_0`, so regenerate in MegaWizard if it turns out to be missing),
+check STA on the SDRAM read-capture paths, then re-run the benchmark. Expect part
+of the per-access latency to shrink with the controller clock; the two CDC
+synchronisers and `S_GAP` live on `clk_sys` and will not move. The controller
+itself is fine at either frequency — its refresh constant is derived for 112 MHz,
+so 100 MHz only makes it more conservative. Owner decision, 2026-11-04: leave as it
+is, no work at this time. Current state of every build macro: `HARDWARE.md`
+§"Build configuration: conditional compilation".
+
 ### 5. Benchmark timer peripheral (implemented 2026-10, hardware test pending)
 
 Replace stopwatch timing of benchmark runs with an on-chip timer.

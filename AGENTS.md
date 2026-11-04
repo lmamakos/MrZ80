@@ -38,28 +38,29 @@ Three mechanisms, pick the right one:
 
 ## Conditional compilation macros
 
-These `MrZ80.qsf` macros are **commented out**, and must stay that way for a
-normal build:
+Five macros are **active** in the current build:
 
-```
-ARCADE_SYS, USE_FB, USE_SDRAM, USE_DDRAM, DEBUG_NOHDMI
-```
+| Macro | Set in | Effect |
+|-------|--------|--------|
+| `USE_STEREO`, `USE_DUAL_PSG` | `MrZ80.qsf` | configures the vendored `Components/YM2149` cores for two PSGs and a stereo mixer pair, without editing them (`sim/run_psg.sh` passes the same two) |
+| `MRZ80_SD_IGNORE_CD` | `MrZ80.qsf` | card-detect no longer gates the secondary SD pins in `sys/sys_top.v` |
+| `MRZ80_SD_FORCE` | `MrZ80.qsf` | SD signals always routed to the SDIO pins (boards without an MCP23009); costs the analog video on the shared pins |
+| ``` `define SDRAM_CLK_100 ``` | `MrZ80.sv`, at source level | SDRAM controller on the PLL's 100 MHz tap instead of 112 MHz — the timing-closure fallback, and what the machine runs on today |
 
-`MISTER_DUAL_SDRAM` in `sys_dual_sdram.tcl` is unused (file is never
-sourced).
+Because the last one lives in `MrZ80.sv` and not in the `.qsf`, the build settings
+are split across two files; `HARDWARE.md` §"Build configuration: conditional
+compilation" lists every macro, its state, and what switching it does.
 
-These macros **are active** in the current build:
+`ARCADE_SYS`, `USE_FB`, `USE_SDRAM`, `USE_DDRAM` and `DEBUG_NOHDMI` appear
+commented out in `MrZ80.qsf`. They are stock MiSTer boilerplate: **no source in
+this tree tests those names**, so switching them on would change nothing. The
+framework names that `sys/` and `MrZ80.sv` actually test are the `MISTER_*` ones
+(`MISTER_FB`, `MISTER_DUAL_SDRAM`, `MISTER_DEBUG_NOHDMI`, …), which come from the
+MiSTer build system or, for `MISTER_DUAL_SDRAM`, from `sys_dual_sdram.tcl` — a
+file `MrZ80.qsf` never sources.
 
-| Macro | Where | Effect |
-|-------|-------|--------|
-| `USE_STEREO`, `USE_DUAL_PSG` | `MrZ80.qsf` | configures the vendored `Components/YM2149` cores for two chips and two mixers, without editing them |
-| `MRZ80_SD_IGNORE_CD` | `MrZ80.qsf` | ignores the framework's SD card-detect when gating the secondary SD pins in `sys/sys_top.v` |
-| `MRZ80_SD_FORCE` | `MrZ80.qsf` | always routes the SD signals to the SDIO pins (no MCP23009 I/O board); costs the analog video on the shared pins |
-| ``` `define SDRAM_CLK_100 ``` | `MrZ80.sv` | SDRAM controller runs on the PLL's 100 MHz tap instead of 112 MHz, the timing-closure fallback |
-
-So the build does use conditional compilation; the macros above are what make the
-sound, SD pin routing and SDRAM clock what they are. Removing the two `MRZ80_SD_*`
-macros restores stock MiSTer behaviour.
+Raising `clk_ram` back to 112 MHz is known but deliberately deferred (see
+`REQUIREMENTS.md` item 4); do not "fix" the define as a drive-by.
 
 ## Build commands
 
