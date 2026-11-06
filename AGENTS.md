@@ -103,6 +103,26 @@ Output: `output_files/MrZ80.rbf`.
 **Note:** Building the HDL core typically happens via the wrapper scripts above, which invoke
 a containerized Quartus environment on `tycho` to avoid local tool dependencies.
 
+### Build ID stamp (`build_id.v`)
+
+Every Quartus run rewrites `build_id.v` — `sys/build_id.tcl`, registered as
+`PRE_FLOW_SCRIPT_FILE` in `MrZ80.qsf`, replaces its single line with
+`` `define BUILD_DATE "yymmdd" ``. A modified `build_id.v` in `git status` after a
+build is therefore normal, not a stray edit.
+
+**Rule (owner): commit `build_id.v` whenever the FPGA core changes**, so the build
+date the OSD reports always identifies a build that corresponds to a commit.
+
+- Core changed (`MrZ80.sv`, `MicrocomputerZ80CPM.vhd`, `rtl/`, `ssp/rtl/`,
+  `Components/`, or a `MrZ80.qsf` assignment that alters the netlist):
+  commit the new stamp, either as its own commit —
+  `build: stamp build_id with YYYY-MM-DD date` (the usual form, see `3149d1d`) —
+  or folded into the commit that changes the core.
+- Nothing in the core changed (docs-only work, or a rebuild of a bitstream that is
+  already committed): discard it instead —
+  `git checkout -- build_id.v` — and never leave it dirty for the next session.
+- Stage it by name, like everything else here; do not sweep it up with `git add -A`.
+
 ### Architecture diagrams
 
 `doc/ARCHITECTURE.md` is a single high-level diagram, `block.svg` — the major
