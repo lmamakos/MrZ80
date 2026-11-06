@@ -984,7 +984,11 @@ electrically transparent.  Reserved for later: `0xD0`-`0xD3` (mailbox) and
   console to the monitor (whatever **SSP Console** says).  `G` hands it back.
 * **Commands:** `E`/`D` examine/deposit, `R` registers, `G [aaaa]` go/continue,
   `I`/`O` Z80 I/O ports, `MAP` MMU frames, `S [n]` single-step (interrupts held
-  off during the sequence), `U [aaaa [n]]` unassemble, `PHY`/`LOG` address mode, `F` raw Forth, `?` help.
+  off during the sequence), `U [aaaa [n]]` unassemble, `PHY`/`LOG` address mode,
+  `RESET CPU` (Z80 only: the vent + `JP $0000`; MMU and peripherals untouched) and
+  `RESET SYSTEM` (whole core ~65 ms, the SSP too, boot image and SDRAM kept: the
+  OSD **Reset** depth), `F` raw Forth, `?` help.  Every command also answers to a
+  unique prefix of its name; `RESET` must be spelled out and takes a target.
 * **Addressing:** logical (the Z80's MMU-translated 64 KB view, the default) or,
   after `PHY`, **physical**: up to 7 hex digits covering the SDRAM window
   `0x0000000`-`0x7FFFFFF`, bypassing the MMU.  The block-RAM page (physical

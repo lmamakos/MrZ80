@@ -559,11 +559,21 @@ reg  [1:0] reset_s = 2'b11;
 always @(posedge clk_sys) reset_s <= {reset_s[0], RESET};
 wire       RESET_sync = reset_s[1];
 
+// R47: the SSP monitor's RESET SYSTEM (ssp_top.sys_rst_req, from CTRL.SYS_RST_REQ)
+// shares this self-clearing ~65 ms stretch with Reset-after-Mount.  The stretch
+// is deliberately NOT cleared by reset_sys (which it itself raises), so a
+// one-clock request holds the whole core in reset for the full count; the SSP
+// is reset by it too (ssp_top.rst_n = ~reset_sys), which drops the request, so it
+// cannot re-fire.  Boot image, mounts and SDRAM contents survive (bin_loaded and
+// sdram_init_reset are untouched).  A future front-panel RESET button ORs into
+// the same request.
+wire ssp_sys_rst_req;
+
 reg reset_from_mount = 0;
 reg [15:0] reset_counter = 0;
 
 always @(posedge clk_sys) begin
-    if(img_mounted & status[15]) begin
+    if((img_mounted & status[15]) | ssp_sys_rst_req) begin
         reset_from_mount <= 1;
         reset_counter <= 0;
     end else if(reset_from_mount) begin
@@ -1246,6 +1256,7 @@ ssp_top #(.MROM_INIT("ssp/fw/forth_rom.mif"), .DICT_BASE(17'h05000)) ssp_top
     .tramp_done     (ssp_tramp_done),
     .freeze_any     (ssp_freeze_any),
     .int_hold       (ssp_int_hold),
+    .sys_rst_req    (ssp_sys_rst_req),
     .eng_own        (ssp_eng_own),
     .eng_addr       (ssp_eng_addr),
     .eng_dout       (ssp_eng_dout),

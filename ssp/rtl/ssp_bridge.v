@@ -96,6 +96,8 @@ module ssp_bridge #(
     output wire        z_reset_n,       // CTRL.Z_RST_N effect (integration:
     output wire        z_wait_n,       //   AND with CPM reset stretcher)
     output wire        z_cen_gate,
+    output wire        sys_rst_req,     // R47: CTRL.SYS_RST_REQ effect -> MrZ80.sv
+                                        //   whole-core reset latch (self-clearing)
     output wire        freeze_any,      // P1a constant 0 (step modes P1b)
     output wire        int_hold,        // R39: park INT at the CPM during the
                                        //   instruction-step sequence (owner
@@ -218,14 +220,14 @@ module ssp_bridge #(
     endfunction
 
     // ------------------------------------------------ CTRL ---------------
-    reg  [9:0]  ctr;
+    reg  [10:0] ctr;
     wire        ctrl_or_rst = rst_n && rv_rst_n;   // host-reset domain
     // rv_ctrl_ok: FW may exert Z80 control only while the RV core itself
     // is healthy (R25).  WDG_RUN expiry also drops it (sticky until the FW
     // is reset or kicks WDG_RUN_KICK).
     reg         run_expired_l;                     // 0 = expired (active-low)
     wire        rv_ctrl_ok = ctrl_or_rst && run_expired_l;
-    wire [9:0]  ctr_eff    = (ssp_active && rv_ctrl_ok) ? ctr : 10'd0;
+    wire [10:0] ctr_eff    = (ssp_active && rv_ctrl_ok) ? ctr : 11'd0;
     wire hold_fw     = ctr_eff[`SSP_BIT_CTRL_Z_BUSRQ_N];
     wire esc_brk_en  = ctr_eff[`SSP_BIT_CTRL_ESC_BREAK_EN];
     wire own_fw      = ctr_eff[`SSP_BIT_CTRL_CONSOLE_OWN];
@@ -421,6 +423,7 @@ module ssp_bridge #(
     assign z_wait_n    = ~ctr_eff[`SSP_BIT_CTRL_Z_WAIT_N];
     assign z_cen_gate  =  ctr_eff[`SSP_BIT_CTRL_CEN_GATE];
     assign tramp_arm    = ctr_eff[`SSP_BIT_CTRL_TRAMP_EN];
+    assign sys_rst_req  = ctr_eff[`SSP_BIT_CTRL_SYS_RST_REQ];   // R47: RESET SYSTEM
     assign tramp_target = tramp_addr;
     assign freeze_any  = 1'b0;          // P1a: step modes P1b (D-25)
     assign parked      = park_act;
@@ -662,7 +665,7 @@ module ssp_bridge #(
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            ctr      <= `SSP_CTRL_RESET_10;
+            ctr      <= `SSP_CTRL_RESET_11;
             tramp_addr <= 16'd0; step_ctl <= 11'd0;
             step_err <= 1'b0; step_go <= 1'b0;
             bp0 <= 17'd0; bp1 <= 17'd0; bp2 <= 17'd0; bp3 <= 17'd0;
@@ -734,9 +737,9 @@ module ssp_bridge #(
                 end
                 case (widx)
                 `SSP_RIDX_CTRL: begin
-                    // lane0 covers bits 0..7 (used: 0..5); lane1 8..9
-                    if (mem_wmask[0]) ctr[5:0] <= w[5:0];  // CTRL lane 0
-                    if (mem_wmask[1]) ctr[9:8] <= w1[1:0];  // CTRL lane 1
+                    // lane0 covers bits 0..7 (used: 0..5); lane1 8..10
+                    if (mem_wmask[0]) ctr[5:0]  <= w[5:0];   // CTRL lane 0
+                    if (mem_wmask[1]) ctr[10:8] <= w1[2:0];  // CTRL lane 1
                 end
                 `SSP_RIDX_TRAMP_ADDR: begin
                     if (mem_wmask[0]) tramp_addr[7:0]  <= w;
@@ -835,7 +838,7 @@ module ssp_bridge #(
     end
 
     // ------------------------------------------------ STATUS --------------
-    wire [21:0] status_bits;
+    wire [22:0] status_bits;
     assign status_bits[`SSP_BIT_STATUS_BUSACK]        = ~z_busack_n;
     assign status_bits[`SSP_BIT_STATUS_HALT_N]        = z_halt_n;
     assign status_bits[`SSP_BIT_STATUS_M1_N]          = z_m1_n;
@@ -856,15 +859,17 @@ module ssp_bridge #(
     // step_go covers the arm cycle so a FW poll right after the kick store
     // can never see "idle" before the sequencer has started (review B5).
     assign status_bits[`SSP_BIT_STATUS_STEP_BUSY]     = step_busy | step_go;
+    // R47: the raw request (what FW asked), ungated, for observability
+    assign status_bits[`SSP_BIT_STATUS_SYS_RST]       = ctr[`SSP_BIT_CTRL_SYS_RST_REQ];
 
     // ------------------------------------------------ read mux ------------
     reg  [31:0] q_reg;                 // combinational read at launch
     always @* begin
         case (widx)
         `SSP_RIDX_ID:            q_reg = `SSP_ID_RESET;
-        `SSP_RIDX_CTRL:          q_reg = {22'd0, ctr};
+        `SSP_RIDX_CTRL:          q_reg = {21'd0, ctr};
         `SSP_RIDX_TRAMP_ADDR:    q_reg = {16'd0, tramp_addr};
-        `SSP_RIDX_STATUS:        q_reg = {10'd0, status_bits};
+        `SSP_RIDX_STATUS:        q_reg = {9'd0, status_bits};
         `SSP_RIDX_HALT_REASON:   q_reg = {28'd0, halt_reason};
         `SSP_RIDX_PC_LATCH:      q_reg = {16'd0, pc_latch};
         `SSP_RIDX_SNAP_REG0:     q_reg = snap_q[31:0];

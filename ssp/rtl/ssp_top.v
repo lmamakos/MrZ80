@@ -113,6 +113,7 @@ module ssp_top #(
     output wire [15:0] tramp_target,
     input  wire        tramp_done,
     output wire        freeze_any,   // 0 in P1a (step modes P1b)
+    output wire        sys_rst_req,  // R47: monitor RESET SYSTEM -> whole-core reset latch
     output wire        int_hold,     // R39: INT blocked for the Z80 during the
                                     //   single-step sequence (to CPM INT gate)
     // engine master (mux inputs)
@@ -327,7 +328,7 @@ module ssp_top #(
         .rv_rst_n (rv_run_n), .rv_stalled (rv_stalled), .rv_alive (rv_alive),
         .z_busrq_n (z_busrq_n), .z_reset_n (z_reset_n),
         .z_wait_n (z_wait_n), .z_cen_gate (z_cen_gate),
-        .freeze_any (freeze_any), .int_hold (int_hold),
+        .freeze_any (freeze_any), .int_hold (int_hold), .sys_rst_req (sys_rst_req),
         .eng_own (eng_own), .eng_addr (eng_addr), .eng_dout (eng_dout),
         .eng_mreq_n (eng_mreq_n), .eng_iorq_n (eng_iorq_n),
         .eng_rd_n (eng_rd_n), .eng_wr_n (eng_wr_n),

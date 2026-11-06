@@ -31,12 +31,29 @@
 \   MAP           the four MMU frames: logical -> physical page (R37)
 \   PHY / LOG     E/D address mode: PHYSICAL (28-bit, SDRAM window only, via
 \                 ssp_mem_client, R40) or LOGICAL (default; Z80 view via the MMU)
+\   RESET CPU     reset the Z80 only: the same vent + reset-vector JP $0000 as
+\                 `G 0` (R47).  The MMU map, peripherals, SDRAM and this monitor
+\                 keep their state, so the escape still works afterwards.
+\   RESET SYSTEM  reset the whole core for ~65 ms (CTRL.SYS_RST_REQ, R47): the
+\                 Z80, peripherals, MMU, front panel, terminals AND this monitor
+\                 restart.  The boot image, mounts and SDRAM contents survive, so
+\                 the loaded image restarts; the escape has to be typed again to
+\                 get the monitor back.  Escape is still needed to TYPE either.
 \   F             leave to the Forth REPL (`mon` re-enters)
 \   ? / H         help
 \ Numbers are hex, 1..8 digits, any case.  E/D use the Z80's LOGICAL space
 \ through the D-30 sequencer unless PHY is selected (then up to 7 digits, phys
 \ 0000000..7FFFFFF; the block-RAM page is rejected with ?).  Everything but
-\ F/? needs the Z80 parked.
+\ F/?/RESET SYSTEM needs the Z80 parked.
+\
+\ Matching (R47): the command is the first blank-delimited token, case doesn't
+\ matter.  A single alias letter runs its command; otherwise the token must be a
+\ unique prefix of one command name (EX, PHY, LOGI, REG).  Several matches print
+\ the candidates (? RE: REGISTERS RESET) and run nothing.  An argument command's
+\ letter glued straight to hex digits still works (E100, DA00, S10).  The two
+\ RESETs are the "serious" class: RESET must be spelled in full (RES prints
+\ ? RES: RESET) and always needs a target word -- CPU or SYSTEM, itself any
+\ prefix (RESET C / RESET S) -- with no default and no confirmation prompt.
 
 \ ---- bits composed into CTRL values (ssp-regs.fs masks) ----------------------
 SSP_CTRL_ESC_BREAK_EN SSP_CTRL_CONSOLE_OWN or SSP_CTRL_Z_BUSRQ_N or
@@ -438,6 +455,13 @@ SSP_CTRL_ESC_BREAK_EN
   ." IFF=" SSP_SNAP_REG6 @ 18 rshift 3 and m-h1 cr ;
 
 \ ---- G : go ---------------------------------------------------------------------
+\ m-launch ( a -- ): reset vent + reset-vector JP a, console and park released.
+\ Shared by G aaaa and RESET CPU (a=0).
+: m-launch ( a -- )
+  SSP_TRAMP_ADDR !
+  m-c-arm SSP_CTRL !
+  m-c-go  SSP_CTRL !
+  1 m-state ! ;
 \ Print and drain BEFORE the CTRL writes: once console_own drops the monitor's
 \ TX is no longer on the pin (R25/R26).  Register recipe: SSP_STATUS App. A.3 Step 1.
 : m-go ( -- )
@@ -452,10 +476,127 @@ SSP_CTRL_ESC_BREAK_EN
   m-bad @ if m-q exit then
   m-need-park 0= if exit then
   ." GO " m-a @ m-h4 cr col-reset m-drain
-  m-a @ SSP_TRAMP_ADDR !
-  m-c-arm SSP_CTRL !
-  m-c-go  SSP_CTRL !
-  1 m-state ! ;
+  m-a @ m-launch ;
+
+\ ---- RESET : CPU / SYSTEM (R47) ---------------------------------------------------
+\ Impactful, so the first word must be spelled out in full and the target is a
+\ second word (RESET C / RESET S); bare RESET never defaults.
+\  RESET CPU     the Z-80 CPU only: the same reset vent + JP $0000 that G 0 uses.
+\                MMU map, peripherals and SDRAM keep their state (it is the CPU's
+\                /RESET pin, not the front-panel reset).  Needs the Z-80 parked.
+\  RESET SYSTEM  the whole core for ~65 ms (CTRL.SYS_RST_REQ -> MrZ80.sv
+\                reset_from_mount latch): Z-80, peripherals, MMU, front panel,
+\                terminals AND this monitor.  Boot image, mounts and SDRAM contents
+\                survive, so the loaded image restarts.  Print and drain FIRST --
+\                the monitor is in the reset domain.  If the request is ignored
+\                (SSP inactive) the bit is withdrawn after 100 ms and we say so.
+: m-rst-cpu ( -- )
+  m-need-park 0= if exit then
+  ." CPU RESET" cr col-reset m-drain
+  0 m-launch ;
+: m-rst-sys ( -- )
+  ." SYSTEM RESET" cr col-reset m-drain
+  SSP_CTRL @ SSP_CTRL_SYS_RST_REQ or SSP_CTRL !
+  SSP_TICK_US @
+  begin SSP_TICK_US @ over - 100000 u>= until
+  drop
+  SSP_CTRL @ SSP_CTRL_SYS_RST_REQ invert and SSP_CTRL !
+  col-output ." SYSTEM RESET FAILED" cr ;
+
+\ ---- command matcher (R47) -------------------------------------------------------
+\ A command is the first blank-delimited token.  Routine commands keep their
+\ one-letter form (E D G R I O M S U P L F H ?); every command also answers to any
+\ unique, case-insensitive prefix of its full name (EX, EXAMINE, PHY, LOG, ...).
+\ A token that is exactly one alias letter wins outright.  A token that is no name
+\ prefix but starts with an argument command's letter followed only by hex digits
+\ is the old glued form (E100, DA00, S10).  More than one prefix match, or a
+\ serious command (RESET) not spelled in full, prints the candidates.
+\ Command codes: 1 E 2 D 3 G 4 R 5 I 6 O 7 M 8 S 9 U 10 P 11 L 12 F 13 H, 20 RESET
+\ (>= 20 = serious: must be typed in full).
+0 variable m-tok                              \ address of the command token
+0 variable m-tl                               \ its length
+0 variable m-nc                               \ names it is a prefix of
+0 variable m-hit                              \ code / length of the last such name
+0 variable m-hitl
+0 variable m-ahit                             \ code of an exact one-letter alias
+0 variable m-pm                               \ 1: m-try lists matches as it goes
+: m-up ( c -- C )  dup 97 >= over 123 < and if 32 - then ;
+: m-token ( -- )                              \ blanks, then a run of non-blanks
+  m-spaces  m-pos @ m-line + m-tok !  0 m-tl !
+  begin m-getc dup 0= 0= swap 32 = 0= and while 1 m-tl +! m-adv repeat ;
+: m-pfx? ( a u -- f )                         \ the token is a prefix of the name
+  m-tl @ swap u> if drop false exit then
+  m-tl @ 0 ?do
+    dup i + c@  m-tok @ i + c@ m-up  <> if drop unloop false exit then
+  loop
+  drop true ;
+: m-try ( a u code alias -- )
+  m-tl @ 1 = if
+    m-tok @ c@ m-up over = if over m-ahit ! then
+  then
+  drop >r
+  2dup m-pfx? if
+    1 m-nc +!  r@ m-hit !  dup m-hitl !
+    m-pm @ if space 2dup type then
+  then
+  r> drop 2drop ;
+: m-resolve ( -- )
+  0 m-nc !  0 m-hit !  0 m-hitl !  0 m-ahit !
+  s" EXAMINE"     1 [char] E m-try
+  s" DEPOSIT"     2 [char] D m-try
+  s" GO"          3 [char] G m-try
+  s" REGISTERS"   4 [char] R m-try
+  s" INPUT"       5 [char] I m-try
+  s" OUTPUT"      6 [char] O m-try
+  s" MAP"         7 [char] M m-try
+  s" STEP"        8 [char] S m-try
+  s" UNASSEMBLE"  9 [char] U m-try
+  s" PHYSICAL"   10 [char] P m-try
+  s" LOGICAL"    11 [char] L m-try
+  s" FORTH"      12 [char] F m-try
+  s" HELP"       13 [char] H m-try
+  s" RESET"      20 0        m-try ;
+: m-cands ( -- )                              \ ? TOKEN: NAME NAME ...
+  ." ? " m-tok @ m-tl @ type ." :"
+  1 m-pm !  m-resolve  0 m-pm !  cr ;
+: m-hexrest? ( -- f )                         \ token[1..] is hex digits only
+  m-tl @ 2 u< if false exit then
+  m-tl @ 1 do m-tok @ i + c@ m-digit 0< if unloop false exit then loop
+  true ;
+: m-glue ( -- code )                          \ E100 / DA00 / S10 / G100 ...
+  m-hexrest? 0= if 0 exit then
+  m-tok @ c@ m-up
+  dup [char] E = if drop 1 exit then
+  dup [char] D = if drop 2 exit then
+  dup [char] G = if drop 3 exit then
+  dup [char] I = if drop 5 exit then
+  dup [char] O = if drop 6 exit then
+  dup [char] S = if drop 8 exit then
+  dup [char] U = if drop 9 exit then
+  drop 0 ;
+: m-pick ( -- code )                          \ 0 = nothing to run (already answered)
+  0 m-pm !  m-resolve
+  m-tl @ 1 = if m-tok @ c@ 63 = if 13 exit then then       \ ?
+  m-ahit @ if m-ahit @ exit then
+  m-nc @ 1 = if
+    m-hit @ 20 < if m-hit @ exit then
+    m-hitl @ m-tl @ = if m-hit @ exit then                  \ serious: in full
+    m-cands 0 exit
+  then
+  m-nc @ if m-cands 0 exit then
+  m-glue dup if m-tok @ m-line - 1+ m-pos ! exit then      \ args follow the letter
+  drop m-q 0 ;
+: m-rtarget ( -- 1 | 2 | 0 )                  \ RESET's target word
+  m-token
+  m-tl @ 0= if ." ? RESET: CPU SYSTEM" cr 0 exit then
+  s" CPU"    m-pfx? if 1 exit then
+  s" SYSTEM" m-pfx? if 2 exit then
+  m-q 0 ;
+: m-reset ( -- )
+  0 m-bad !
+  m-rtarget dup 0= if drop exit then
+  m-end  m-bad @ if drop m-q exit then
+  1 = if m-rst-cpu else m-rst-sys then ;
 
 \ ---- command loop -----------------------------------------------------------------
 : m-help ( -- )
@@ -469,28 +610,31 @@ SSP_CTRL_ESC_BREAK_EN
   ." S [N]        STEP N, SHOWING EACH NEXT INSN (INT OFF; CR=REPEAT, KEY=BREAK)" cr
   ." U [AAAA [N]]  UNASSEMBLE N INSTRUCTIONS (DEFAULT 10)" cr
   ." PHY / LOG    E/D ADDRESS MODE: PHYSICAL (SDRAM) / LOGICAL" cr
-  ." F             FORTH" cr ;
-: m-ch ( c -- f )  m-getc 32 or = dup if m-adv then ;   \ exact letter, CI
-: m-tail-hy ( -- f )  104 m-ch if 121 m-ch exit else false then ;
-: m-tail-og ( -- f )  111 m-ch if 103 m-ch exit else false then ;
+  ." RESET CPU    RESET THE Z80 ONLY (MMU, I/O, MEMORY KEEP STATE)" cr
+  ." RESET SYSTEM RESET THE WHOLE CORE, MONITOR TOO (MEMORY KEEPS STATE)" cr
+  ." F             FORTH" cr
+  ." ANY UNIQUE PREFIX OF A COMMAND NAME WORKS; RESET IS SPELLED OUT" cr ;
+: m-run ( code -- )
+  dup 1 = if drop m-examine exit then
+  dup 2 = if drop m-deposit exit then
+  dup 3 = if drop m-go exit then
+  dup 4 = if drop m-regs exit then
+  dup 5 = if drop m-port-r exit then
+  dup 6 = if drop m-port-w exit then
+  dup 7 = if drop m-map exit then
+  dup 8 = if drop m-step exit then
+  dup 9 = if drop m-unasm exit then
+  dup 10 = if drop m-phy exit then
+  dup 11 = if drop m-log exit then
+  dup 12 = if drop 2 m-state ! exit then
+  dup 13 = if drop m-help exit then
+  dup 20 = if drop m-reset exit then
+  drop ;
 : m-cmd ( -- )
-  m-spaces m-getc dup 0= if drop m-repeat exit then   \ bare CR: repeat S
-  m-adv 32 or
-  dup [char] s <> if 0 m-stepn ! then              \ any other command forgets S
-  dup [char] e = if drop m-examine exit then       \ e
-  dup [char] d = if drop m-deposit exit then       \ d
-  dup [char] g = if drop m-go exit then            \ g
-  dup [char] r = if drop m-regs exit then          \ r
-  dup [char] i = if drop m-port-r exit then        \ i
-  dup [char] o = if drop m-port-w exit then        \ o
-  dup [char] m = if drop m-map exit then           \ m
-  dup [char] s = if drop m-step exit then          \ s
-  dup [char] u = if drop m-unasm exit then         \ u
-  dup [char] p = if drop m-tail-hy if m-phy exit else m-q exit then then  \ p-h-y
-  dup [char] l = if drop m-tail-og if m-log exit else m-q exit then then  \ l-o-g
-  dup [char] f = if drop 2 m-state ! exit then     \ f
-  dup 63 = over 104 = or if drop m-help exit then   \ ? h
-  drop m-q ;
+  m-spaces m-getc 0= if m-repeat exit then         \ bare CR: repeat S
+  m-token  m-pick
+  dup 8 <> if 0 m-stepn ! then                     \ any other command forgets S
+  m-run ;
 : m-banner ( -- )  col-output cr ." MrZ80 SSP MONITOR  ? = HELP" cr ;
 
 : mon ( -- )

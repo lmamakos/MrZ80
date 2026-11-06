@@ -11,10 +11,10 @@
 `define SSP_HI_ID_REV        27          // field high index
 `define SSP_LO_ID_REV        0          // field low index
 
-`define SSP_CTRL             32'h20000004  // RW reset 32'h00000020 | park/hold/trampoline/escape enables; Z_RST_N: set = assert Z80 CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the Z80 reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the Z80 parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- Z80 owns the SNAC at power (boot sovereignty R25: FW death never blocks the Z80); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE
+`define SSP_CTRL             32'h20000004  // RW reset 32'h00000020 | park/hold/trampoline/escape enables; Z_RST_N: set = assert Z80 CPU reset (ssp_tramp stretches the release to >=8 cpu_cen; T80 only, peripherals/MMU untouched); TRAMP_EN: arm reset-vector JP injection -- counts only if set while the Z80 reset is asserted, and the HARDWARE CLEARS IT when the 3 injected bytes have been delivered (G aaaa, D-02/D-39); write full values (a read-modify-write after completion would re-arm); Z_BUSRQ_N must be dropped no later than the reset release or the Z80 parks at the target; esc effective only with OSD OM (D-14); esc_break_en resets 1 (D-14; R25 CSV alignment); console_own resets 0 -- Z80 owns the SNAC at power (boot sovereignty R25: FW death never blocks the Z80); panel_lock gates RUN/START only (G-8); forced inactive when !SSP_ACTIVE; SYS_RST_REQ: request a whole-core reset (monitor RESET SYSTEM, R47) -- sys_rst_req output to MrZ80.sv, where it sets the same self-clearing ~65 ms reset stretch as Reset-after-Mount (reset_from_mount): T80, peripherals, MMU, SDRAM client FSM, front panel, terminals AND the SSP itself restart; boot image, mounts and SDRAM contents survive; the bridge reset clears the bit, so it never re-fires; effective only while SSP_ACTIVE and the RV is alive (ctr_eff, like every Z80 control)
 `define SSP_RIDX_CTRL         10'h001      // word index (offset/4)
 `define SSP_CTRL_RESET 32'h00000020          // reset value
-`define SSP_CTRL_RESET_10 10'h20     // reset, 10-bit sized
+`define SSP_CTRL_RESET_11 11'h20     // reset, 11-bit sized
 `define SSP_CTRL_Z_RST_N        32'h00000001  // 0:0
 `define SSP_BIT_CTRL_Z_RST_N    0         // bit index
 `define SSP_CTRL_Z_BUSRQ_N      32'h00000002  // 1:1
@@ -31,6 +31,8 @@
 `define SSP_BIT_CTRL_CONSOLE_OWN 8         // bit index
 `define SSP_CTRL_PANEL_LOCK     32'h00000200  // 9:9
 `define SSP_BIT_CTRL_PANEL_LOCK 9         // bit index
+`define SSP_CTRL_SYS_RST_REQ    32'h00000400  // 10:10
+`define SSP_BIT_CTRL_SYS_RST_REQ 10         // bit index
 
 `define SSP_TRAMP_ADDR       32'h20000008  // RW reset 32'h00000000 | G aaaa / START trampoline target: JP target is injected on the first 3 reads after a Z80 reset armed via CTRL.TRAMP_EN (ssp_tramp, D-02)
 `define SSP_RIDX_TRAMP_ADDR   10'h002      // word index (offset/4)
@@ -40,10 +42,10 @@
 `define SSP_HI_TRAMP_ADDR_ADDR       15          // field high index
 `define SSP_LO_TRAMP_ADDR_ADDR       0          // field low index
 
-`define SSP_STATUS           32'h2000000C  // R reset 32'h00000000 | live status; MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25); STEP_BUSY=instruction-step sequencer running, asserted from the arming STEP_CTL write on so a poll can never miss the start (R39)
+`define SSP_STATUS           32'h2000000C  // R reset 32'h00000000 | live status; SYS_RST=CTRL.SYS_RST_REQ read-back (a whole-core reset is pending; reads 0 once it has happened, the SSP having been reset); MC widened 3-bit R25 (MCycle runs 1..7); TS from TState; ALT/WOULD_BOUNDARY from T80s R25 mod; AT_BOUNDARY=would_boundary latched at park grant (D-25, always 1 for INSN parks); OSD_ESC_EN live OM; RV_TRAP reserved (gracilis has no trap halt, D-37; reads 0); RV_ALIVE=RV core seen fetching (link watchdog, R25); STEP_BUSY=instruction-step sequencer running, asserted from the arming STEP_CTL write on so a poll can never miss the start (R39)
 `define SSP_RIDX_STATUS       10'h003      // word index (offset/4)
 `define SSP_STATUS_RESET 32'h00000000          // reset value
-`define SSP_STATUS_RESET_22 22'h0     // reset, 22-bit sized
+`define SSP_STATUS_RESET_23 23'h0     // reset, 23-bit sized
 `define SSP_STATUS_BUSACK         32'h00000001  // 0:0
 `define SSP_BIT_STATUS_BUSACK     0         // bit index
 `define SSP_STATUS_HALT_N         32'h00000002  // 1:1
@@ -82,6 +84,8 @@
 `define SSP_BIT_STATUS_RV_ALIVE   20         // bit index
 `define SSP_STATUS_STEP_BUSY      32'h00200000  // 21:21
 `define SSP_BIT_STATUS_STEP_BUSY  21         // bit index
+`define SSP_STATUS_SYS_RST        32'h00400000  // 22:22
+`define SSP_BIT_STATUS_SYS_RST    22         // bit index
 
 `define SSP_HALT_REASON      32'h20000010  // R reset 32'h00000000 | halt reason codes sec 10.3 (+wdg): 1=fw-hold/stop 2=bp 3=step one-shot re-park (R39) 4=escape 9=wdg_park; read clears
 `define SSP_RIDX_HALT_REASON  10'h004      // word index (offset/4)

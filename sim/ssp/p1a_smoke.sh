@@ -36,7 +36,7 @@ fi
 
 fail=0
 # PARTS=F runs only Part F (default: all parts)
-want() { [[ "${PARTS:-ABCDEFGHI}" == *$1* ]]; }
+want() { [[ "${PARTS:-ABCDEFGHIJ}" == *$1* ]]; }
 runmodel() { # $1 = tag, rest = plusargs; stdin = operator input
   local tag=$1; shift
   # caller plusargs first: the harness takes the FIRST occurrence of a key
@@ -233,7 +233,7 @@ TAG=E
   printf 'E 100 4\r'                             # PHYSICAL read of 0000100 (M3 path)
   printf 'I 0081\r'                             # I/O works even in PHYSICAL (R37)
   printf 'O 00CC 3C\r'                          # ... reads and writes alike
-  printf 'PPX\rLO\r'                            # near-miss verbs -> ? ?
+  printf 'PPX\rLO\r'                            # PPX is no name -> ?; LO is a LOGICAL prefix (R47)
   printf 'LOG\r'
   printf 'E 100 4\r'                            # logical E restored
   printf 'G\r'
@@ -244,8 +244,8 @@ check "help lists MAP"                           '^MAP          MMU FRAMES'
 check "I reads a port (BFM pattern addr^0x0F)"  '^I 0080 = 8F$'
 check "O writes a port and echoes"               '^O 00BB = 5A$'
 n_qE=$(grep -ac '^?$' "$WORK/E.norm.log")
-[ "$n_qE" -eq 4 ] && echo "  ok: 4 '?' replies (O BB G, O FF, PPX, LO)" \
-  || { echo "  FAIL: expected 4 '?' replies, got $n_qE"; fail=1; }
+[ "$n_qE" -eq 3 ] && echo "  ok: 3 '?' replies (O BB G, O FF, PPX; LO is now LOGICAL)" \
+  || { echo "  FAIL: expected 3 '?' replies, got $n_qE"; fail=1; }
 check "MAP F0 frame + physical base"             '^F0  page 3BBF  phys EEFC000$'
 check "MAP F3 frame + physical base"             '^F3  page 38BC  phys E2F0000$'
 check "PHY mode message"                         '^PHYSICAL \(SDRAM, 28-BIT\)$'
@@ -652,6 +652,181 @@ check "singletask freezes the kick task"              'kicks @ lap kicks @ swap 
 n_100=$(grep -ac ' 100  ok\.' "$WORK/I.norm.log")
 [ "$n_100" -eq 3 ] && echo "  ok: multitask again wakes the tasks (3 laps of 100)" \
   || { echo "  FAIL: laps of 100: $n_100 (want 3)"; fail=1; }
+absent "no unknown words"                             'not found'
+fi
+
+if want J; then
+# ======================= Part J: command matcher + RESET CPU / SYSTEM (R47) ==========
+# Routine commands keep their one letter; every command also answers to any unique
+# prefix of its name.  RESET (CPU / SYSTEM) is the only serious class: spelled out,
+# a target word, never defaulted.  The whole-core reset is the harness's twin of the
+# MrZ80.sv reset_from_mount latch (p1a_sim_top.v); check_seam.py guards the real wiring.
+TAG=J
+{
+  printf '\x1d'
+  printf '?\r'
+  printf 'EX 100 4\r'                                # prefix of EXAMINE
+  printf 'exam 100 2\r'                              # longer prefix, lower case
+  printf 'E100 2\r'                                  # glued form, as before
+  printf 'DEP 1000\r11\r.\r'                         # prefix of DEPOSIT
+  printf 'EX 1000 2\r'
+  printf 'PHYS\r'                                    # prefix of PHYSICAL
+  printf 'E 100 2\r'
+  printf 'LOGI\r'                                    # prefix of LOGICAL
+  printf 'RE\r'                                      # REGISTERS or RESET: candidates
+  printf 'RES\r'                                     # RESET not spelled out: candidate
+  printf 'RESET\r'                                   # no target: never a default
+  printf 'RESET X\r'
+  printf 'RESET CPUX\r'
+  printf 'RESET S 5\r'                               # junk after the target: nothing happens
+  printf 'RXYZ\r'
+  printf 'B\r'
+  printf 'REG\r'
+  printf 'MA\r'
+  printf 'ST\r'                                      # one step ...
+  printf '\r'                                        # ... and bare CR repeats it
+  printf 'REG\r'                                     # any other command forgets the repeat ...
+  printf '\r'                                        # ... so this bare CR does nothing
+  printf 'G\r'
+} | runmodel J +OM=1 +LINEWAIT=2 +QUIET=150000
+echo "--- Part J console (matcher) ---"; cat "$WORK/J.norm.log"
+check "help lists RESET CPU"                          '^RESET CPU    RESET THE Z80 ONLY'
+check "help lists RESET SYSTEM"                       '^RESET SYSTEM RESET THE WHOLE CORE'
+check "EX = EXAMINE"                                  "^$(rx "$(row 100 4)") *\$"
+n_r2=$(grep -ac "^$(rx "$(row 100 2)") *\$" "$WORK/J.norm.log")
+[ "$n_r2" -eq 2 ] && echo "  ok: EXAM and glued E100 both examine" \
+  || { echo "  FAIL: expected 2 rows of 0100 (exam 100 2, E100 2), got $n_r2"; fail=1; }
+check "DEP = DEPOSIT, shows the old byte, takes the new"  '^1000: 10 11 *$'
+check "...and advances"                               '^1001: 11 \. *$'
+check "EX sees the deposit"                           "^$(rx "$(row 1000 2 1000=11)") *\$"
+check "PHYS = PHYSICAL"                               '^PHYSICAL \(SDRAM, 28-BIT\)$'
+check "...and E is physical now"                      '^0000100: A4 A5 '
+check "LOGI = LOGICAL"                                '^LOGICAL$'
+check "RE is ambiguous: both candidates listed"       '^\? RE: REGISTERS RESET$'
+check "RES: RESET is a candidate but not run"         '^\? RES: RESET$'
+check "bare RESET names its targets"                  '^\? RESET: CPU SYSTEM$'
+n_qJ=$(grep -ac '^?$' "$WORK/J.norm.log")
+[ "$n_qJ" -eq 5 ] && echo "  ok: 5 plain '?' (RESET X, RESET CPUX, RESET S 5, RXYZ, B)" \
+  || { echo "  FAIL: expected 5 '?', got $n_qJ"; fail=1; }
+check "REG = REGISTERS"                               '^PC=[0-9A-F]{4} SP='
+check "MA = MAP"                                      '^F0  page '
+n_stj=$(grep -aEc '^[0-9A-F]{4}: .*AF=[0-9A-F]{4} BC=' "$WORK/J.norm.log")
+[ "$n_stj" -eq 2 ] && echo "  ok: ST steps, bare CR repeats it, and not after another command (2 step lines)" \
+  || { echo "  FAIL: expected 2 step lines, got $n_stj"; fail=1; }
+absent "no reset was performed by any of the rejected forms"  '(CPU|SYSTEM) RESET( FAILED)?$'
+absent "no unknown words"                             'not found'
+n_dj=$(grep -ac 'tramp_done' "$WORK/J.events.log")
+[ "$n_dj" -eq 0 ] && echo "  ok: no reset-vector injection (nothing launched)" \
+  || { echo "  FAIL: expected 0 tramp_done, got $n_dj"; fail=1; }
+case "$(grep -aoE 'sysrst=[0-9]+' "$WORK/J.info.log" | tail -1)" in
+  sysrst=0) echo "  ok: no system reset requested";;
+  *) echo "  FAIL: a system reset was requested"; fail=1;; esac
+
+# ---- J2: RESET CPU (the Z-80 only; same vent + JP $0000 as G 0)
+TAG=J2
+{
+  printf '\x1d'
+  printf 'G 300\r'
+  printf '\x1d'; printf 'R\r'                       # running the code at 0300
+  printf 'RESET c\r'                                # target abbreviated, lower case
+  printf '\x1d'; printf 'R\r'                       # ... restarted: the BFM boot vector at 0000 is JP 0100
+  printf 'RESET CPU\r'
+  printf '\x1d'; printf 'R\r'
+  printf 'G\r'
+} | runmodel J2 +OM=1 +LINEWAIT=2 +QUIET=150000
+echo "--- Part J2 console (RESET CPU) ---"; cat "$WORK/J2.norm.log"
+check "R before the reset: PC=0300"                   '^PC=0300 '
+n_rc=$(grep -ac '^CPU RESET$' "$WORK/J2.norm.log")
+[ "$n_rc" -eq 2 ] && echo "  ok: CPU RESET acknowledged twice (RESET c, RESET CPU)" \
+  || { echo "  FAIL: expected 2 'CPU RESET', got $n_rc"; fail=1; }
+n_pc0=$(grep -ac '^PC=0100 ' "$WORK/J2.norm.log")
+[ "$n_pc0" -eq 2 ] && echo "  ok: the Z-80 restarted at 0000 and ran the boot vector (PC=0100) both times" \
+  || { echo "  FAIL: expected 2 'PC=0100' lines, got $n_pc0"; fail=1; }
+ev    "RESET CPU: injector armed with target 0000"    'tramp_arm -> 1 target=0000'
+ev    "RESET CPU: injector delivered the JP to 0000"  'tramp_done \(guest pc=0000\)'
+ev    "RESET CPU writes CTRL = 133 (arm + vent while parked)"  'p1a-ctrl .*CTRL <= 133 '
+n_d2=$(grep -ac 'tramp_done' "$WORK/J2.events.log")
+[ "$n_d2" -eq 3 ] && echo "  ok: three injections (G 300 and the two resets)" \
+  || { echo "  FAIL: expected 3 tramp_done, got $n_d2"; fail=1; }
+absent "RESET CPU never asks for a system reset"      'SYSTEM RESET'
+case "$(grep -aoE 'sysrst=[0-9]+' "$WORK/J2.info.log" | tail -1)" in
+  sysrst=0) echo "  ok: no system reset requested";;
+  *) echo "  FAIL: RESET CPU requested a system reset"; fail=1;; esac
+absent "no unknown words"                             'not found'
+
+# ---- J3: RESET SYSTEM (whole core; the SSP restarts too and re-enters on the escape)
+TAG=J3
+{
+  printf '\x1d'
+  printf 'G 300\r'
+  printf '\x1d'; printf 'R\r'                       # running the code at 0300
+  printf 'RESET SYSTEM\r'
+  printf '\x1d'; printf 'R\r'                       # fresh monitor; the Z-80 booted again (0000: JP 0100)
+  printf 'reset s\r'                                # abbreviated, lower case
+  printf '\x1d'; printf 'R\r'
+  printf 'G\r'
+} | runmodel J3 +OM=1 +LINEWAIT=2 +QUIET=450000           # the SSP needs ~365k clocks (stretch + boot)
+echo "--- Part J3 console (RESET SYSTEM) ---"; cat "$WORK/J3.norm.log"
+n_rs=$(grep -ac '^SYSTEM RESET$' "$WORK/J3.norm.log")
+[ "$n_rs" -eq 2 ] && echo "  ok: SYSTEM RESET acknowledged twice" \
+  || { echo "  FAIL: expected 2 'SYSTEM RESET', got $n_rs"; fail=1; }
+n_bj=$(grep -ac '^MrZ80 SSP MONITOR' "$WORK/J3.norm.log")
+[ "$n_bj" -eq 4 ] && echo "  ok: the monitor restarted and came back on each escape (4 banners)" \
+  || { echo "  FAIL: expected 4 banners, got $n_bj"; fail=1; }
+check "R before: PC=0300"                             '^PC=0300 '
+n_pj=$(grep -ac '^PC=0100 ' "$WORK/J3.norm.log")
+[ "$n_pj" -eq 2 ] && echo "  ok: the Z-80 rebooted after each system reset (0000: JP 0100)" \
+  || { echo "  FAIL: expected 2 'PC=0100' lines, got $n_pj"; fail=1; }
+absent "no FAILED message when the reset happens"     'RESET FAILED'
+ev    "RESET SYSTEM writes CTRL = 522 (park bits kept + SYS_RST_REQ)" 'p1a-ctrl .*CTRL <= 522 '
+n_ej=$(grep -ac 'p1a-sysrst' "$WORK/J3.events.log")
+[ "$n_ej" -eq 2 ] && echo "  ok: the whole-core reset latch fired twice" \
+  || { echo "  FAIL: expected 2 p1a-sysrst events, got $n_ej"; fail=1; }
+case "$(grep -aoE 'sysrst=[0-9]+' "$WORK/J3.info.log" | tail -1)" in
+  sysrst=2) echo "  ok: two system resets counted";;
+  *) echo "  FAIL: expected sysrst=2"; fail=1;; esac
+n_tj=$(grep -ac 'tramp_done' "$WORK/J3.events.log")
+[ "$n_tj" -eq 1 ] && echo "  ok: only G 300 injected (a system reset does not vent via the trampoline)" \
+  || { echo "  FAIL: expected 1 tramp_done, got $n_tj"; fail=1; }
+absent "no unknown words"                             'not found'
+if grep -aq 'p1a-ERR' "$WORK/J3.events.log"; then echo "  FAIL: BUSRQ released during an engine cycle (Part J3)"; fail=1; fi
+
+# ---- J4: the request is ignored (SSP inactive / latch absent): the monitor
+# withdraws it after 100 ms, says so, and stays usable.  The monitor is deaf for
+# those 100 ms (a 5M-clock busy wait), so the harness lines wait for 5.5M quiet
+# clocks or the 128-byte RX FIFO would overrun
+TAG=J4
+{
+  printf '\x1d'
+  printf 'RESET SYSTEM\r'
+  printf 'E 100 2\r'
+  printf 'F\r'
+  printf '$20000004 @ hex. cr\r'                     # CTRL: bit 10 withdrawn
+} | runmodel J4 +OM=1 +LINEWAIT=2 +QUIET=5500000 +NOSYSRST +IDLE=12000000
+echo "--- Part J4 console (request ignored) ---"; cat "$WORK/J4.norm.log"
+check "an ignored request is reported after 100 ms"   '^SYSTEM RESET FAILED$'
+check "the monitor is still alive afterwards"         '^0100: C3 00 '
+check "CTRL bit 10 was withdrawn (CTRL = 00000122)"   '^[$]20000004 @ hex\. cr +00000122 *$'
+case "$(grep -aoE 'sysrst=[0-9]+' "$WORK/J4.info.log" | tail -1)" in
+  sysrst=0) echo "  ok: the mock latch never fired";;
+  *) echo "  FAIL: sysrst should be 0";  fail=1;; esac
+absent "no unknown words"                             'not found'
+
+# ---- J5: STATUS.SYS_RST (bit 22) follows CTRL.SYS_RST_REQ (bit 10), by hand
+TAG=J5
+{
+  printf '\x1d'
+  printf 'F\r'
+  printf '$20000004 @ $400 or $20000004 !\r'         # raise the request ...
+  printf '$20000004 @ hex. cr\r'
+  printf '$2000000C @ $400000 and hex. cr\r'         # ... STATUS.SYS_RST follows
+  printf '$20000004 @ $400 invert and $20000004 !\r' # ... and drops again
+  printf '$2000000C @ $400000 and hex. cr\r'
+} | runmodel J5 +OM=1 +LINEWAIT=2 +QUIET=150000 +NOSYSRST
+echo "--- Part J5 console (CTRL/STATUS bits) ---"; tail -12 "$WORK/J5.norm.log" | grep -v '^$'
+check "CTRL reads back bit 10 (CTRL = 00000522)"      '^[$]20000004 @ hex\. cr +00000522 *$'
+check "STATUS.SYS_RST (bit 22) follows"               '^[$]2000000[cC] @ \$400000 and hex\. cr +00400000 *$'
+check "...and drops with it"                          '^[$]2000000[cC] @ \$400000 and hex\. cr +00000000 *$'
 absent "no unknown words"                             'not found'
 fi
 

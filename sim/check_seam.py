@@ -10,6 +10,8 @@ ssp_int_hold gate).  Static check:
   * every port of module ssp_top is connected in the ssp_top instance;
   * every net on a CPM ssp_* port also appears on a port of the ssp_top
     instance (the two halves of the seam are wired to each other);
+  * R47 RESET SYSTEM: sys_rst_req sets the reset_from_mount stretch, which feeds
+    reset_sys, which resets ssp_top;
   * R43 OSD ROM mount: the mnt_* ports are driven (not tied off), mnt_busy
     reaches ioctl_wait, and the SDRAM mux does not switch on a bare
     ioctl_download (an SSP mount leaves the Z-80 running on its SDRAM).
@@ -67,6 +69,24 @@ for m in ('addr', 'din', 'we', 'rd'):
     elif a.group(1) == 'ioctl_download':
         bad.append('sdram_%s_mux selects on bare ioctl_download (an SSP ROM mount '
                    'would take the SDRAM from the running Z-80)' % m)
+
+# R47 RESET SYSTEM: ssp_top.sys_rst_req must be a real net (not tied off), and
+# it must be a set-condition of the self-clearing reset_from_mount stretch
+# (the latch is what keeps the core in reset for the whole count after a
+# one-clock request), which must feed reset_sys, which must reset ssp_top.
+n = sspt.get('sys_rst_req', '')
+if not n or re.match(r"^\d*'[bdh]|^\d+$|^\{", n):
+    bad.append('ssp_top port sys_rst_req is tied off (%r)' % n)
+else:
+    lat = re.search(r'always\s*@\(posedge\s+clk_sys\)\s*begin\s*if\s*\((.*?)\)\s*begin\s*'
+                    r'reset_from_mount\s*<=\s*1', sv, re.S)
+    if not lat or not re.search(r'\b%s\b' % re.escape(n), lat.group(1)):
+        bad.append('sys_rst_req net %s is not a set-condition of reset_from_mount' % n)
+rs = re.search(r'wire\s+reset_sys\s*=\s*([^;]*);', sv)
+if not rs or 'reset_from_mount' not in rs.group(1):
+    bad.append('reset_sys does not include reset_from_mount')
+if sspt.get('rst_n', '') != '~reset_sys':
+    bad.append('ssp_top rst_n is not ~reset_sys (RESET SYSTEM must reset the SSP too)')
 
 if bad:
     print('check_seam: FAIL'); print('\n'.join('  ' + b for b in bad)); sys.exit(1)

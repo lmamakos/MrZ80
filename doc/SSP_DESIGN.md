@@ -1052,10 +1052,37 @@ logic" on the VHDL side; since R25 the alignment itself is inside the T80 and
 the bridge only drives the request level, so the sequencer is request-level
 orchestration beside the existing park controller. The price is a two-half
 proof (GHDL real-T80 contract + Verilator bridge/FW), recorded in R39.
-7.3 RESET: panel *Reset CPU* / serial `A` → HW-stretched ≥8-`cpu_cen` vent
+7.3 RESET: panel *Reset CPU* / serial `A` `[R47: landed as serial `RESET CPU`; `A`
+is not used]` → HW-stretched ≥8-`cpu_cen` vent
 on `reset_n_internal`; monitor state persists; auto-repark after (examine
 context). Panel *Reset System* = `hard_reset_req` path (OSD-equivalent core
 wide reset incl. profile-clear; **excludes** FPGA config; exact scope OQ-10).
+**[landed R47: monitor `RESET CPU` / `RESET SYSTEM`, §10.2b]** *Reset CPU* is the
+existing vent + `JP $0000` (the `G 0` machinery, no new RTL): the T80 only; the
+MMU map, peripherals, SDRAM and the SSP itself keep their state. *Reset System*
+is `CTRL.SYS_RST_REQ` (bit 10; `STATUS.SYS_RST`, bit 22, reads it back) ->
+`ssp_top.sys_rst_req` -> one more set-condition of the self-clearing
+`reset_from_mount` stretch in `MrZ80.sv` (65,535 clk ~ 65 ms; the same latch
+Reset-after-Mount uses, deliberately not cleared by the reset it raises). It
+feeds `reset_sys`, so the T80, peripherals, MMU, SDRAM client FSM, front panel,
+terminals **and `ssp_top` itself** restart; `bin_loaded`, mounts, the SDRAM
+controller and the SDRAM contents survive, so the loaded boot image restarts.
+That is the depth of the OSD **Reset** item -- which, R47 found, is *not* a
+CPU-only reset: `reset_sys` includes the SSP. The bridge reset clears the bit,
+so the request cannot re-fire; `ctr_eff` gates it like every Z80 control.
+Console/park after either reset: the monitor does *not* re-park -- `RESET CPU`
+ends with the same arm+go pair as `G aaaa`, so the Z80 runs the reset vector with
+the console back in its hands; `RESET SYSTEM` leaves the power-on defaults
+(the Z80 owns the SNAC, `console_own` = 0). In both cases the operator types the
+escape again to get the monitor back. What *is* lost by `RESET SYSTEM`, because
+`reset_sys` reaches it: the front-panel profile RAM re-initialises on every reset
+(`FP_RAM_Store`), so a profile chosen from the OSD goes back to its default -- the
+same as OSD **Reset** does today.
+*Panel contract (for P2, not built):* the RESET CPU lever drives the vent
+(OR into `z_reset_n`, so it works with a dead RV); RESET SYSTEM ORs into the
+same `sys_rst_req` net at the top level; neither holds BUSRQ across the vent
+(FW order: drop the park, then vent). Whether the panel's Reset System should
+also clear `bin_loaded` (`hard_reset_req` depth) stays OQ-10.
 7.4 Trampoline (`G aaaa`, panel START): arm `TRAMP_ADDR`+`tramp_en`,
 reset-vent, inject `C3 lo hi` at the first three fetches from $0000 (mux
 select over `cpuDataIn`), auto-disarm; plain `G` = resume (never injects).
@@ -1191,6 +1218,8 @@ only while OSD `OM` is On) + `F`/`ODT` skin switch.
 
 10.2 **Command table** (as v0.2 §10.2 with these amendments):
 - `PHY` / `LOG` — addressing mode select (`MD`) `[new v0.3]`
+- `RESET CPU` / `RESET SYSTEM` — Z80-only reset / whole-core reset `[landed R47]`;
+  one-letter and prefix forms for everything else, §10.2b
 - `E/D/I/O` default via `AR/PR` shared registers; explicit-arg forms allowed
 - `MB rd[,n]` / `MB wr,dd` — mailbox peek/poke `$D0..$D3` `[new v0.3]`
 - `PAGE n` — select lamp state block (`SSP_CTRL.page`) `[new v0.3; renamed
@@ -1208,6 +1237,39 @@ only while OSD `OM` is On) + `F`/`ODT` skin switch.
 correctly, `'AF=`… line conditional on bank). **R15:** if
 `STATUS.at_boundary`=0 (after an M-cycle/T-state step) `R` prefixes
 `*MID-INSN*` — register values are then not architectural (D-25).
+
+10.2b `[landed R47]` **Command matching.** A command is the first blank-
+delimited token (case-insensitive). Routine commands keep their one letter;
+every command also answers to any unique prefix of its name:
+
+| Command | Name | Code | | Command | Name | Code |
+|---|---|---|---|---|---|---|
+| `E` | `EXAMINE` | 1 | | `S` | `STEP` | 8 |
+| `D` | `DEPOSIT` | 2 | | `U` | `UNASSEMBLE` | 9 |
+| `G` | `GO` | 3 | | `P` | `PHYSICAL` | 10 |
+| `R` | `REGISTERS` | 4 | | `L` | `LOGICAL` | 11 |
+| `I` | `INPUT` | 5 | | `F` | `FORTH` | 12 |
+| `O` | `OUTPUT` | 6 | | `H` or `?` | `HELP` | 13 |
+| `M` | `MAP` | 7 | | *(no letter)* | `RESET` | 20 |
+
+Rules: (1) a token that is exactly one alias letter runs that command;
+(2) otherwise the token must be a prefix of exactly one name (`EX`, `PHY`,
+`LOGI`, `REG`); (3) **more than one match lists the candidates** --
+`? RE: REGISTERS RESET` -- and runs nothing (a permanent contract: a future
+`BREAKPOINT` makes `B` list itself instead of silently winning); (4) a token
+that is no name prefix but starts with an argument command's letter followed
+only by hex digits is the old glued form (`E100`, `DA00`, `S10`); anything else
+is a plain `?`; (5) **serious commands** (code >= 20) must be spelled in full:
+`RES` prints `? RES: RESET` and runs nothing. `RESET` takes a target word
+(`CPU` or `SYSTEM`, any prefix, so `RESET C` / `RESET S`); bare `RESET` prints
+`? RESET: CPU SYSTEM`, a wrong target or trailing junk prints `?` -- an
+impactful command never defaults and never fires from an ambiguous prefix. No
+confirmation prompt (the two-word form is the safeguard). Behaviour changes
+against R46: `P`, `L`, `PH`, `LO`, `MA`, `REGISTERS`, ... now run; `R`/`M`/`F`
+followed by junk (`RXYZ`) now print `?`. The matcher is a table of inline
+names in `monitor.fs` (`m-resolve`), exercised word-for-word on the real
+Mecrisp kernel under qemu and by smoke Part J. Panel equivalents (F6, §11.2):
+RESET CPU = `RESET CPU`, RESET SYSTEM = `RESET SYSTEM`.
 
 10.3 Halt reasons / error codes carried verbatim (+ reason 9=`wdg-park-dead`,
 + error `0B` bridge timeout, `0C` SD-write-unimplemented-until-revisit).
@@ -1461,7 +1523,7 @@ OQ-18)**.
 | OQ-05 | BP at $0000–$0002 vs trampoline injection | Carried lean: suppressed during injection window |
 | OQ-06 | `Ret` classification source for CTEV | Carried lean: explicit `Ret` in MCode |
 | OQ-09 | Bridge board un-built: electrical freeze incl. SPDT parts, encoder, spare banks; sim now with synthetic frames (R-13) + SPDT pair encoding assumptions | P2 dependency, not P1 — **R15: longest-lead item; start board design in parallel with P1a/P1b** so the UX second pass isn't blocked |
-| OQ-10 | **Exact "Reset System" scope** — proposed: `hard_reset_req`-equivalent (Z80 + monitor + FP profile clear; not FPGA config). Confirm at board design. | needs owner confirmation |
+| OQ-10 | **Exact "Reset System" scope** — proposed: `hard_reset_req`-equivalent (Z80 + monitor + FP profile clear; not FPGA config). Confirm at board design. **[R47: the monitor's `RESET SYSTEM` is `reset_sys` depth -- the OSD Reset item's -- i.e. it keeps the loaded boot image and the SDRAM; `hard_reset_req` depth (clear `bin_loaded`, re-init SDRAM, CPU held until a ROM is picked) is NOT offered; confirm for the panel.]** | needs owner confirmation |
 | OQ-11 | vid-port **writes** revisit gate (D-15-B): after R-26 passes with reads; scope = `sdram2.sv` DQM mod; alternative = physical writes stay parked-only forever | revisit P3+ |
 | OQ-18 | Board-freeze UX values (residual from R8): double-press window `T_w`; page-ID lamp encoding (binary vs one-hot); lock-reject flash pattern; **panel BP-clear gesture** (armed LOAD-down? serial-only v1?); debounce/heartbeat constants; LED physical zones vs switch geometry; S28–S30 silkscreen labels; spare bank (frame bits 54–67) future use; **MMU-switch (D-24) silkscreen labels + 9th-SPDT mounting; live-re-query-on-`S1:S0` policy; deposit valid-bit encoding check vs `MMU.vhd`** | board design time; `SSP_PANEL_UX.md` §11 checklist |
 | OQ-19 | Milestone-B scheduling: formal `sd_arb` extraction approved (R9) but unscheduled — proposal: dedicated refactor milestone after P2 green, before P3 polish work; confirm at P3 planning | `SDRAM_REWORK_PLAN.md` §6/§10 |
@@ -1471,7 +1533,7 @@ OQ-18)**.
 | OQ-22 | `[new R15]` **Escape-byte consumption mechanism** (D-14): when the Z80 owns the SNAC link and `OM` is On, the escape byte must not reach the Z80 ACIA, but recognition completes only at the stop bit. Options: (a) byte-level relay (deserialize → filter → re-serialize at the `O9B` rate; adds one character time of latency, only while `OM` On; RTS/CTS passed through), (b) let the byte through and accept the Z80 sees it, (c) inject into the ACIA receive path instead of the wire | **CLOSED `[R24/R25, documented R30]`: option (a), byte-level relay**, implemented in `ssp/rtl/ssp_uart.v` (deserialize -> ESC filter -> re-serialize, 2-deep queue + inter-byte stretch); raw-vs-relay Z80-RX mux switches at `ssp_top` (raw when `OM` Off = bit-transparent R-43, relay when On; mutually exclusive, no byte duplication). Cost: one character time of latency, only while `OM` is On |
 | OQ-23 | `[new R15]` **BP self-loop injection** (D-25): confirm in integration sim — BP on a prefix byte (inject at the prefix M1; does T80 prefix state reset cleanly?), interaction with trampoline window (OQ-05), interrupt taken at the injected `JR`'s boundary, `BP_SKIP` resume path | P1a/P2 sim (R-41); fallback = stop-after with corrected PC report |
 | OQ-25 | `[new R45]` **Breakpoint implementation details after D-42:** (a) the MMU's physical address must be valid at the fetch cycle in time to substitute `18 FE` where the T80 samples its data input (end of T2) -- confirm in sim against the real T80 and the MMU; (b) where the compare taps (CPM boundary, after the MMU) and how it identifies fetch (M1) vs data read vs write; (c) latch registers for the hit address and type; (d) OQ-05 restated physically: the trampoline window is logical `$0000..$0002` of the booting map, so decide what a physical breakpoint there means; (e) whether `S` reports watch hits during a step; (f) what a hit means while a step or `G aaaa` sequence is in flight | implementation start (P2, R-41 bench) |
-| OQ-24 | `[new R35]` **Physical-access command surface** (owner first-light requirements, D-15-P/D-22): canonical is modal (`PHY`/`LOG` set `MD`, then `E`/`D` act logical-or-physical per mode); also add explicit physical verbs (e.g. `PE`/`PD`, `I a`, `O a d`, `MAP`)? Letters to be confirmed with the P1b FW ODT-skin pass | owner letter ruling; R35 next-phase note |
+| OQ-24 | `[new R35; R47: word names + prefix matching landed, the modal `PHY`/`LOG` kept]` **Physical-access command surface** (owner first-light requirements, D-15-P/D-22): canonical is modal (`PHY`/`LOG` set `MD`, then `E`/`D` act logical-or-physical per mode); also add explicit physical verbs (e.g. `PE`/`PD`, `I a`, `O a d`, `MAP`)? Letters to be confirmed with the P1b FW ODT-skin pass | owner letter ruling; R35 next-phase note |
 | OQ-15 | Graphical frame buffer for monitor *video* output (vs 80×25 ANSI on SBC terminal), including exclusive HDMI+kbd console details (D-19 P3): font, pages, keymap | later-phase design note. **[R44: the exclusive console itself is built — same ANSI terminal as the guest's, green-on-black, shared keymap; the graphical FB remains open]** |
 | OQ-16b | *(closed by R8 →* `SSP_PANEL_UX.md` v0.1*)* deep-dive held 2026-10-23: sovereignty/lock, pages, lamps, encoder, commentary, walkthroughs; second pass after first FP hardware experience | closed |
 | OQ-17 | Doc naming: CamelFORTH (Z80) vs Mecrisp (monitor) glossaries in `doc/` — two files naming | lean: `MONITOR-FORTH-GLOSSARY.md` new beside existing |
@@ -1484,7 +1546,7 @@ OQ-18)**.
 |---|---|---|
 | **P0 — two-core bake-off (R14)** | Vendored `picorv32.v` (`COMPRESSED_ISA`) **and** `femtorv32_gracilis.v` (+`utils.v`); Quartus 17.0 synth on `5CSEBA6U23I7` for **both**; **Mecrisp REPL live in sim and on the stub SoC** (UART console, per core); toolchain package verified (`riscv64-unknown-elf`, `-print-multi-lib`, `-march=rv32imc_zicsr_zifencei -mabi=ilp32`); downloadable-ROM write path sim; `fit.rpt` headroom recorded ×2; crt0 convention verified; §5.8 verify items closed (bridge `TICK_US` timer — common to both; ~~IRQ glue smoke~~ moot under polled FW, D-27; ~~learn-fpga license~~ closed). **R15 additions:** **simulation infrastructure** (D-28: `sim/ssp` Verilator + GHDL integration benches `sim/run_ssp_*.sh`, Makefile) — Mecrisp REPL in Verilator per core; **register-map generator** (D-29: CSV → `.vh`/`.fs`/Markdown, `make regmap-check`); Mecrisp RAM-only build confirmed (D-32: `compiletoram`, flash primitives stubbed). Optional: riscv-formal on picorv32 (eqy container, off critical path). **VexRiscv/vexgen shelved** (§5.7; reopen = OQ-21) | clean synth ×2; headroom logged; REPL live on harness; **one core selected per §5.8 table — DONE R23: FemtoRV32-gracilis (D-37, OQ-20 closed)**; sim flows + regmap generator runnable; no day-to-day container dependency |
 | **P1a — "first light"** `[new R15]` | Minimum vertical slice that exercises the riskiest RTL on real hardware: bridge `ID/CTRL/STATUS/TICK_US/ESC_CHAR/IRQ_PENDING/MEM_CTL/MEM_ADDR/MEM_DATA/SNAP_REG`, **`insn_end` export + boundary parking** (D-25), **`z80_bus_mux` + cycle-faithful engine (logical mem + I/O)** (D-26), micro-op sequencer core (D-30, FW kicks only), `ssp_uart` + **OSD `OM` escape recognizer** (D-14, OQ-22 resolved), SNAC console mux; FW (polled, D-27): `E D G H R X` + `ESC` **[R27: FW command set per D-39 (examine, modify-with-prompt, `G aaaa`, bare `G` continue); the trampoline moves here from P1b]** | R-40, R-42, R-43, R-45, R-46, R-23, R-25 + the R-01…R-09 subset covering halt/examine/deposit/go green; **on hardware**: escape into the SSP, examine/deposit Z80 memory, resume — with `OM` Off proven bit-transparent **[CLOSED R35: all exit items PASS on hardware, 2026-10-27]** |
-| **P1b — console complete** | Remaining P1 scope: `MD/AR/DR/PR` shared regs, `MAP0..3`, `MBX`, WDG×2, STEP assist (INSN/MCYCLE/TSTATE), reset stretcher, trampoline / `G aaaa`, **`ssp_mem_client`** (physical P/W), MROM/MPKG mount path (monitor-only reset) **[R43: MROM done; MPKG deferred]**, T80s MC/TS/ALT export completion; FW: ODT skin + `S T K I O A W V ? U F ODT PHY LOG MB` | rest of R-01…R-09, R-12, R-19…R-22, R-24, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-Z80-image boot; panel *not* yet wired. **Bridge board (OQ-09) designed in parallel with P1a/P1b** |
+| **P1b — console complete** | Remaining P1 scope: `MD/AR/DR/PR` shared regs, `MAP0..3`, `MBX`, WDG×2, STEP assist (INSN/MCYCLE/TSTATE), reset stretcher, trampoline / `G aaaa`, **`ssp_mem_client`** (physical P/W), MROM/MPKG mount path (monitor-only reset) **[R43: MROM done; MPKG deferred]**, T80s MC/TS/ALT export completion; FW: ODT skin + `S T K I O A W V ? U F ODT PHY LOG MB` **[R47: `RESET CPU`/`RESET SYSTEM` landed, and the skin now accepts any unique command prefix (see §10.2b); `A W V K T MB` still unbuilt]** | rest of R-01…R-09, R-12, R-19…R-22, R-24, R-27, R-29…R-31 green in sim; real-terminal bring-up (halt/dump/examine/step/G) incl. no-Z80-image boot; panel *not* yet wired. **Bridge board (OQ-09) designed in parallel with P1a/P1b** |
 | **P2 — panel + assist** | `fp_capture`+`fp_engine` (+engine priority/log), new switch map live, Z80 sense/encoder port decode (§11.6, R-16/R-32), **D-23 UX package: BP-ARM/FREEZE/START-AT-A, PANEL_LOCK, per-page profile-7 lamp remap + chrome + page-ID (`SSP_PANEL_UX.md`), encoder hold/double-zero, `*` commentary**, **MMU map switch ops (D-24: tap-exam display + parked deposit macro, R-37…R-39)**, panel macros on the D-30 sequencer, profile-7 interlock (D-31, R-44), BP/`C` with **self-loop stop-before-execute** (D-25, R-41/OQ-23) (with panel BP-set), CTEV ring + `J`, traps, `S?/TR/H/P/SD`, `ssp_sd` READ (R-26 gate), MPKG auto-eval polish, ~~HDMI mirror (`CONN_ROUTE`)~~ [superseded by the R44 exclusive SSP terminal], serial XModem | R-10…R-18, R-26, R-28 green; **RESET/DEP/START ritual from switches alone, RV held in reset**; panel-op mirror visible in FW |
 | **P3 — polish** | T80 register write-back (retires trampoline), step-over, conditional BPs, `Y`, MMU writes from monitor, ~~exclusive HDMI+kbd console (D-19)~~ [**done early, R44**], vid-write revisit (OQ-11), HPS path eval, mailbox protocol hardening with HBIOS | D-02 retired; all prior green |
 
@@ -2896,3 +2958,100 @@ task toggling Z80 port `FF` every 500 ms (`delay-ms` on `SSP_TICK_US`, then `m-i
 the engine needs the Z80 parked) runs with terminal output staying smooth. On the model
 the toggles were 500.015 ms apart. Not made a smoke test (owner).
 
+
+R47 **Monitor `RESET CPU` / `RESET SYSTEM`, and command-prefix matching
+(2026-11-06).** *Owner request:* give the monitor the two resets the front panel
+will eventually get from switches, settling the command surface on the way; the
+panel itself stays out of scope (P2). *Owner rulings on the surface:* single-character
+commands are fine for routine operations; a **serious** command must be longer; prefix
+abbreviations are welcome — the minimum that names a command uniquely; ambiguous input
+must **show the candidates**; `?` remains the HELP alias. Design approved before
+building; **nothing committed until the owner has tested on hardware.**
+
+**Built.** *(Matching, §10.2b.)* `monitor.fs` takes the first blank-delimited token
+and matches it case-insensitively against a table of full names (`m-resolve`): an
+exact one-letter alias wins outright; otherwise a unique prefix of exactly one name
+runs it (`EX`, `PHY`, `LOGI`, `REG`, `MA`, `UN`); several matches print the
+candidates (`? RE: REGISTERS RESET`) and run nothing; a token that is no name prefix
+but is an argument command's letter glued straight to hex digits keeps the legacy form
+(`E100`, `DA00`, `S10`); anything else is a plain `?`. Codes are 1..13 for the
+routine set and **20 for `RESET` — code ≥ 20 is the serious class and must be spelled
+in full**, so `RES` prints `? RES: RESET`. `RESET` then requires a target word
+(`CPU`/`SYSTEM`, itself any prefix ⇒ `RESET C` / `RESET S`); bare `RESET` prints
+`? RESET: CPU SYSTEM`; a wrong target or trailing junk prints `?`. Never a default,
+no confirmation prompt — the two-word form is the safeguard (owner ruling).
+*(RESET CPU.)* `m-rst-cpu` reuses the proven `G 0000` path — reset vent plus
+`TRAMP_ADDR = 0`, so the injector supplies `JP $0000` over the first three fetches —
+needs the Z80 parked, **no RTL change**; `G aaaa`'s launch tail is factored into
+`m-launch` and shared. *(RESET SYSTEM.)* New `CTRL.SYS_RST_REQ` (bit 10) and
+`STATUS.SYS_RST` (bit 22, ungated read-back of the request). `ssp_bridge` widens
+`ctr`/`ctr_eff` to 11 bits (write lane 1 takes `w1[2:0]`) and drives
+`sys_rst_req = ctr_eff[SYS_RST_REQ]`, passed through `ssp_top`; `MrZ80.sv` ORs the
+new `ssp_sys_rst_req` net into the set condition of the existing self-clearing
+`reset_from_mount` latch (65,535 `clk_sys` ≈ 65 ms — the same stretch
+Reset-after-Mount uses), which feeds `reset_sys`: the T80, peripherals, MMU, SDRAM
+client FSM, front panel, terminals **and `ssp_top` itself** restart. `bin_loaded`,
+the mounts, the SDRAM controller and the SDRAM contents survive, so the loaded boot
+image restarts by itself. The latch is deliberately not cleared by the `reset_sys` it
+raises (that would clear itself); the bridge reset drops the request bit, so the
+request cannot re-fire. FW prints and drains, releases the console, sets the bit and
+— if the request is ignored — withdraws it after 100 ms and prints
+`SYSTEM RESET FAILED`.
+
+**Findings.** (i) `reset_sys` includes `ssp_top`, so the OSD **Reset** item was never
+"CPU only": the monitor goes down with a system reset and the escape has to be typed
+again — recorded against OQ-10 and corrected in the user docs. (ii) `hard_reset_req`
+depth (clear `bin_loaded`, re-init the SDRAM, hold the CPU until an image is picked)
+is a *deeper* reset; `RESET SYSTEM` implements `reset_sys` depth and OQ-10 stays open
+for what the panel lever should do. (iii) Listing candidates for an ambiguous prefix is
+a permanent contract, not cosmetics: `RE` today means `REGISTERS` or `RESET`, and a
+future `BREAKPOINT` would otherwise silently change what a two-letter word does.
+(iv) Two behaviour changes accepted against R46: `P`, `L`, `PH`, `LO`, `MA`,
+`REGISTERS` now execute (they used to answer `?`), and a letter followed by junk
+(`RXYZ`) now answers `?` instead of running the letter — smoke Part E's `?` count went
+4 → 3. (v) The FW's 100 ms withdrawal wait deafens the monitor; the p1a RX FIFO holds
+128 bytes, so Part J4 paces with `+QUIET=5500000` or the input overruns silently.
+
+**Verification.** Full regression green: `regmap-check`, `sync`, `seam-check`,
+`lint-ssp`, `p1a`, `tramp-p1a`, `uart-fifo`, `tramp`, `mem-client`, `integ-park`,
+`integ-mux`, `integ-core`, `cycle-golden`, `engine-golden`, `smoke-p1a` (PASS, 189
+checks), `vdu`, `terminal`, `dl-path`, `fw-rom-check`; plus `make -C ssp/fw check`
+(800 lines compiled under qemu) and `tools/build.sh synth` (0 errors; the 112
+warnings are all the pre-existing `18010` power-up class, none about the new seam). `check_seam.py` gained
+four assertions — `sys_rst_req` is a real net, it is a set-condition of
+`reset_from_mount`, `reset_sys` includes `reset_from_mount`, and
+`ssp_top.rst_n == ~reset_sys` — each killed by a top-level mutant of `MrZ80.sv`.
+Smoke Parts **J** (matcher: 25 words, ambiguity prints, nothing launches —
+`tramp_done = 0`, `sysrst = 0`), **J2** (`RESET CPU`: two vents, `CTRL = 133`,
+injector armed with target `0000`, guest back at the boot vector, `sysrst = 0`),
+**J3** (`RESET SYSTEM`: `CTRL = 522`, two latch events, four banners — the monitor
+re-enters after each reset — and no `FAILED`), **J4** (ignored request: `FAILED` after
+100 ms, bit withdrawn, monitor still usable) and **J5** (`CTRL` bit 10 ↔ `STATUS`
+bit 22, driven from raw Forth). The resolution table was additionally checked
+byte-for-byte against the real Mecrisp kernel under qemu. **Mutation:** 14 mutants,
+13 killed (`serious`, `baredefault`, `noend`, `noalias`, `nocands`, `noglue`,
+`cpuaddr`, `nowithdraw`, `nofold`, `lane1`, `sysout0`, `status0`, and `forgetS` once
+Part J was extended to check that another command forgets the bare-CR `S` repeat).
+**One survivor:** `ungated` (`sys_rst_req = ctr[...]` instead of `ctr_eff[...]`) is
+not observable at the console, because the RV is the only CTRL writer on this core; the
+sovereignty gate is kept as defence in depth — the same status as R39's `int_hold`
+survivor.
+
+**Checklist put to the owner.** `RESET C` and `RESET CPU` restart the Z80 at `$0000` with
+the MMU map, ports and memory as they were (a running program restarts; `R` before and
+after differs only in PC/state); `RESET SYSTEM` restarts everything and the boot image
+runs again by itself, after which `^]` re-enters the monitor; `RESET` →
+`? RESET: CPU SYSTEM`; `RES` → `? RES: RESET`; `RE` → `? RE: REGISTERS RESET`;
+prefixes `EX`/`PHY`/`LOGI`/`REG`/`MA`/`ST` work, glued `E100` still works, `RXYZ`
+and `B` answer `?`, and `P`/`L` now execute. `RESET SYSTEM` against an R46 bitstream
+must print `SYSTEM RESET FAILED` (bit 10 does not exist there) rather than hang.
+Panel equivalents (P2): RESET CPU drives the vent so it works with a dead RV; RESET
+SYSTEM ORs into the same `sys_rst_req`; neither holds BUSRQ across the vent (§7.3).
+
+R47 addendum: owner-checked on hardware (2026-11-06). The checklist above passed on
+the bench with the new bitstream and the regenerated factory ROM -- `RESET CPU`
+restarts the Z80 at the reset vector with the MMU map, I/O ports and memory
+untouched; `RESET SYSTEM` takes the whole core down for ~65 ms and the loaded boot
+image restarts by itself, the monitor returning on the next escape; the refusals
+print the candidates or `?` and nothing fires; the prefix and glued forms behave as
+§10.2b specifies. Commit follows the owner's approval; still not pushed.

@@ -1,9 +1,8 @@
 # SSP_STATUS — state, plans and hand-off for the System Support Processor
 
-Updated: **2026-11-02** (R46 multitasker) · Branch `r24-p1b`, merged into `main` locally (not
-pushed) after R43: R39–R40, R41 (monitor `U`, shared Z-80 disassembler), R42
-(`S` shows the next instruction) and R43 (128 KiB MROM + OSD ROM mount); R44 (SSP
-video console, OSD entry, RomWBW second console) committed locally · Phase **P1b**; M4 (single-step) and M3 (physical
+Updated: **2026-11-06** (R47 monitor `RESET CPU` / `RESET SYSTEM` + command-prefix
+matching), **owner-checked on hardware and committed** · Everything through R46 is committed on `main` locally (R39–R46, merged
+from `r24-p1b`; **not pushed**), and so is R47 (still **not pushed**) · Phase **P1b**; M4 (single-step) and M3 (physical
 memory) done in simulation and **reported working on hardware** (owner,
 2026-10-31); R43 owner-checked on hardware (2026-11-01).
 
@@ -47,6 +46,7 @@ Planning documents are not kept outside `doc/`.
 | R44 video console + OSD entry; terminal + ACIA work for RomWBW | **Done**, owner-checked on hardware (2026-11-02). Simulation: `vdu`, `terminal` (14 mutants killed); Quartus build reviewed (§17 R44) |
 | R46 cooperative multitasker (vendored Mecrisp `multitask.txt`) | **Done**, owner-checked on hardware (2026-11-02): `F`, `task:`, `multitask` echo fine, and a 500 ms port-`FF` blink task leaves terminal output smooth. Simulation: `smoke-p1a` Part I; qemu. The watchdog task is next (§4.2) |
 | R45 monitor colours; LF-scroll fix; build tooling | LF-scroll fix **done, on hardware** (part of the owner's R44 test, 2026-11-02). Monitor colours **done**, owner-checked on hardware (2026-11-02): operator input bright green, monitor output bright blue (`col-*` in `monitor.fs`). `make -C ssp/fw` builds the image and factory ROM |
+| R47 monitor `RESET CPU` / `RESET SYSTEM`; command-prefix matching | **Done**, **owner-checked on hardware (2026-11-06)** — the §4.4 checklist passed. `RESET CPU` reuses the `G 0` vent (no new RTL); `RESET SYSTEM` is new: `CTRL.SYS_RST_REQ` (bit 10) → `ssp_top.sys_rst_req` → the `reset_from_mount` stretch in `MrZ80.sv` (`STATUS.SYS_RST`, bit 22, reads it back). Every command now also answers to a unique prefix; ambiguous words list their candidates. Simulation: `smoke-p1a` Parts J–J5 (50 checks), `seam-check` +4 assertions, 13 of 14 mutants killed (§17 R47) |
 
 ### 1.2 What is on hardware
 
@@ -71,16 +71,33 @@ simulation only). R44 Quartus build (reviewed): 14,191 ALMs (34 %), 345/553
 M10K (62 %), 49 % of block-RAM bits; no negative slack; clk_sys setup slack
 2.2 ns (R43 fits ranged 1.3-2.5 ns: fit-to-fit variation, watch it).
 
+**R47 (resets, prefix matching) is owner-checked on hardware (2026-11-06):** the
+§4.4 checklist passed — `RESET CPU` restarts the Z80 with the MMU map, ports and
+memory kept, `RESET SYSTEM` restarts the whole core with the loaded image
+restarting by itself, and the refusals (`RESET`, `RES`, `RE`, `RXYZ`, `B`, junk
+after a target) and the prefix forms all behaved as specified. Rationale, the
+panel contract and the round's log: `SSP_DESIGN.md` §7.3, §10.2b, §17 R47. The
+factory ROM `ssp/fw/forth_rom.mif` has been regenerated for it. `RESET CPU` needs
+only that image to be mounted (it reuses RTL already in the field); `RESET SYSTEM`
+needs the new bitstream — in the R46 RTL `CTRL` is 10 bits wide, so a write of
+bit 10 is silently ignored and the monitor will print `SYSTEM RESET FAILED`.
+R47 `tools/build.sh synth`: successful, 0 errors, 112 warnings — all the pre-existing
+`18010` power-up class from `jt49`/front-panel registers; nothing about the new
+`sys_rst_req` seam. Pre-fit estimate 16,153 ALMs (compare post-fit figures only
+with post-fit runs).
+
 ### 1.3 Repository and build facts
 
-- Register map: `ssp/regs/ssp_regs.csv` is canonical (72 regs / 140 fields
-  at R39). `make -C sim regmap regmap-check` regenerates and drift-checks.
+- Register map: `ssp/regs/ssp_regs.csv` is canonical (72 regs / 142 fields
+  at R47). `make -C sim regmap regmap-check` regenerates and drift-checks.
 - RTL: `ssp/rtl/` (`ssp_top.v`, `ssp_bridge.v`, `ssp_uart.v`, `z80_bus_mux.vhd`,
   `ssp_tramp.vhd`, `ssp_sdp_ram.vhd`, generated `ssp_regs.vh`/`_pkg.vhd`),
   integrated in `MicrocomputerZ80CPM.vhd` and `MrZ80.sv`; T80 park gate in
   `Components/Z80/T80.vhd` (R25).
 - Firmware: Mecrisp-Quintus port in `ssp/fw/`; monitor in
-  `ssp/fw/apps/monitor.fs` (`E D G R I O MAP PHY LOG S U F ?`). monitor.fs may
+  `ssp/fw/apps/monitor.fs` (`E D G R I O MAP PHY LOG S U F ?`, plus
+  `RESET CPU` / `RESET SYSTEM` and unique-prefix matching since R47).
+  monitor.fs may
   contain `\ @include <repo-relative file>` lines, expanded by
   `sim/ssp/dictbuild.sh` (used for the shared disassembler core).
 - Verification: Verilator lanes in `sim/ssp/`, GHDL lanes in `sim/`
@@ -119,6 +136,22 @@ M10K (62 %), 49 % of block-RAM bits; no negative slack; clk_sys setup slack
 - Physical examine/deposit works on the SDRAM window only (§3); the monitor
   UX for it (modal PHY/LOG vs per-command verbs) is deliberately still open
   (OQ-24).
+- **R47 `RESET SYSTEM` is proven against a behavioural twin of the reset latch,
+  not the real one.** `sim/ssp/p1a_sim_top.v` models the `reset_from_mount`
+  stretch; `sim/check_seam.py` guards statically that the real net sets that
+  latch, that `reset_sys` contains it and that `ssp_top.rst_n = ~reset_sys`.
+  The ~65 ms stretch on the board (65,535 `clk_sys`) and the auto-restart of the
+  loaded image are hardware-only until the owner runs them.
+- **R47 `RESET SYSTEM`'s failure path deafens the monitor for 100 ms** (a
+  `TICK_US` busy wait, because there is no timer/IRQ for it). On the p1a lane the
+  128-byte RX FIFO overruns if the harness keeps typing, so Part J4 paces with
+  `+QUIET=5500000`. Real-world effect: an ignored request costs 100 ms of console.
+- **R47 surviving mutant:** `ungated` (`sys_rst_req = ctr[...]` instead of
+  `ctr_eff[...]`) is not caught by any console-level test, because the RV is the
+  only CTRL writer on this core, so the sovereignty gate (`ssp_active &&
+  rv_ctrl_ok`) has no observable effect from the monitor. The gate is kept as
+  defence in depth — the same reasoning and the same status as R39's `int_hold`
+  survivor.
 
 ### 1.5 Baseline: what exists and where
 
@@ -238,6 +271,11 @@ Owner priorities from P1a first light (R35), with status:
 - **(g)** Monitor colours → **done in simulation** (R45): operator input bright
   green (`ESC[1;32m`), everything the monitor prints bright blue (`ESC[1;34m`),
   `ESC[0m` before the console is handed back.
+- **(h)** Reset controls from the monitor → **built, simulation-green (R47)**:
+  `RESET CPU` (Z80 only, no new RTL) and `RESET SYSTEM` (whole core, ~65 ms,
+  via `CTRL.SYS_RST_REQ`), plus unique-prefix matching for every command.
+  Awaiting the owner's hardware check. The front-panel F6 pair gets the same two
+  functions later (P2) — contract in `SSP_DESIGN.md` §7.3, switch map §11.2.
 - **Shelved (owner, 2026-11-02): T-state / machine-cycle stepping** and the T80
   MC/TS/ALT export completion it needs (`freeze_any`). Deferred to an
   unscheduled later time; `S` stays instruction-granular.
@@ -338,6 +376,42 @@ physically, `S` versus watch hits, a hit during a step or `G aaaa`. Later: panel
 breakpoint gestures (OQ-18, P2), step-over and conditional breakpoints (P3).
 **Order:** the multitasker (§4.2) first; breakpoints are not yet scheduled against it.
 
+### 4.4 Monitor resets (R47): built, and owner-checked on hardware (2026-11-06)
+
+`RESET CPU` (Z80 only, reuses the `G 0` vent — no new RTL) and `RESET SYSTEM`
+(`CTRL.SYS_RST_REQ` → `MrZ80.sv`'s `reset_from_mount` stretch ≈ 65 ms, the OSD
+**Reset** depth) are built, along with unique-prefix matching for every command
+(`SSP_DESIGN.md` §10.2b, log §17 R47). Simulation is green and mutation-tested,
+and **the owner ran the checklist below on hardware on 2026-11-06 with the new
+bitstream and the regenerated ROM: passed.**
+
+The checklist (kept as the record of what was verified; needs the new bitstream
+*and* the regenerated `forth_rom.mif`, or mount `ssp/fw/build/mrz80-ssp.mrz` for
+the `RESET CPU` half):
+
+1. Boot an image, `^]` to the monitor, `R`: PC in the running program.
+2. `RESET C` → `CPU RESET`; the program restarts from `$0000`; `R` shows PC back at
+   the boot code; MMU map still there (`MAP`), ports still answer (`I`), memory
+   contents unchanged. `^]` gets the monitor back.
+3. `RESET CPU` again, same result.
+4. `RESET SYSTEM` → `SYSTEM RESET`, output stops ~65 ms, the boot image runs again on
+   its own (no re-mount); `^]` re-enters the monitor; `MAP`/`I`/`E` still work.
+   Expect the front-panel profile to be back at its default (the panel RAM
+   re-initialises on any reset, as it does after OSD **Reset**), and the image's
+   own start-up clean after the 65 ms stretch.
+5. Refusals: `RESET` → `? RESET: CPU SYSTEM`; `RES` → `? RES: RESET`;
+   `RE` → `? RE: REGISTERS RESET`; `RESET X`, `RESET CPUX`, `RESET S 5`, `RXYZ`,
+   `B` → `?`; nothing restarts.
+6. Prefixes: `EX 100 4`, `exam`, `DEP`, `PHy`, `LOGI`, `REG`, `MA`, `ST` (+ bare CR
+   repeats `S`, but not after another command), glued `E100 4`. `P` and `L` now
+   execute (they used to be `?`) — expected, R47.
+7. Against an **R46** bitstream, `RESET SYSTEM` must print `SYSTEM RESET FAILED`
+   after ~100 ms and stay usable (bit 10 does not exist there).
+
+**Not built (deliberate):** no confirmation prompt, no `RESET` default target, no
+panel switches (P2 — contract in §7.3), no `hard_reset_req`-depth reset (OQ-10), no
+`RESET CPU` variant that keeps the Z80 parked afterwards.
+
 ---
 
 ## 5. Owner questions outstanding
@@ -346,12 +420,19 @@ breakpoint gestures (OQ-18, P2), step-over and conditional breakpoints (P3).
 |---|---|---|
 | — | **Deferred (2026-11-02):** `WDG_PARK` expiry semantics. Reshaped around a Forth multitasker with a watchdog task (§4.1, §4.2) | the multitasker work |
 | — | **Deferred (2026-11-02):** `MPKG`. Pending need (§4.1) | a user who needs it |
-| OQ-24 | Physical-access command surface: modal `PHY`/`LOG` (current default) vs explicit physical verbs | M3 FW surface (no RTL impact) |
+| OQ-24 | Physical-access command surface: modal `PHY`/`LOG` (current default) vs explicit physical verbs. (R47 landed the word names `PHYSICAL`/`LOGICAL` and prefix matching; the modal choice is unchanged) | M3 FW surface (no RTL impact) |
 | — | `U` UX (R41): default count $10 and a pointer shared with `E`/`D` (a bare `U` continues after the last `E`/`D`/`U`) -- keep, or give `U` its own pointer? | nothing (FW only) |
-| OQ-10 | Exact "Reset System" scope | P1b |
+| OQ-10 | Exact "Reset System" scope. R47 built the OSD **Reset** depth (`reset_sys`: Z80 + peripherals + MMU + panel + terminals + the SSP; the loaded boot image and SDRAM contents survive). `hard_reset_req` depth (also clear `bin_loaded`, re-init the SDRAM, hold the CPU until an image is chosen) is **not** offered. Which one does the front-panel *Reset System* lever want? | P2 panel (the monitor already ships `reset_sys` depth) |
 | OQ-18 | Board-freeze UX values | P2 |
 
-Settled this period (R44): D-19 built as an exclusive second terminal (not a
+Settled this period (R47): routine commands keep their one letter *and* answer to
+any unique case-insensitive prefix of their name; an ambiguous prefix prints the
+candidates instead of guessing; `?` keeps its HELP alias; a **serious** command
+(code ≥ 20 — the resets) must be spelled in full, `RESET` always takes a target
+word, never defaults, and gets no confirmation prompt (the two-word form is the
+safeguard); `RESET SYSTEM` is `reset_sys` depth (the OSD **Reset** item), which
+leaves the panel's choice of depth open (OQ-10). Earlier (R44): D-19 built as an
+exclusive second terminal (not a
 mirror, not engine I/O to the Z80's terminal); OSD trigger + Serial/Video
 option; serial escape always routes serial; RomWBW uses the stock ACIA driver
 with both devices emulating the 6850 master reset; keyboard Esc = 1B and
@@ -469,7 +550,7 @@ make -C sim p1a-vcd               # traced twin, +VCD -> sim/ssp/p1a.vcd
 make -C sim tramp                 # G aaaa: ssp_tramp vs the REAL T80 (GHDL, 176 checks)
 make -C sim tramp-p1a             # G aaaa: FW-side handshake on the p1a lane
 make -C sim uart-fifo             # ssp_uart RX FIFO unit bench, depths 8 and 128 (iverilog)
-make -C sim dict-rtl smoke-p1a    # monitor dictionary build (~3.5 min) + operator-session smoke (~4.5 min)
+make -C sim dict-rtl smoke-p1a    # monitor dictionary build (~3.5 min) + operator-session smoke (~6 min, Parts A-J: session, transparency, escape, park, I/O+MAP+PHY, S, physical E/D, U, multitasker, R47 matcher + RESET CPU/SYSTEM)
 make -C sim dl-path               # OSD ROM mount (R43, R-29), ~10 s
 make -C sim vdu                   # SSP video console + OSD entry (R44), ~10 s
 make -C sim terminal              # video terminal + ssp_vdu + ACIA master reset (GHDL, R44), ~5 s
@@ -501,8 +582,10 @@ make install                      # scp rbf to host 'mister'
 `+ECHO=0/1` `+PAUSE=` (length of an in-band `0x01` input pause) `+VCD` (traced build only); env `TXTRACE=1` stamps each TX
 byte. RTL (`p1a_sim_top.v`): `+ROM=` `+DUMP=` `+OSD_OK=0/1` `+OM=0/1`
 `+WAIT` (engine wait-state injection) `+RVRST` `+RVRST_AT=` `+NOGUEST`
-`+RXGAP=` `+DBG` (event traces on stdout: RX bytes, escape, ownership,
-FIFO push/pop, TXDATA writes). Exit codes: 0 ok, 3 nothing transmitted,
+`+NOSYSRST` (ignore `ssp_top.sys_rst_req`, so the monitor takes its
+`SYSTEM RESET FAILED` path; R47) `+RXGAP=` `+DBG` (event traces on stdout: RX bytes, escape, ownership,
+FIFO push/pop, TXDATA writes). The `[p1a] done:` line counts whole-core resets as
+`sysrst=n` (R47). Exit codes: 0 ok, 3 nothing transmitted,
 1 bus/ROM-illegal errors.
 
 ### 7.2 Simulation infrastructure facts
@@ -527,6 +610,16 @@ FIFO push/pop, TXDATA writes). Exit codes: 0 ok, 3 nothing transmitted,
 - The p1a BFM is **not** cycle-exact T80: it accepts FREEZE only at its own
   instruction boundaries. The real gate is proven only by the GHDL
   integration benches (`integ-park`, `integ-mux`, `integ-core`).
+- **p1a line pacing (R47).** `+LINEWAIT=2` releases the next input line only
+  after TX has been quiet for `+QUIET=n` cycles. A command that busy-waits —
+  `RESET SYSTEM`'s 100 ms withdrawal timer — therefore needs `+QUIET` bigger than
+  the wait (Part J4 uses `+QUIET=5500000`), or the 128-byte RX FIFO overruns and
+  later lines vanish without an error. First occurrence of a plusarg wins.
+- **p1a whole-core reset twin (R47).** `p1a_sim_top.v` models `MrZ80.sv`'s
+  self-clearing `reset_from_mount` stretch, drives `ssp_top` and the BFM reset
+  from it and counts the events (`sysrst=n` on the `[p1a] done:` line);
+  `+NOSYSRST` makes it ignore the request. The real top-level wiring is guarded
+  statically by `sim/check_seam.py`, because this lane has no `MrZ80.sv`.
 
 ---
 

@@ -381,7 +381,16 @@ The command set is deliberately tiny and classic:
 | `S [n]` | **Single-step** — one line per instruction: `PC`, its bytes, the registers after the step and the **disassembled next instruction**; CR repeats; any key breaks out. `HALTED` when the CPU halts. |
 | `U [aaaa [n]]` | **Unassemble** — address, instruction bytes and Z-80 mnemonic, `n` instructions (default 16; a bare `U` carries on); `JR`/`DJNZ` show the target address; understands `F_NEXT`/`PUSHIX`/`POPIX`; any key breaks out. The decoder is the same source CamelFORTH uses (`forth/disasm/`) |
 | `PHY` / `LOG` | Switch examine/deposit between the **28-bit physical** SDRAM view (up to 7-digit addresses, `0000000`–`7FFFFFF`) and the Z80's logical, MMU-translated view |
+| `RESET CPU` | **Reset the Z80 only** — the CPU's own `/RESET` pin: it restarts at `$0000` with the MMU map, peripherals and memory exactly as they were. Needs the CPU parked |
+| `RESET SYSTEM` | **Reset the whole core** (~65 ms), the monitor too — the same depth as the OSD **Reset** item. The boot image and SDRAM contents survive, so the loaded image restarts, and the front-panel profile goes back to its default; type the escape again to get the monitor back |
 | `F` | Drop out of the ODT skin into the **raw Mecrisp Forth** that the monitor is written in |
+
+Routine commands are one letter, and every command also answers to any unique
+prefix of its name (`EX`, `STEP`, `PHYSICAL`); an ambiguous prefix lists the
+candidates (`? RE: REGISTERS RESET`) instead of guessing. The two resets are
+deliberately wordy — `RESET` must be spelled out, a target word is always
+required (`RESET C` or `RESET S` at the shortest), and a typo gets a `?`, never
+a reset.
 
 That last one is the trick the PDP-11 never had: the monitor *is* Forth. The
 ODT command layer is a friendly skin over a live, extensible RISC-V Forth
@@ -578,14 +587,18 @@ commands — `I`/`O`, `MAP`, single-step `S`, the `U` unassembler (and the
 mnemonic on each `S` line), and physical
 examine/deposit under `PHY` — each passed a simulation campaign (including
 mutation testing, and checks against the real T80 and the real SDRAM fabric)
-and then a check on the bench. It's a live development, and §7 says how to
+and then a check on the bench. Newest of all, the two reset commands —
+`RESET CPU` (the Z80 on its own) and `RESET SYSTEM` (the whole core, monitor
+included) — together with the rule that every command answers to any unique prefix
+of its name, are built, went through a full simulation campaign,
+and are **now confirmed on the bench (owner, 2026-11-06)**. It's a live development, and §7 says how to
 follow it.
 
 ---
 
 ## 7. Status at a glance
 
-*As of 2026-11-02.*
+*As of 2026-11-06.*
 
 | Area | State |
 |------|-------|
@@ -602,6 +615,7 @@ follow it.
 | SSP monitor: escape/park/E/D/G/R | Proven on hardware |
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
 | SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | Working on hardware (owner, 2026-11-01 and 2026-11-02) |
+| SSP: `RESET CPU` / `RESET SYSTEM`, and unique-prefix command matching | Working on hardware (owner, 2026-11-06); simulation-green 189-check smoke + mutation campaign behind it |
 | SSP: breakpoints, BRAM-page physical access, panel integration | Roadmap |
 | SSP: T-state/machine-cycle stepping | Shelved: no schedule |
 | SSP: monitor ROM (128 KB) loaded from the OSD, no FPGA rebuild; words compiled into it survive Reset SSP | Working on hardware (owner, 2026-11-01). Forth source packs from the OSD: not planned for now |

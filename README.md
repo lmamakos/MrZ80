@@ -270,7 +270,15 @@ PC=00E9 SP=FFFE AF=0044 BC=0000 DE=0000 HL=00C3
 | `I aaaa` / `O aaaa dd` | Read / write a Z80 I/O port |
 | `MAP` | The four MMU frames and the physical pages they map |
 | `PHY` / `LOG` | Examine/deposit by **28-bit physical** SDRAM address (`0000000`–`7FFFFFF`, bypassing the MMU) or by the Z80's logical address |
+| `RESET CPU` | Reset the **Z80 only** (the CPU's own `/RESET`: it restarts at `$0000`; the MMU map, peripherals and memory keep their state) |
+| `RESET SYSTEM` | Reset the **whole core** for ~65 ms, monitor included (the same depth as the OSD **Reset** item): peripherals, MMU and the Z80 start over, and the front-panel profile returns to its default; the loaded boot image and the SDRAM contents survive, so the boot image restarts. Type `^]` again afterwards to re-enter the monitor |
 | `F` | Leave to the raw Forth the monitor is written in |
+
+The one-letter forms above are the short names; every command also answers to
+any unique prefix of its full name (`EXAMINE`, `STEP`, `PHYSICAL`, ...). An
+ambiguous word lists the candidates instead of guessing. The two `RESET`
+commands are deliberately long: `RESET` must be spelled out and always takes a
+target (`RESET C` / `RESET S` are the shortest forms), and there is no default.
 
 Physical access covers the SDRAM only; the block-RAM page at `0x8000000` is
 reached through the logical view. The OSD also has **Reset SSP** to restart the

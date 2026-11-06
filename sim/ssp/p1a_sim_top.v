@@ -25,6 +25,7 @@
 //            +RVRST       OSD RV-reset hatch exercise: pulse rv_rst_n low
 //                         for ~1 ms at +RVRST_AT cycles (default 3_000_000)
 //            +NOGUEST     hold the guest in reset (SSP-alone debug)
+//            +NOSYSRST    R47: ignore sys_rst_req (the RESET SYSTEM failure path)
 //            +PHDELAY=n   M3: stretch every physical-client op by n clocks
 //
 // Console pins are electrical: snac_rxd is serialized at the real O9B
@@ -48,7 +49,8 @@ module ssp_p1a_top (
     output wire [31:0] dbg_ph_count,        // M3: physical ops completed ok
     output wire [31:0] dbg_ph_errs,         // M3: physical ops answered with ph_err
     output wire [31:0] dbg_ph_addr,         // last ok physical op
-    output wire [31:0] dbg_ph_data
+    output wire [31:0] dbg_ph_data,
+    output wire [31:0] dbg_sysrst_count     // R47: whole-core resets requested by the SSP
 );
 
     import "DPI-C" function void tb_putc(int c);
@@ -126,8 +128,38 @@ module ssp_p1a_top (
     wire [7:0]  guest_rx_last, io_wr_port, io_wr_data;
     wire        parked_dbg;
 
+    // ---- R47: behavioural twin of the MrZ80.sv reset_from_mount latch --------
+    // ssp_top.sys_rst_req (monitor RESET SYSTEM) sets the same self-clearing
+    // 65535-clock stretch Reset-after-Mount uses; it holds the SSP (ssp_top
+    // rst_n = ~reset_sys) and the Z80 BFM in reset.  The latch itself is NOT
+    // cleared by the stretch -- only by the board-level rst_n -- exactly as in
+    // MrZ80.sv (sim/check_seam.py guards the real wiring).  The harness's own
+    // book-keeping and the mock SDRAM keep using the raw rst_n: reset_sys does
+    // not re-initialise the SDRAM.
+    wire        sys_rst_req;
+    wire        nosysrst = $test$plusargs("NOSYSRST");   // request ignored (failure path)
+    reg         sysrst_stretch = 1'b0;
+    reg  [15:0] sysrst_cnt = 16'd0;
+    reg  [31:0] sysrst_events = 32'd0;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            sysrst_stretch <= 1'b0;  sysrst_cnt <= 16'd0;
+        end else if (sys_rst_req && !nosysrst) begin
+            if (!sysrst_stretch) begin
+                sysrst_events <= sysrst_events + 32'd1;
+                if ($test$plusargs("DBG")) $display("[p1a-sysrst @%0d] RESET SYSTEM requested", tb_cycle);
+            end
+            sysrst_stretch <= 1'b1;  sysrst_cnt <= 16'd0;
+        end else if (sysrst_stretch) begin
+            if (sysrst_cnt < 16'hffff) sysrst_cnt <= sysrst_cnt + 16'd1;
+            else sysrst_stretch <= 1'b0;
+        end
+    end
+    wire core_rst_n = rst_n & ~sysrst_stretch;
+    assign dbg_sysrst_count = sysrst_events;
+
     // guest sees its own reset stretched like the CPM stretcher
-    wire guest_rst_n = rst_n & ~no_guest;
+    wire guest_rst_n = core_rst_n & ~no_guest;
 
     // Guest ACIA TX wire: idle-high (no ACIA TX model in P1a; the BFM only
     // models the guest RX byte sink).  Without this the mux would expose an
@@ -325,7 +357,7 @@ module ssp_p1a_top (
     // R39: a 1M-clock (20 ms) step watchdog instead of 20M, so the timeout path
     // runs in a short simulation (a real step is ~30 clocks)
     ssp_top #(.STEP_TIMEOUT_T(25'd1_000_000)) u_dut (
-        .clk (clk), .rst_n (rst_n),
+        .clk (clk), .rst_n (core_rst_n),
         .osd_ok (osd_ok), .osd_esc_en (om),
         .osd_enter (osd_enter), .osd_vid (osd_vid),
         .esc_disable (1'b0), .panel_stop (1'b0),
@@ -338,6 +370,7 @@ module ssp_p1a_top (
         .z_busrq_n (z_busrq_n), .z_reset_n (z_reset_n),
         .z_wait_n (z_wait_n), .z_cen_gate (z_cen_gate),
         .freeze_any (freeze_any), .int_hold (/*R39: no CPM INT gate in P1a*/),
+        .sys_rst_req (sys_rst_req),
         .tramp_arm (tramp_arm), .tramp_target (tramp_target),
         .tramp_done (tramp_done),
         .eng_own (eng_own), .eng_addr (eng_addr), .eng_dout (eng_dout),
@@ -594,7 +627,7 @@ module ssp_p1a_top (
         if (sim_dbg && rst_n) begin
             if (u_dut.u_bridge.wr_fire && u_dut.u_bridge.widx == 10'h001)
                 $display("[p1a-ctrl @%0d] CTRL <= %03x (mask %b)", tb_cycle,
-                         u_dut.u_bridge.mem_wdata[9:0], u_dut.u_bridge.mem_wmask);
+                         u_dut.u_bridge.mem_wdata[10:0], u_dut.u_bridge.mem_wmask);
             if (u_dut.u_bridge.wr_fire && u_dut.u_bridge.widx == 10'h002)
                 $display("[p1a-ctrl @%0d] TRAMP_ADDR <= %04x", tb_cycle,
                          u_dut.u_bridge.mem_wdata[15:0]);

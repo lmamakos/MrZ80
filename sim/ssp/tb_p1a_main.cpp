@@ -244,7 +244,7 @@ int main(int argc, char **argv) {
 
     fprintf(stderr,
             "[p1a] done: cycles=%lld tx=%ld rx=%ld rom_illegal=%u bus_errs=%u"
-            " guest_rx=%u freeze_acc=%u io_wr=%u(%02x,%02x) ph=%u(%07x,%02x) phe=%u\n",
+            " guest_rx=%u freeze_acc=%u io_wr=%u(%02x,%02x) ph=%u(%07x,%02x) phe=%u sysrst=%u\n",
             g_cycle, g_tx_bytes, g_rx_bytes,
             (unsigned)g_top->dbg_rom_illegal_writes,
             (unsigned)g_top->dbg_bus_errs,
@@ -252,7 +252,8 @@ int main(int argc, char **argv) {
             (unsigned)g_top->dbg_io_wr_count, (unsigned)g_top->dbg_io_wr_port,
             (unsigned)g_top->dbg_io_wr_data,
             (unsigned)g_top->dbg_ph_count, (unsigned)g_top->dbg_ph_addr,
-            (unsigned)g_top->dbg_ph_data, (unsigned)g_top->dbg_ph_errs);
+            (unsigned)g_top->dbg_ph_data, (unsigned)g_top->dbg_ph_errs,
+            (unsigned)g_top->dbg_sysrst_count);
 
     if (g_tx_bytes == 0) { fprintf(stderr, "[p1a] no console output -- boot dead\n"); rc = 3; }
     if (g_top->dbg_bus_errs) rc = rc ? rc : 1;
