@@ -1069,6 +1069,14 @@ wire        ssp_ph_req, ssp_ph_we, ssp_ph_done, ssp_ph_err;
 wire [27:0] ssp_ph_addr;
 wire [7:0]  ssp_ph_wdata, ssp_ph_rdata;
 
+// R48: Cromemco Dazzler page (doc/DAZZLER.md §17). The core renders the
+// snooped picture window as 8-bit RGB; the page mux below the
+// video_cleaner ranks SSP monitor > Dazzler > terminal.
+wire        dz_show;
+wire  [7:0] dz_r, dz_g, dz_b;
+// video_cleaner's colour outputs (muxed with the Dazzler page below)
+wire  [7:0] clean_r, clean_g, clean_b;
+
 MicrocomputerZ80CPM MicrocomputerZ80CPM
 (
     .N_RESET(~reset),
@@ -1167,7 +1175,11 @@ MicrocomputerZ80CPM MicrocomputerZ80CPM
     .ssp_ph_err         (ssp_ph_err),
     .ssp_ph_rdata       (ssp_ph_rdata),
     .ssp_t80_reg        (ssp_t80_reg),
-    .ssp_vdu_own        (ssp_vdu_show)          // R44: keys to the SSP terminal
+    .ssp_vdu_own        (ssp_vdu_show),         // R44: keys to the SSP terminal
+    .dz_show            (dz_show),              // R48: Dazzler page
+    .dz_r               (dz_r),
+    .dz_g               (dz_g),
+    .dz_b               (dz_b)
 );
 
 //////////////  SSP (System Support Processor)  ////////////////
@@ -1313,13 +1325,24 @@ video_cleaner video_cleaner
     .HBlank(hblank),
     .VBlank(vblank),
 
-    .VGA_R(VGA_R),
-    .VGA_G(VGA_G),
-    .VGA_B(VGA_B),
+    .VGA_R(clean_r),
+    .VGA_G(clean_g),
+    .VGA_B(clean_b),
     .VGA_VS(VGA_VS),
     .VGA_HS(VGA_HS),
     .VGA_DE(VGA_DE)
 );
+
+// R48: alternate video-page mux (doc/DAZZLER.md §17). The Dazzler page
+// is drawn only inside its own box (black elsewhere), so switching pages
+// never disturbs sync or DE -- both pages are cleaner-synchronised and
+// phase-locked by construction (identical never-reset counters). The SSP
+// monitor outranks the Dazzler page; the terminal is the base page.
+wire dazzle_show = dz_show & ~ssp_vdu_show;
+
+assign VGA_R = dazzle_show ? dz_r : clean_r;
+assign VGA_G = dazzle_show ? dz_g : clean_g;
+assign VGA_B = dazzle_show ? dz_b : clean_b;
 
 
 endmodule
