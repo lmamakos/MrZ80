@@ -18,6 +18,7 @@ needs.
 | Service monitor | — | A second, independent processor inside the same FPGA image, with its own Forth monitor. It can stop the Z-80 at an instruction boundary, single-step it, and read and write its memory while it is stopped. |
 | Memory | `$B0-$BF` | 64 KB of on-chip RAM plus 128 MB of board SDRAM. The CPU sees 64 KB at a time as four 16 KB frames, each mapped to any page of the big space; `$B0-$BF` sets the mapping and also gives a direct window onto any physical byte. |
 | Text screen and keyboard | `$80-$81` | 80 × 25 colour text on HDMI, with the USB keyboard as its input. |
+| Colour graphics (TV Dazzler) | `$0E-$0F` | Cromemco Dazzler: up to 128 × 128 colour cells drawn over the text screen from a memory window; the picture is captured by watching the CPU's writes, so no DMA and no slow-down. See `doc/DAZZLER.md`. |
 | Sound | `$50/$51`, `$68/$60` | Two 3-channel PSGs (six channels total) mixed to stereo. Each pair of ports is select/data for one chip. |
 | Serial port | `$82-$83` | Console serial, baud set by software. |
 | Real-time clock | `$70-$71` | Clock and calendar; the time of day comes from the MiSTer board. |
@@ -45,6 +46,7 @@ window matches and `IORQ` is active; anything else reads `$FF`.
 
 | Ports | Device | Notes |
 |-------|--------|-------|
+| `$0E`, `$0F` | Dazzler control / format | `$0E` enable + picture base, reads status; `$0F` cell format + colour word |
 | `$50`, `$51` | PSG 1 select / data | the mapping RomWBW calls `AYMODE_COLECO`; both ports read back the selected register |
 | `$60`, `$68` | PSG 2 data / select | the second chip, so dual-PSG players work |
 | `$70`, `$71` | real-time clock index / data | |

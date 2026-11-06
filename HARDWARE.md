@@ -227,6 +227,7 @@ Entries should be kept in sync with the `n_*CS` decodes in the
 
 | Port(s)       | Width | Function                                                                                                  |
 |---------------|-------|-----------------------------------------------------------------------------------------------------------|
+| `0x0E`-`0x0F` | 2     | Cromemco "TV Dazzler" colour graphics (`n_dazzlerCS`, `Components/DAZZLER/dazzler.vhd`). `0x0E` = enable + picture base (A15..A9); `0x0F` = format (×4, 512 B/2 K, colour/B&W, 4-bit word). Writes into the enabled picture window are snooped from the memory bus (no DMA, no wait states); reads are status only. See `doc/DAZZLER.md`. |
 | `0x38`        | 1     | Unmapped. Formerly the ROM-disable trigger; the boot ROM has been removed, so writes are ignored.        |
 | `0x50`-`0x51` | 2     | PSG device 1, YM2149/AY-3-8910 (`n_psg1SelCS`/`n_psg1DatCS`, `Components/PSG/MrZ80_PSG.sv`). `0x50` = register SELECT, `0x51` = DATA; both read the selected register. RomWBW `AYMODE_COLECO`. Also reaches the stereo mixers. See PSG sound below. |
 | `0x60`, `0x68` | 2    | PSG device 2 (`n_psg2DatCS`/`n_psg2SelCS`). `0x68` = register SELECT, `0x60` = DATA; both read the selected register (vibetune's "EB" second card). See PSG sound below. |

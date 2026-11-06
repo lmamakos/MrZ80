@@ -33,7 +33,7 @@ digraph MrZ80 {
     // --------------------------------------------------------------------
     // the rest of the board, which this FPGA image depends on
     // --------------------------------------------------------------------
-    board [shape = box, fixedsize = true, width = 18.9, height = 1.42,
+    board [shape = box, fixedsize = true, width = 22.5, height = 1.42,
            label = "MiSTer board\nthe framework this image runs on\n\nHDMI video   ·   stereo audio   ·   USB keyboard   ·   SD card socket   ·   on-screen setup menu\nprograms, disk images and the boot ROM come from the SD card through that menu",
            fillcolor = "#eceff1", color = "#90a4ae"];
 
@@ -58,12 +58,14 @@ digraph MrZ80 {
              width = 3.3, height = 1.16];
         vdu [label = "Text screen\nand keyboard\n80 × 25 colour\nports $80-$81", fillcolor = "#fdecd8",
              width = 3.3, height = 1.16];
+        daz [label = "Colour graphics\nTV Dazzler\nup to 128 × 128 cells\nports $0E-$0F", fillcolor = "#fdecd8",
+             width = 3.3, height = 1.16];
         snd [label = "Sound\n2 × 3-channel PSG,\nstereo mixing\nports $50/$51, $68/$60", fillcolor = "#ecdcf2",
              width = 3.3, height = 1.16];
 
         // the common interconnect
         bus [label = "Z-80 bus  —  address, data and control\na block answers when the CPU names the port range it owns",
-             fixedsize = true, width = 17.7, height = 0.68,
+             fixedsize = true, width = 21.3, height = 0.68,
              fillcolor = "#cfd8dc", color = "#78909c", penwidth = 2.4,
              fontname = "Helvetica-Bold", fontsize = 14];
 
@@ -81,17 +83,18 @@ digraph MrZ80 {
         dsk [label = "Disk images\nmounted from the menu\n$90-$97", fillcolor = "#e6ddd2",
              width = 2.5, height = 0.9];
 
-        cpu -> bus;   ssp -> bus;   mem -> bus;   vdu -> bus;   snd -> bus;
+        cpu -> bus;   ssp -> bus;   mem -> bus;   vdu -> bus;   daz -> bus;   snd -> bus;
         bus -> sio;   bus -> rtc;   bus -> tim;   bus -> led;   bus -> sd; bus -> dsk;
 
         // left-to-right order along each row
         cpu -> ssp [style = invis, weight = 10];  ssp -> mem [style = invis, weight = 10];
-        mem -> vdu [style = invis, weight = 10];  vdu -> snd [style = invis, weight = 10];
+        mem -> vdu [style = invis, weight = 10];  vdu -> daz [style = invis, weight = 10];
+        daz -> snd [style = invis, weight = 10];
         sio -> rtc [style = invis, weight = 10];  rtc -> tim [style = invis, weight = 10];
         tim -> led [style = invis, weight = 10];  led -> sd  [style = invis, weight = 10];
         sd  -> dsk [style = invis, weight = 10];
 
-        { rank = same; cpu; ssp; mem; vdu; snd; }
+        { rank = same; cpu; ssp; mem; vdu; daz; snd; }
         { rank = same; sio; rtc; tim; led; sd; dsk; }
     }
 

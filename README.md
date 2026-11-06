@@ -154,6 +154,7 @@ on-FPGA block RAM. Peripherals:
 | MMU (Z2-compatible, banked memory) | `$B0`–`$BF` | 4 × 16 KB frames over a 256 MB address space; the key addition for RomWBW. `Components/MMU/MMU.vhd` |
 | ACIA UART (6850 model) | `$82`–`$83` | Console — MiSTer `/dev/ttyS0` or the USER-port hardware serial |
 | VGA text terminal (80×25 ANSI) | `$80`–`$81` | Keyboard synthesized from USB via the MiSTer framework |
+| Cromemco Dazzler graphics | `$0E`–`$0F` | Alternate colour cell page (up to 128×128 cells) rendered from a snooped memory window — no DMA, no wait states; see `doc/DAZZLER.md` |
 | SPI SD-card controller | `$88`–`$8F` | Physical SD socket |
 | HPS image block device | `$90`–`$97` | Disk image mounted from the OSD; usable alongside the SD socket |
 | Front-panel subsystem | `$A0`–`$A7` | The blinkenlights panel (see below) |
