@@ -1,0 +1,326 @@
+; ============================================================================
+; dazzldemo.azm - Cromemco "TV Dazzler" demo for MrZ80 (R48)
+; ----------------------------------------------------------------------------
+; Build:  tools/z80asm.sh testing/dazzldemo.azm
+;         -> testing/dazzldemo.{prn,sym,bin}
+; Run:    OSD "Boot Rom Image" = dazzldemo.bin.  Either boot target works:
+;         code, stack and the picture window all live in the low 64 KB,
+;         which frame 0 covers in both block-RAM and SDRAM boots.
+;
+; Stages, ~4 s each, forever (doc/DAZZLER.md 19.3 checklist):
+;   0. terminal alone ~4 s: "MRZ80 DAZZLER R48" on the text page
+;   1. vertical RGBI colour bars     normal res, 512 B, colour
+;   2. grey wedge (16 greys)         same bytes seen in B&W mode
+;   3. solid quadrants R/G/B/WHITE   normal res, 2 K, colour
+;         V-2 oracle: expect TL=red TR=green BL=blue BR=white
+;   4. cell checkerboard (white)     normal res, 2 K, colour
+;         V-1 aid: with stage 3, column/nybble order is pinned down
+;   5. fine vertical stripes         x4 res, 512 B, colour, word = white
+;   6. fine vertical stripes         x4 res, 2 K,   colour, word = white
+;   7. page swap off/on x4, ~2 s each way — terminal line visible in the
+;      off phases; watch sync stability at every swap
+; Each stage ends with a ~0.8 s terminal flash tagged S1..S7: the terminal
+; must reappear after stage 1 already (accumulating tags proves progress).
+;
+; Cell nybble bits: D0=R D1=G D2=B D3=intensity (manual p. 3).  Byte value
+; n*11h lights BOTH cells of the pair with the same colour.
+;
+; Frame sync: IN $0E bit 6 is low only during the first 60 scanlines;
+; waitfr blocks to the next frame boundary, delaya A = wait A frames.
+; ============================================================================
+
+                org     0000h
+ .z80
+
+DZ_CTRL         equ     00Eh        ; OUT: bit7 enable, bits6..0 = base>>9
+DZ_MODE         equ     00Fh      ; OUT: D6 x4, D5 size(2K), D4 colour, D3..0 word
+DZ_STAT         equ     00Eh      ; IN : D7 row parity, D6 = ~end-of-frame
+TERM_STAT       equ     080h      ; IN : D1 = tx ready (6850 ACIA semantics)
+TERM_DATA       equ     081h      ; OUT: byte to the video terminal page
+
+BASE_ON         equ     081h      ; enable + picture base $0200
+BASE_OFF        equ     001h      ; same base, not enabled
+FB0             equ     0200h     ; picture window (2 KB)
+
+RED             equ     01h       ; palette codes D0=R D1=G D2=B D3=int
+GREEN           equ     02h
+BLUE            equ     04h
+WHITE           equ     0Fh
+
+M_NORM_BW       equ     000h     ; normal resolution, 512 B, B&W
+M_NORM_COL      equ     010h     ; normal, 512 B, colour
+M_NORM_2K_COL   equ     030h     ; normal, 2 K,   colour
+M_X4_512_COL    equ     05Fh     ; x4,     512 B, colour, word = white
+M_X4_2K_COL     equ     07Fh     ; x4,     2 K,   colour, word = white
+
+                jp      start
+
+; ---------------------------------------------------------------------------
+; waitfr: block past one frame boundary (D6 low pulse = frame start).
+; ---------------------------------------------------------------------------
+waitfr:
+                in      a,(DZ_STAT)
+                bit     6,a
+                jr      nz,waitfr     ; wait for the low window
+waitfr2:
+                in      a,(DZ_STAT)
+                bit     6,a
+                jr      z,waitfr2     ; and back to high
+                ret
+
+; delaya: wait A frames (clobbers AF, B)
+delaya:
+                ld      b,a
+dloop:
+                call    waitfr
+                djnz    dloop
+                ret
+
+; prt: write the NUL-terminated string at HL to the video terminal (polls
+; $80 D1 tx-ready first).  The picture page covers the text, but the
+; stage-7 blackout phases reveal it — and text-vs-page stability against
+; the scroll was diagnosed with exactly this reference line (R48).
+prt:
+                ld      a,(hl)
+                or      a
+                jr      z,prte
+                push    hl
+pr1:
+                in      a,(TERM_STAT)
+                bit     1,a
+                jr      z,pr1
+                pop     hl
+                ld      a,(hl)
+                out     (TERM_DATA),a
+                inc     hl
+                jr      prt
+prte:
+                ret
+
+; fill: fill BC bytes at HL with the value in D (BC >= 1).
+; clobbers AF, BC, HL; D preserved.
+fill:
+                ld      (hl),d
+                inc     hl
+                dec     bc
+                ld      a,b
+                or      c
+                jr      nz,fill
+                ret
+
+; bars: 16 vertical colour columns; byte at offset o = (o mod 16)*11h,
+; i.e. every byte of column c is colour c in BOTH cells of the pair.
+; Fills 512 B at FB0.  Clobbers AF, DE, HL.
+bars:
+                ld      hl,FB0
+                ld      de,512
+bl1:
+                ld      a,l
+                and     00Fh          ; column index 0..15
+                ld      b,a
+                rlca
+                rlca
+                rlca
+                rlca                  ; idx<<4
+                or      b             ; idx*11h
+                ld      (hl),a
+                inc     hl
+                dec     de
+                ld      a,d
+                or      e
+                jr      nz,bl1
+                ret
+
+; quads: solid TL=red TR=green BL=blue BR=white, 512 B each (2 K total).
+quads:
+                ld      hl,FB0
+                ld      a,RED*11h
+                ld      d,a
+                ld      bc,512
+                call    fill
+                ld      hl,FB0+512
+                ld      a,GREEN*11h
+                ld      d,a
+                ld      bc,512
+                call    fill
+                ld      hl,FB0+1024
+                ld      a,BLUE*11h
+                ld      d,a
+                ld      bc,512
+                call    fill
+                ld      hl,FB0+1536
+                ld      a,WHITE*11h
+                ld      d,a
+                ld      bc,512
+                jp      fill
+
+; ckrow: write 16 copies of E at (HL).  Clobbers AF, BC, HL.
+ckrow:
+                ld      c,16
+cr1:
+                ld      (hl),e
+                inc     hl
+                djnz    cr1
+                ret
+
+; ckh: checkerboard for a 32-byte-row half (left block at HL, right block
+; HL+512).  Byte value alternates 0Fh/F0h with byte-row parity: even rows
+; light the low-nibble (even-x) cell, odd rows the high-nibble cell, so the
+; lit cells form white 6-px squares on a black field.  Clobbers AF,BC,DE,HL.
+ckh:
+                ld      b,32
+                ld      d,00Fh
+ck3:
+                ld      e,d
+                push    hl
+                call    ckrow
+                pop     hl
+                push    hl
+                ld      bc,512
+                add     hl,bc
+                call    ckrow
+                pop     hl
+                ld      bc,16
+                add     hl,bc
+                ld      a,d
+                xor     0FFh
+                ld      d,a
+                djnz    ck3
+                ret
+
+; ck2k: cell checkerboard over the whole 2 K page (both stacked halves).
+ck2k:
+                ld      hl,FB0
+                call    ckh
+                ld      hl,FB0+1024
+                jp      ckh
+
+; flash: prove the page can step aside.  Disable the Dazzler page, print a
+; stage tag (now visible on the terminal), hold ~0.8 s, restore the page.
+; Every stage flashes, so the terminal must reappear after S1 already; if it
+; never does, OUT $0E,BASE_OFF is not reaching the video mux (R48).
+flash:
+                push    hl
+                ld      a,BASE_OFF
+                out     (DZ_CTRL),a
+                pop     hl
+                call    prt
+                ld      a,030h
+                call    delaya
+                ld      a,BASE_ON
+                out     (DZ_CTRL),a
+                ret
+
+; ---------------------------------------------------------------------------
+start:
+                di
+                ld      sp,0FF00h
+
+                ; print a reference line on the terminal page first, then
+                ; sit on the terminal alone ~4 s before taking the screen:
+                ; the page covers the text, so without this pause the text
+                ; would flash only in the stage-7 blackouts (missed in the
+                ; field, R48)
+                ld      hl,msg
+                call    prt
+                ld      a,0F0h
+                call    delaya
+
+                ld      a,BASE_ON   ; enable, base $0200
+                out     (DZ_CTRL),a
+
+main:
+                ; 1. colour bars
+                ld      a,M_NORM_COL
+                out     (DZ_MODE),a
+                call    bars
+                ld      a,0FFh
+                call    delaya
+                ld      hl,t1
+                call    flash
+
+                ; 2. grey wedge: same bytes, B&W mode
+                ld      a,M_NORM_BW
+                out     (DZ_MODE),a
+                ld      a,0FFh
+                call    delaya
+                ld      hl,t2
+                call    flash
+
+                ; 3. solid quadrants (normal, 2 K, colour)
+                ld      a,M_NORM_2K_COL
+                out     (DZ_MODE),a
+                call    quads
+                ld      a,0FFh
+                call    delaya
+                ld      hl,t3
+                call    flash
+
+                ; 4. cell checkerboard (normal, 2 K, colour).  A flat AAh
+                ; fill would be uniform bright green (both nibbles = Ah);
+                ; the checkerboard needs 0Fh/F0h alternating by byte row.
+                ld      a,M_NORM_2K_COL
+                out     (DZ_MODE),a
+                call    ck2k
+                ld      a,0FFh
+                call    delaya
+                ld      hl,t4
+                call    flash
+
+                ; 5. x4 stripes, 512 B (word bits -> every other thin cell)
+                ld      a,M_X4_512_COL
+                out     (DZ_MODE),a
+                ld      hl,FB0
+                ld      d,0AAh
+                ld      bc,512
+                call    fill
+                ld      a,0FFh
+                call    delaya
+                ld      hl,t5
+                call    flash
+
+                ; 6. x4 stripes, 2 K
+                ld      a,M_X4_2K_COL
+                out     (DZ_MODE),a
+                ld      hl,FB0
+                ld      d,0AAh
+                ld      bc,2048
+                call    fill
+                ld      a,0FFh
+                call    delaya
+                ld      hl,t6
+                call    flash
+
+                ; 7. page swap x4: terminal <-> Dazzler, sync must not budge
+                ; (djnz is B-fixed and delaya counts frames in B -> save B
+                ;  around each delaya call)
+                ld      b,004h
+sw:
+                ld      a,BASE_OFF
+                out     (DZ_CTRL),a
+                push    bc
+                ld      a,078h        ; ~2 s of terminal, page off
+                call    delaya
+                pop     bc
+                ld      a,BASE_ON
+                out     (DZ_CTRL),a
+                push    bc
+                ld      a,078h
+                call    delaya
+                pop     bc
+                djnz    sw
+                ld      hl,t7
+                call    flash
+
+                jp      main
+
+msg:            db      'MRZ80 DAZZLER R48',0
+t1:             db      'S1',0
+t2:             db      'S2',0
+t3:             db      'S3',0
+t4:             db      'S4',0
+t5:             db      'S5',0
+t6:             db      'S6',0
+t7:             db      'S7',0
+
+                end
