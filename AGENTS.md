@@ -145,11 +145,10 @@ in text form.
 The `forth/` directory (CamelFORTH port) is assembled with **um80/ul80**,
 a MACRO-80/LINK-80-compatible toolchain (Python package `um80`, source:
 <https://github.com/avwohl/um80_and_friends>). It is *not* preinstalled on a
-fresh environment, and a `pip install --user um80` can leave a **broken**
-`~/.local/bin/um80` shim ahead of a working copy elsewhere on `$PATH` (e.g.
-`~/um80_and_friends/bin`) — always use the wrapper scripts below rather than
-invoking `um80`/`ul80` by bare name, since they were specifically built to
-avoid that trap.
+fresh environment (install with `pip install --user um80` or from the source
+tree); on the development machine the tools are on `$PATH` and work directly,
+as used by `forth/Makefile` and `testing/Makefile`. The wrapper scripts below
+are convenience helpers (plus a portable tool-search) around the same tools.
 
 ```sh
 # Locate + run any tool from the toolchain (um80, ul80, ud80, ux80, ...):
