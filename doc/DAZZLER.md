@@ -491,17 +491,22 @@ fill would be uniform green, both nibbles being `Ah`), fine ×4 stripes at
 512 B and 2 K,
 and enable-toggle page swaps ×4 — all four modes, live base/mode changes.
 (A moving-pattern animation is deferred; a live-busy sweep is trivial to
-add once orientation is confirmed.) Bench checklist (new section in
-this document, run and signed like R47's §4.4):
+ add.) Bench checklist (new section in this document, run and signed like
+ R47's §4.4) — hardware session 2026-11-06:
 
-* page swaps are sync-stable, terminal content intact underneath
-* Kaleidoscope / Life (reference images or listings, if the owner has
-  originals) render with correct orientation → closes **V-1** (nybble
-  left/right) and **V-2** (quadrant order/orientation); flip candidates exist
-  as generics so a confirmed correction is one-line
-* `IN $0E` frame hooks usable by a timing-sensitive program
-* `RESET CPU` keeps the picture; `RESET SYSTEM` clears it; SSP monitor
-  outranks the page
+ * **PASS** page swaps are sync-stable, terminal content intact underneath
+   (per-stage terminal flashes with stage tags, plus ×4 page swaps)
+ * **PASS** V-1 and V-2 closed: bars unmirrored, quadrants
+   TL=red/TR=green/BL=blue/BR=white, checkerboard seams aligned —
+   orientation generics confirmed at their defaults
+ * **PASS** `IN $0E` frame hooks usable by a timing-sensitive program
+   (the demo's frame sync drives every stage delay)
+ * **PASS** images stable — no scroll (required the renderer to mirror the
+   terminal's 526-line vertical wrap; see §11)
+ * **TODO** `RESET CPU` keeps the picture; `RESET SYSTEM` clears it; SSP
+   monitor outranks the page
+ * **TODO** Kaleidoscope / Life reference programs (owner originals, if
+   ever located) as an independent orientation cross-check
 
 ## 20. Documentation updates to follow in the implementation round
 
@@ -510,14 +515,19 @@ this document, run and signed like R47's §4.4):
 `README.md`; `build_id.v` re-stamped in its own commit per the AGENTS rule
 (the core netlist changes). Nothing is pushed, per standing rule.
 
-## 21. Open questions
+## 21. Open questions — all resolved (owner rulings, 2026-11-06)
 
-* **OQ-D1** — Nybble L/R order and quadrant ordering confirmed on hardware
-  (V-1/V-2). Flip-ready via generics.
-* **OQ-D2** — `$0E/$0F` are free today; re-check against RomWBW's port map
-  when the RomWBW port starts.
-* **OQ-D3** — Front-panel "Dazzler clear" function slot — reserved now,
-  parameter mapping when the panel work lands.
+* **OQ-D1 — CLOSED.** V-1 (nybble left = low) and V-2 (quadrant order)
+  confirmed correct on hardware; generics stay at their defaults (kept as
+  documented flip candidates).
+* **OQ-D2 — CLOSED.** Owner confirms `$0E/$0F` are free; no need to
+  re-open at RomWBW port time beyond a normal port-map sanity pass.
+* **OQ-D3 — CLOSED.** No dedicated front-panel "Dazzler clear" function;
+  the existing system resets already clear the page (per design §12:
+  RESET SYSTEM clears, RESET CPU does not).
+* **Cell aspect** — owner ruling: keep cells pixel-square exactly as
+  specified (the ~20% vertical stretch is the 4:3 display chain's doing,
+  not the core's); no aspect-compensated box.
 
 ## 22. References
 

@@ -612,7 +612,7 @@ follow it.
 | RomWBW (HBIOS + multi-boot) | **MVP** — the MrZ80 HBIOS platform (MMU, consoles, ROM/RAM disks, HPS and SD disks, RTC, front-panel LEDs) comes up and runs; the 50 Hz interval-timer tick driver is built but awaiting a hardware check, and tuning under a real workload remains (§9) |
 | AY-3-8910 / YM2149 PSG audio: two chips at `$50`/`$51` and `$68`/`$60`, stereo mixers with OSD Mono/ABC/ACB panning (`REQUIREMENTS.md` item 6) | Working on hardware (owner, 2026-11-04: `psgtest`, RomWBW `TUNE.COM`); simulation lane `make -C sim psg` |
 | Programmable millisecond interval timer and Z80 `INT` source, ports `$D0`-`$D3` (`REQUIREMENTS.md` item 7) | Working on hardware (owner, 2026-11-02); RomWBW tick driver `itim.asm` written 2026-11-02, hardware check pending (§9) |
-| Cromemco Dazzler colour graphics page: ports `$0E`/`$0F`, write-snooped picture window, `doc/DAZZLER.md` | RTL done; synthesis clean; simulation lane `make -C sim dazzler` passes; demo `testing/dazzldemo.bin`; awaiting owner hardware test (orientation items V-1/V-2 open) |
+| Cromemco Dazzler colour graphics page: ports `$0E`/`$0F`, write-snooped picture window, `doc/DAZZLER.md` | RTL done; synthesis clean; simulation lane `make -C sim dazzler` passes; demo `testing/dazzldemo.bin`; **hardware-verified 2026-11-06** (orientation V-1/V-2 closed; page scroll fixed by mirroring the terminal's 526-line frame) |
 | SSP monitor: escape/park/E/D/G/R | Proven on hardware |
 | SSP: `I`/`O`, `MAP`, `S` (single-step), `PHY`/`LOG` (physical SDRAM examine/deposit) | Working — verified in simulation and on hardware |
 | SSP: `U` (unassemble, shared with CamelFORTH's `DISASM`); `S` shows the next instruction | Working on hardware (owner, 2026-11-01 and 2026-11-02) |
